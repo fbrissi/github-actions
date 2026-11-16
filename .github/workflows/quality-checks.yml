@@ -1,0 +1,78 @@
+name: Quality Checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: quality-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  actionlint:
+    name: Quality / actionlint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Lint workflows
+        run: docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.12 -color .github/workflows/*.yml
+
+  shellcheck:
+    name: Quality / shellcheck
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Check shell scripts
+        run: |
+          set -euo pipefail
+          mapfile -t scripts < <(git ls-files '*.sh')
+          if [ "${#scripts[@]}" -eq 0 ]; then
+            echo 'No shell scripts to check.'
+            exit 0
+          fi
+          shellcheck --version
+          shellcheck "${scripts[@]}"
+
+  release-note:
+    name: Quality / release-note
+    if: ${{ github.event_name == 'pull_request' && github.base_ref == 'main' }}
+    uses: ./.github/workflows/release-note.yml
+    permissions:
+      contents: read
+
+  quality-checks:
+    name: Quality Checks
+    needs: [actionlint, shellcheck, release-note]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Validate quality results
+        env:
+          ACTIONLINT_RESULT: ${{ needs.actionlint.result }}
+          SHELLCHECK_RESULT: ${{ needs.shellcheck.result }}
+          RELEASE_NOTE_RESULT: ${{ needs.release-note.result }}
+        run: |
+          set -euo pipefail
+          for result in "$ACTIONLINT_RESULT" "$SHELLCHECK_RESULT"; do
+            if [ "$result" != 'success' ]; then
+              echo "A quality job ended with: $result"
+              exit 1
+            fi
+          done
+          if [ "$RELEASE_NOTE_RESULT" != 'success' ] && [ "$RELEASE_NOTE_RESULT" != 'skipped' ]; then
+            echo "Release note result: $RELEASE_NOTE_RESULT"
+            exit 1
+          fi

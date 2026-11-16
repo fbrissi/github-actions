@@ -1,0 +1,26 @@
+name: Release Orchestrator
+
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, for example v1.0.0. Empty uses the first CHANGELOG.md heading.
+        required: false
+        type: string
+
+permissions: {}
+
+jobs:
+  release:
+    name: Release
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
+    uses: ./.github/workflows/release.yml
+    permissions:
+      actions: write
+      contents: write
+    with:
+      version: ${{ inputs.version || '' }}
+      update-major-tag: true

@@ -1,0 +1,55 @@
+name: Terraform Cloud Wait
+description: >-
+  Wait for the newest HCP Terraform (Terraform Cloud) run of a commit in a workspace
+  to finish applying, failing when the run errors, is canceled, or is discarded.
+author: Filipe Bojikian Rissi
+
+inputs:
+  organization:
+    description: HCP Terraform organization name.
+    required: true
+  workspace:
+    description: HCP Terraform workspace name.
+    required: true
+  token:
+    description: HCP Terraform API token with read access to the workspace runs.
+    required: true
+  commit-sha:
+    description: Commit whose run is awaited. Defaults to `github.sha`.
+    required: false
+    default: ""
+  start-timeout-minutes:
+    description: Minutes to wait for HCP Terraform to start a run for the commit.
+    required: false
+    default: "30"
+  poll-interval-seconds:
+    description: Seconds between API polls.
+    required: false
+    default: "10"
+
+outputs:
+  run-id:
+    description: The awaited HCP Terraform run ID.
+    value: ${{ steps.wait.outputs.run-id }}
+  status:
+    description: The final run status (`applied` or `planned_and_finished`).
+    value: ${{ steps.wait.outputs.status }}
+
+runs:
+  using: composite
+  steps:
+    - name: Wait for HCP Terraform apply
+      id: wait
+      shell: bash
+      env:
+        TFC_ORGANIZATION: ${{ inputs.organization }}
+        TFC_WORKSPACE: ${{ inputs.workspace }}
+        TFC_API_TOKEN: ${{ inputs.token }}
+        COMMIT_SHA: ${{ inputs.commit-sha || github.sha }}
+        START_TIMEOUT_MINUTES: ${{ inputs.start-timeout-minutes }}
+        POLL_INTERVAL_SECONDS: ${{ inputs.poll-interval-seconds }}
+      run: bash "$GITHUB_ACTION_PATH/wait.sh"
+
+branding:
+  icon: clock
+  color: purple
