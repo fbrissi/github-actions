@@ -1,0 +1,499 @@
+name: Code Review
+
+on:
+  workflow_call:
+    inputs:
+      pr-number:
+        description: Pull request number to review.
+        required: true
+        type: string
+      harness:
+        description: AI harness, `opencode` or `claude`. Empty falls back to `opencode`.
+        required: false
+        type: string
+        default: ""
+      prompt:
+        description: Prompt override. Empty uses the PR number with `opencode-command`, or the review-changes skill prompt.
+        required: false
+        type: string
+        default: ""
+      opencode-command:
+        description: OpenCode command that reviews the PR, for example `pr/review` (Kompass). Empty uses the review-changes skill prompt.
+        required: false
+        type: string
+        default: pr/review
+      opencode-plugins:
+        description: Whitespace-separated OpenCode plugins to install.
+        required: false
+        type: string
+        default: "@kompassdev/opencode"
+      opencode-model:
+        description: OpenCode model in `provider/model` form. Required by the `opencode` harness.
+        required: false
+        type: string
+        default: ""
+      opencode-variant:
+        description: Optional OpenCode model variant.
+        required: false
+        type: string
+        default: ""
+      claude-model:
+        description: Optional Claude Code model alias or full model ID.
+        required: false
+        type: string
+        default: ""
+      claude-effort:
+        description: Optional Claude Code effort level.
+        required: false
+        type: string
+        default: ""
+      review-skill-source:
+        description: Where the review-changes skill comes from, `ai-skills` (pinned `ai-skills-ref`), `base` (the PR base commit), or `none`.
+        required: false
+        type: string
+        default: ai-skills
+      ai-skills-ref:
+        description: Tag or commit SHA of fbrissi/ai-skills used when `review-skill-source` is `ai-skills`.
+        required: false
+        type: string
+        default: v0.1.0
+      base-skills-path:
+        description: Directory holding one folder per skill in the reviewed repository, used when `review-skill-source` is `base`.
+        required: false
+        type: string
+        default: .rulesync/skills
+      agent-app-id:
+        description: GitHub App ID that publishes the review. The App needs `pull-requests` write and `contents` read.
+        required: true
+        type: string
+      check-name:
+        description: Name of the check run reported on the PR head commit.
+        required: false
+        type: string
+        default: Code Review
+      environment:
+        description: GitHub environment of the review job; its secrets are available to the job.
+        required: false
+        type: string
+        default: code-review
+      runs-on:
+        description: Runner label for every job.
+        required: false
+        type: string
+        default: ubuntu-latest
+      timeout-minutes:
+        description: Maximum harness run time in minutes.
+        required: false
+        type: number
+        default: 25
+      job-timeout-minutes:
+        description: Timeout of the review job; keep it above `timeout-minutes`.
+        required: false
+        type: number
+        default: 30
+      node-version:
+        description: Node.js version installed before `install-command`. Empty skips actions/setup-node.
+        required: false
+        type: string
+        default: ""
+      node-cache:
+        description: Package manager cache for actions/setup-node (`npm`, `yarn`, or `pnpm`). Empty disables it.
+        required: false
+        type: string
+        default: ""
+      install-command:
+        description: Command that installs the project dependencies the reviewer may run. Empty skips it.
+        required: false
+        type: string
+        default: ""
+      dependency-cache-path:
+        description: Paths cached around `install-command`, for example `node_modules`. Empty disables the cache.
+        required: false
+        type: string
+        default: ""
+      dependency-cache-prefix:
+        description: Cache key prefix; the key is `<prefix>-<os>-<arch>-<hash of dependency-cache-files>`.
+        required: false
+        type: string
+        default: code-review-deps-v1
+      dependency-cache-files:
+        description: Glob whose files are hashed into the dependency cache key.
+        required: false
+        type: string
+        default: "**/{package-lock.json,yarn.lock,pnpm-lock.yaml}"
+    secrets:
+      AGENT_APP_PRIVATE_KEY:
+        description: Private key of the `agent-app-id` GitHub App.
+        required: false
+      OPEN_AI_TOKEN:
+        description: OpenAI API key for the `opencode` harness.
+        required: false
+      ANTHROPIC_API_KEY:
+        description: Anthropic API key for the `claude` harness.
+        required: false
+      CLAUDE_CODE_OAUTH_TOKEN:
+        description: Claude Code OAuth token for the `claude` harness, used when `ANTHROPIC_API_KEY` is empty.
+        required: false
+    outputs:
+      check-run-id:
+        description: ID of the check run that reports the review.
+        value: ${{ jobs.start-review.outputs.check_run_id }}
+
+concurrency:
+  group: fbrissi-code-review-${{ github.repository }}-${{ inputs.pr-number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  start-review:
+    name: Start Code Review
+    runs-on: ${{ inputs.runs-on }}
+    permissions:
+      checks: write
+      pull-requests: read
+    outputs:
+      check_run_id: ${{ steps.start.outputs.check_run_id }}
+      pr_number: ${{ steps.start.outputs.pr_number }}
+      head_sha: ${{ steps.start.outputs.head_sha }}
+      head_ref: ${{ steps.start.outputs.head_ref }}
+      head_repository: ${{ steps.start.outputs.head_repository }}
+      base_ref: ${{ steps.start.outputs.base_ref }}
+      base_sha: ${{ steps.start.outputs.base_sha }}
+    steps:
+      - uses: actions/github-script@v9
+        id: start
+        env:
+          PR_NUMBER: ${{ inputs.pr-number }}
+          CHECK_NAME: ${{ inputs.check-name }}
+        with:
+          script: |
+            const prNumber = Number(process.env.PR_NUMBER);
+            const checkName = process.env.CHECK_NAME;
+            if (!Number.isInteger(prNumber) || prNumber <= 0) {
+              core.setFailed(`Invalid pull request number: ${process.env.PR_NUMBER}`);
+              return;
+            }
+
+            const { data: pullRequest } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+            if (pullRequest.state !== 'open') {
+              core.setFailed(`PR #${prNumber} is not open.`);
+              return;
+            }
+            if (pullRequest.draft) {
+              core.setFailed(`PR #${prNumber} is still a draft.`);
+              return;
+            }
+
+            const headSha = pullRequest.head.sha;
+            core.setOutput('pr_number', pullRequest.number);
+            core.setOutput('head_sha', headSha);
+            core.setOutput('head_ref', pullRequest.head.ref);
+            core.setOutput('head_repository', pullRequest.head.repo.full_name);
+            core.setOutput('base_ref', pullRequest.base.ref);
+            core.setOutput('base_sha', pullRequest.base.sha);
+
+            const checks = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: headSha,
+              check_name: checkName,
+            });
+            const existing = checks.data.check_runs
+              .filter((check) => check.name === checkName)
+              .sort((a, b) => new Date(b.started_at) - new Date(a.started_at))[0];
+            const detailsUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const output = {
+              title: `${checkName} in progress`,
+              summary: `The AI harness is reviewing PR #${prNumber}.`,
+            };
+
+            let checkRunId;
+            if (existing && ['queued', 'in_progress'].includes(existing.status)) {
+              checkRunId = existing.id;
+              await github.rest.checks.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                check_run_id: checkRunId,
+                status: 'in_progress',
+                started_at: new Date().toISOString(),
+                details_url: detailsUrl,
+                output,
+              });
+            } else {
+              const created = await github.rest.checks.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: checkName,
+                head_sha: headSha,
+                status: 'in_progress',
+                started_at: new Date().toISOString(),
+                details_url: detailsUrl,
+                output,
+              });
+              checkRunId = created.data.id;
+            }
+            core.setOutput('check_run_id', checkRunId);
+
+  review:
+    name: Run Code Review
+    needs: start-review
+    runs-on: ${{ inputs.runs-on }}
+    permissions:
+      contents: read
+    timeout-minutes: ${{ inputs.job-timeout-minutes }}
+    environment:
+      name: ${{ inputs.environment }}
+    steps:
+      - name: Resolve review settings
+        id: settings
+        env:
+          HARNESS: ${{ inputs.harness }}
+          PROMPT: ${{ inputs.prompt }}
+          OPENCODE_COMMAND: ${{ inputs.opencode-command }}
+          OPENCODE_MODEL: ${{ inputs.opencode-model }}
+          SKILL_SOURCE: ${{ inputs.review-skill-source }}
+          PR_NUMBER: ${{ needs.start-review.outputs.pr_number }}
+          HAS_APP_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          harness="${HARNESS:-opencode}"
+          case "$harness" in
+            opencode | claude) ;;
+            *)
+              echo "::error::Unsupported harness '${harness}'. Use 'opencode' or 'claude'."
+              exit 1
+              ;;
+          esac
+          case "$SKILL_SOURCE" in
+            ai-skills | base | none) ;;
+            *)
+              echo "::error::Unsupported review-skill-source '${SKILL_SOURCE}'. Use 'ai-skills', 'base', or 'none'."
+              exit 1
+              ;;
+          esac
+          if [ "$HAS_APP_KEY" != 'true' ]; then
+            echo '::error::The AGENT_APP_PRIVATE_KEY secret is required.'
+            exit 1
+          fi
+          if [ "$harness" = 'opencode' ] && [ -z "$OPENCODE_MODEL" ]; then
+            echo '::error::The opencode harness requires the opencode-model input.'
+            exit 1
+          fi
+
+          opencode_command=''
+          if [ "$harness" = 'opencode' ]; then
+            opencode_command="$OPENCODE_COMMAND"
+          fi
+
+          if [ -n "$PROMPT" ]; then
+            prompt="$PROMPT"
+          elif [ -n "$opencode_command" ]; then
+            prompt="$PR_NUMBER"
+          else
+            prompt="Use the review-changes skill to review pull request #${PR_NUMBER} in ${GITHUB_REPOSITORY} and publish the review on GitHub. Do not modify, commit, or push any files."
+          fi
+
+          skills='review-changes'
+          if [ "$SKILL_SOURCE" = 'none' ]; then
+            skills=''
+          fi
+
+          delimiter="PROMPT_$(uuidgen)"
+          {
+            echo "harness=$harness"
+            echo "opencode-command=$opencode_command"
+            echo "skills=$skills"
+            echo "prompt<<$delimiter"
+            echo "$prompt"
+            echo "$delimiter"
+          } >> "$GITHUB_OUTPUT"
+          echo "Code Review harness: $harness"
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ inputs.agent-app-id }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ needs.start-review.outputs.head_repository }}
+          ref: ${{ needs.start-review.outputs.head_sha }}
+          fetch-depth: 0
+
+      - name: Fetch pull request base
+        env:
+          BASE_REF: ${{ needs.start-review.outputs.base_ref }}
+          BASE_SHA: ${{ needs.start-review.outputs.base_sha }}
+          HEAD_REF: ${{ needs.start-review.outputs.head_ref }}
+          HEAD_SHA: ${{ needs.start-review.outputs.head_sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          if [ "$(git rev-parse --is-shallow-repository)" = 'true' ]; then
+            git fetch --no-tags --unshallow origin
+          fi
+
+          git remote add review-base "https://github.com/${REPOSITORY}.git"
+          git fetch --no-tags --force review-base \
+            "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          git update-ref "refs/remotes/origin/${BASE_REF}" "$BASE_SHA"
+          git update-ref "refs/remotes/origin/${HEAD_REF}" "$HEAD_SHA"
+          merge_base="$(git merge-base "refs/remotes/origin/${BASE_REF}" "refs/remotes/origin/${HEAD_REF}" || true)"
+          if [ -z "$merge_base" ]; then
+            echo "No merge base between ${BASE_REF} (${BASE_SHA}) and ${HEAD_REF} (${HEAD_SHA})." >&2
+            exit 1
+          fi
+          echo "Review merge base: $merge_base"
+          git update-ref "refs/heads/${BASE_REF}" "$BASE_SHA"
+          git update-ref "refs/heads/${HEAD_REF}" "$HEAD_SHA"
+          git remote remove review-base
+          git remote set-url origin "https://github.com/${REPOSITORY}.git"
+
+      - name: Extract review skill from the base commit
+        id: base-skills
+        if: ${{ inputs.review-skill-source == 'base' }}
+        env:
+          BASE_SHA: ${{ needs.start-review.outputs.base_sha }}
+          SKILLS_PATH: ${{ inputs.base-skills-path }}
+        run: |
+          set -euo pipefail
+          # Read the skill from the base commit so a pull request cannot rewrite its own reviewer.
+          skill_path="${SKILLS_PATH%/}/review-changes"
+          if ! git cat-file -e "${BASE_SHA}:${skill_path}/SKILL.md" 2>/dev/null; then
+            echo "::error::${skill_path}/SKILL.md does not exist on the base commit ${BASE_SHA}."
+            exit 1
+          fi
+          skills_dir="$RUNNER_TEMP/base-skills"
+          rm -rf "$skills_dir"
+          mkdir -p "$skills_dir"
+          git archive "$BASE_SHA" "$skill_path" | tar -x -C "$skills_dir"
+          echo "dir=$skills_dir/${SKILLS_PATH%/}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache/restore@v6
+        id: dependency-cache
+        if: ${{ inputs.dependency-cache-path != '' }}
+        with:
+          path: ${{ inputs.dependency-cache-path }}
+          key: ${{ inputs.dependency-cache-prefix }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(inputs.dependency-cache-files) }}
+
+      - uses: actions/setup-node@v7
+        if: ${{ inputs.node-version != '' }}
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: ${{ inputs.node-cache }}
+
+      - name: Install dependencies
+        if: ${{ inputs.install-command != '' && steps.dependency-cache.outputs.cache-hit != 'true' }}
+        env:
+          INSTALL_COMMAND: ${{ inputs.install-command }}
+        run: bash -euo pipefail -c "$INSTALL_COMMAND"
+
+      - name: Save dependency cache
+        if: ${{ inputs.dependency-cache-path != '' && inputs.install-command != '' && steps.dependency-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ inputs.dependency-cache-path }}
+          key: ${{ steps.dependency-cache.outputs.cache-primary-key }}
+
+      - name: Record review start
+        id: review-start
+        run: echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Run AI review
+        id: review
+        uses: fbrissi/github-actions/actions/ai-harness@v1
+        with:
+          harness: ${{ steps.settings.outputs.harness }}
+          prompt: ${{ steps.settings.outputs.prompt }}
+          opencode-command: ${{ steps.settings.outputs.opencode-command }}
+          opencode-plugins: ${{ inputs.opencode-plugins }}
+          opencode-model: ${{ inputs.opencode-model }}
+          opencode-variant: ${{ inputs.opencode-variant }}
+          claude-model: ${{ inputs.claude-model }}
+          claude-effort: ${{ inputs.claude-effort }}
+          skills: ${{ steps.settings.outputs.skills }}
+          skills-ref: ${{ inputs.ai-skills-ref }}
+          skills-local-dir: ${{ steps.base-skills.outputs.dir }}
+          timeout-minutes: ${{ inputs.timeout-minutes }}
+          openai-api-key: ${{ secrets.OPEN_AI_TOKEN }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github-token: ${{ steps.app-token.outputs.token }}
+
+      - name: Verify published review
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          HARNESS: ${{ steps.review.outputs.harness }}
+          OUTPUT_FILE: ${{ steps.review.outputs.output-file }}
+          PR_NUMBER: ${{ needs.start-review.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.start-review.outputs.head_sha }}
+          REVIEW_STARTED_AT: ${{ steps.review-start.outputs.started_at }}
+        run: |
+          set -euo pipefail
+
+          if grep -qE 'kompass_changes_load .* (failed|error|no merge base)' "$OUTPUT_FILE"; then
+            echo "The ${HARNESS} harness could not load the authoritative pull request diff." >&2
+            exit 1
+          fi
+
+          if grep -qE '(^|[[:space:]])(Review|Approval) skipped for PR #[0-9]+|^Published: skipped' "$OUTPUT_FILE"; then
+            echo 'The review was skipped on purpose (already approved or no new findings).'
+            exit 0
+          fi
+
+          review_count=0
+          for attempt in 1 2 3 4 5 6; do
+            echo "Waiting for the published review (attempt ${attempt}/6)"
+            reviews_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews?per_page=100" --paginate --slurp)"
+            review_count="$(printf '%s' "$reviews_json" | jq --arg head "$HEAD_SHA" --arg started "$REVIEW_STARTED_AT" '[.[][] | select(.commit_id == $head and .submitted_at != null and .submitted_at >= $started)] | length')"
+            if [ "$review_count" -gt 0 ]; then
+              break
+            fi
+            sleep 5
+          done
+
+          if [ "$review_count" -eq 0 ]; then
+            echo "The ${HARNESS} harness did not publish a GitHub review for the current commit." >&2
+            exit 1
+          fi
+
+  finish-review:
+    name: Finish Code Review
+    needs: [start-review, review]
+    if: ${{ always() && !cancelled() && needs.start-review.result == 'success' }}
+    runs-on: ${{ inputs.runs-on }}
+    permissions:
+      checks: write
+    steps:
+      - uses: actions/github-script@v9
+        env:
+          REVIEW_RESULT: ${{ needs.review.result }}
+          CHECK_RUN_ID: ${{ needs.start-review.outputs.check_run_id }}
+          CHECK_NAME: ${{ inputs.check-name }}
+        with:
+          script: |
+            const conclusion = process.env.REVIEW_RESULT === 'success' ? 'success' : 'failure';
+            const checkName = process.env.CHECK_NAME;
+
+            await github.rest.checks.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              check_run_id: Number(process.env.CHECK_RUN_ID),
+              status: 'completed',
+              conclusion,
+              completed_at: new Date().toISOString(),
+              output: {
+                title: conclusion === 'success' ? `${checkName} completed` : `${checkName} failed`,
+                summary: conclusion === 'success'
+                  ? 'The AI harness completed the pull request review.'
+                  : 'The AI harness failed before completing the pull request review.',
+              },
+            });

@@ -1,0 +1,137 @@
+name: Release Note
+
+on:
+  workflow_call:
+    inputs:
+      changelog-path:
+        description: Path of the changelog, relative to the repository root.
+        required: false
+        type: string
+        default: CHANGELOG.md
+      check-package-version:
+        description: Require `package.json` `version` to match the new release.
+        required: false
+        type: boolean
+        default: false
+      package-json-path:
+        description: Path of the `package.json` checked by `check-package-version`.
+        required: false
+        type: string
+        default: package.json
+      allow-empty-base-heading:
+        description: Accept a PR that only fills the notes of the single, empty release heading already on the base branch (first release bootstrap).
+        required: false
+        type: boolean
+        default: false
+      runs-on:
+        description: Runner label.
+        required: false
+        type: string
+        default: ubuntu-latest
+    outputs:
+      version:
+        description: The release version added by the pull request, for example `v1.2.3`.
+        value: ${{ jobs.release-note.outputs.version }}
+
+permissions: {}
+
+jobs:
+  release-note:
+    name: Validate release note
+    runs-on: ${{ inputs.runs-on }}
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.validate.outputs.version }}
+    steps:
+      - name: Require a pull request event
+        if: ${{ github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
+        run: |
+          echo "::error::release-note.yml validates pull requests; it was called from a ${GITHUB_EVENT_NAME} event."
+          exit 1
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Validate new release note
+        id: validate
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CHANGELOG: ${{ inputs.changelog-path }}
+          CHECK_PACKAGE_VERSION: ${{ inputs.check-package-version }}
+          PACKAGE_JSON: ${{ inputs.package-json-path }}
+          ALLOW_EMPTY_BASE_HEADING: ${{ inputs.allow-empty-base-heading }}
+        run: |
+          set -euo pipefail
+
+          heading_pattern='v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?'
+          section_notes() {
+            awk -v heading="## $1" '
+              $0 == heading { found = 1; next }
+              found && /^## / { exit }
+              found { print }
+            '
+          }
+
+          if [ ! -f "$CHANGELOG" ]; then
+            echo "::error::$CHANGELOG does not exist."
+            exit 1
+          fi
+
+          mapfile -t versions < <(
+            git diff --unified=0 "$BASE_SHA" "$HEAD_SHA" -- "$CHANGELOG" \
+              | sed -nE "s/^\+## (${heading_pattern})\$/\1/p"
+          )
+
+          if [ "${#versions[@]}" -eq 0 ] && [ "$ALLOW_EMPTY_BASE_HEADING" = 'true' ]; then
+            mapfile -t versions < <(
+              git show "$BASE_SHA:$CHANGELOG" 2>/dev/null \
+                | sed -nE "s/^## (${heading_pattern})\$/\1/p"
+            )
+            if [ "${#versions[@]}" -eq 1 ]; then
+              base_notes=$(git show "$BASE_SHA:$CHANGELOG" | section_notes "${versions[0]}")
+              if [ -n "$(printf '%s' "$base_notes" | tr -d '[:space:]')" ]; then
+                versions=()
+              fi
+            else
+              versions=()
+            fi
+          fi
+
+          if [ "${#versions[@]}" -ne 1 ]; then
+            echo "::error::$CHANGELOG must add exactly one release heading in the form ## vMAJOR.MINOR.PATCH."
+            exit 1
+          fi
+
+          version="${versions[0]}"
+          first_version=$(sed -nE "s/^## (${heading_pattern})\$/\1/p" "$CHANGELOG" | head -n 1)
+          if [ "$first_version" != "$version" ]; then
+            echo "::error::Release $version must be the first release heading in $CHANGELOG (found $first_version)."
+            exit 1
+          fi
+
+          notes=$(section_notes "$version" < "$CHANGELOG")
+          if [ -z "$(printf '%s' "$notes" | tr -d '[:space:]')" ]; then
+            echo "::error::Release $version must include release notes."
+            exit 1
+          fi
+
+          if git rev-parse -q --verify "refs/tags/$version" >/dev/null; then
+            echo "::error::Release tag already exists: $version"
+            exit 1
+          fi
+
+          if [ "$CHECK_PACKAGE_VERSION" = 'true' ]; then
+            package_version="v$(jq -r .version "$PACKAGE_JSON")"
+            if [ "$package_version" != "$version" ]; then
+              echo "::error::$PACKAGE_JSON version ($package_version) must match the new $CHANGELOG release ($version)."
+              exit 1
+            fi
+          fi
+
+          echo "Release note for $version is valid."
+          echo "version=$version" >> "$GITHUB_OUTPUT"

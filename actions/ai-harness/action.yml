@@ -1,0 +1,225 @@
+name: AI Harness
+description: >-
+  Install a pinned coding-agent harness (OpenCode or Claude Code), optionally install
+  agent skills from a pinned source, and run one non-interactive prompt in the current checkout.
+author: Filipe Bojikian Rissi
+
+inputs:
+  harness:
+    description: Harness to run, `opencode` or `claude`. Empty falls back to `opencode`.
+    required: false
+    default: opencode
+  prompt:
+    description: Prompt sent to the harness. With `opencode-command`, it is passed as the command arguments.
+    required: true
+  opencode-command:
+    description: Optional OpenCode command, for example `pr/review`. Ignored by Claude Code.
+    required: false
+    default: ""
+  opencode-model:
+    description: OpenCode model in `provider/model` form.
+    required: false
+    default: ""
+  opencode-variant:
+    description: Optional OpenCode model variant.
+    required: false
+    default: ""
+  opencode-plugins:
+    description: Whitespace-separated OpenCode plugins to install. Empty installs none.
+    required: false
+    default: "@kompassdev/opencode"
+  claude-model:
+    description: Optional Claude Code model alias or full model ID.
+    required: false
+    default: ""
+  claude-effort:
+    description: Optional Claude Code effort level.
+    required: false
+    default: ""
+  skills:
+    description: Whitespace-separated skill names to install for the harness. Empty installs none.
+    required: false
+    default: ""
+  skills-repository:
+    description: GitHub repository (`owner/name`) that holds the skills under `skills-path`.
+    required: false
+    default: fbrissi/ai-skills
+  skills-ref:
+    description: Tag or commit SHA of `skills-repository` to download the skills from. Pin it; never use a branch.
+    required: false
+    default: v0.1.0
+  skills-path:
+    description: Directory, inside `skills-repository`, that contains one folder per skill.
+    required: false
+    default: .rulesync/skills
+  skills-local-dir:
+    description: Local directory with one folder per skill. When set, the skills are copied from it instead of downloaded.
+    required: false
+    default: ""
+  timeout-minutes:
+    description: Maximum harness run time in minutes.
+    required: false
+    default: "25"
+  output-file:
+    description: File that receives the harness output. Defaults to a file under `RUNNER_TEMP`.
+    required: false
+    default: ""
+  openai-api-key:
+    description: OpenAI API key used by the OpenCode harness.
+    required: false
+    default: ""
+  anthropic-api-key:
+    description: Anthropic API key used by the Claude Code harness.
+    required: false
+    default: ""
+  claude-code-oauth-token:
+    description: Claude Code OAuth token, used when no Anthropic API key is provided.
+    required: false
+    default: ""
+  github-token:
+    description: Optional GitHub token exposed as `GITHUB_TOKEN`/`GH_TOKEN`. Omit it when the task must not reach GitHub.
+    required: false
+    default: ""
+
+outputs:
+  harness:
+    description: The resolved harness.
+    value: ${{ steps.resolve.outputs.harness }}
+  output-file:
+    description: File that holds the harness output.
+    value: ${{ steps.resolve.outputs.output-file }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve harness
+      id: resolve
+      shell: bash
+      env:
+        HARNESS: ${{ inputs.harness }}
+        OUTPUT_FILE: ${{ inputs.output-file }}
+      run: |
+        set -euo pipefail
+        harness="${HARNESS:-opencode}"
+        case "$harness" in
+          opencode | claude) ;;
+          *)
+            echo "::error::Unsupported AI harness '${harness}'. Use 'opencode' or 'claude'."
+            exit 1
+            ;;
+        esac
+
+        setup_node=false
+        if [ "$harness" = 'claude' ] && ! command -v npm >/dev/null 2>&1; then
+          setup_node=true
+        fi
+
+        output_file="${OUTPUT_FILE:-$RUNNER_TEMP/ai-harness-output}"
+        echo "AI harness: $harness"
+        {
+          echo "harness=$harness"
+          echo "output-file=$output_file"
+          echo "setup-node=$setup_node"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Install OpenCode
+      if: ${{ steps.resolve.outputs.harness == 'opencode' }}
+      shell: bash
+      env:
+        OPENCODE_VERSION: 1.19.5
+        OPENCODE_SHA256: 588310a336fa3b9df36b3f0225b26f679d453efaad0cf3d66c3651ef3ec1647a
+      run: |
+        set -euo pipefail
+        case "$(uname -s)-$(uname -m)" in
+          Linux-x86_64 | Linux-amd64) ;;
+          *)
+            echo "::error::The pinned OpenCode build supports linux-x64 only, got $(uname -s)-$(uname -m)."
+            exit 1
+            ;;
+        esac
+
+        archive="$RUNNER_TEMP/opencode-linux-x64.tar.gz"
+        curl -fsSL --retry 3 --output "$archive" \
+          "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-x64.tar.gz"
+        echo "${OPENCODE_SHA256}  ${archive}" | sha256sum --check --strict
+        mkdir -p "$RUNNER_TEMP/opencode" "$HOME/.opencode/bin"
+        tar -xzf "$archive" -C "$RUNNER_TEMP/opencode"
+        install -m 0755 "$RUNNER_TEMP/opencode/opencode" "$HOME/.opencode/bin/opencode"
+        rm -rf "$archive" "$RUNNER_TEMP/opencode"
+        echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+
+    - name: Install OpenCode plugins
+      if: ${{ steps.resolve.outputs.harness == 'opencode' && inputs.opencode-plugins != '' }}
+      shell: bash
+      env:
+        OPENCODE_PLUGINS: ${{ inputs.opencode-plugins }}
+      run: |
+        set -euo pipefail
+        for plugin in $OPENCODE_PLUGINS; do
+          timeout --foreground --kill-after=30s 5m opencode plugin "$plugin"
+        done
+
+    - name: Setup Node
+      if: ${{ steps.resolve.outputs.setup-node == 'true' }}
+      uses: actions/setup-node@v7
+      with:
+        node-version: 24
+
+    - name: Install Claude Code
+      if: ${{ steps.resolve.outputs.harness == 'claude' }}
+      shell: bash
+      env:
+        CLAUDE_CODE_VERSION: 2.1.319
+      run: |
+        set -euo pipefail
+        npm install --global --no-fund --no-audit "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+        claude --version
+
+    - name: Install skills
+      if: ${{ inputs.skills != '' }}
+      shell: bash
+      env:
+        AI_HARNESS: ${{ steps.resolve.outputs.harness }}
+        SKILLS: ${{ inputs.skills }}
+        SKILLS_REPOSITORY: ${{ inputs.skills-repository }}
+        SKILLS_REF: ${{ inputs.skills-ref }}
+        SKILLS_PATH: ${{ inputs.skills-path }}
+        SKILLS_LOCAL_DIR: ${{ inputs.skills-local-dir }}
+      run: bash "$GITHUB_ACTION_PATH/install-skills.sh"
+
+    - name: Run harness
+      shell: bash
+      env:
+        AI_HARNESS: ${{ steps.resolve.outputs.harness }}
+        AI_PROMPT: ${{ inputs.prompt }}
+        AI_OUTPUT_FILE: ${{ steps.resolve.outputs.output-file }}
+        AI_TIMEOUT_MINUTES: ${{ inputs.timeout-minutes }}
+        OPENCODE_COMMAND: ${{ inputs.opencode-command }}
+        OPENCODE_MODEL: ${{ inputs.opencode-model }}
+        OPENCODE_VARIANT: ${{ inputs.opencode-variant }}
+        CLAUDE_MODEL: ${{ inputs.claude-model }}
+        CLAUDE_EFFORT: ${{ inputs.claude-effort }}
+        OPENAI_API_KEY: ${{ inputs.openai-api-key }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude-code-oauth-token }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        GH_REPO: ${{ github.repository }}
+      run: bash "$GITHUB_ACTION_PATH/run.sh"
+
+    - name: Export OpenCode session
+      if: ${{ always() && !cancelled() && steps.resolve.outputs.harness == 'opencode' }}
+      shell: bash
+      run: |
+        session_id="$(opencode session list 2>/dev/null | awk 'NR > 2 && $1 ~ /^ses_/ { print $1; exit }')"
+
+        if [ -n "$session_id" ]; then
+          echo "OpenCode session: $session_id"
+          opencode export "$session_id"
+        else
+          echo "No OpenCode session found to export"
+        fi
+
+branding:
+  icon: cpu
+  color: purple
