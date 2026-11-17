@@ -75,7 +75,6 @@ jobs:
     with:
       pr-number: ${{ inputs.pr_number }}
       node-version: "24"
-      node-cache: yarn
       install-command: yarn install --frozen-lockfile
       dependency-cache-path: node_modules
     secrets: inherit
@@ -126,11 +125,12 @@ already cancels an older review of the same pull request.
 | `timeout-minutes` | `25` | Harness run timeout. |
 | `job-timeout-minutes` | `30` | Review job timeout. |
 | `node-version` | `""` | Node.js version for actions/setup-node; empty skips it. |
-| `node-cache` | `""` | `npm`, `yarn`, or `pnpm` cache for actions/setup-node. |
+| `node-cache` | `""` | `npm`, `yarn`, or `pnpm` cache for actions/setup-node. Only used with `save-dependency-cache`. |
 | `install-command` | `""` | Dependency install command; empty skips it. |
 | `dependency-cache-path` | `""` | Paths cached around `install-command` (for example `node_modules`). |
 | `dependency-cache-prefix` | `code-review-deps-v1` | Cache key prefix; the key is `<prefix>-<os>-<arch>-<hash>`. A quality workflow can pre-warm the same key. |
 | `dependency-cache-files` | `**/{package-lock.json,yarn.lock,pnpm-lock.yaml}` | Files hashed into the cache key. |
+| `save-dependency-cache` | `false` | Save the cache after installing the PR's dependencies. Keep it off and warm the same key from the default branch. |
 
 ### Secrets
 
@@ -293,6 +293,9 @@ and grant per job:
   so project MCP servers never start in CI.
 - **Explicit secrets.** Reusable workflows declare every secret they read. Pass them explicitly (required
   for callers outside the `fbrissi` account), with `secrets: inherit`, or through the review environment; never interpolate secrets into scripts.
+- **Read-only dependency cache.** The review installs the pull request's dependencies, whose install scripts can
+  tamper with `node_modules`. It only restores the dependency cache by default, so one pull request can never poison
+  the cache that later reviews restore. Warm the same key from a workflow that runs on the default branch.
 - **Untrusted input.** Inputs and PR data reach scripts only through environment variables.
 - The harnesses run with permission prompts disabled. Only review pull requests from trusted contributors, and do
   not run these workflows on `pull_request_target` with untrusted code.

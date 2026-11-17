@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.3.0
+
+### Added
+
+- `code-review.yml` input `save-dependency-cache` (default `false`) to opt back into saving the dependency cache from a review.
+
+### Security
+
+- `code-review.yml` only restores the dependency cache by default and no longer saves it after installing a pull request's dependencies, whose install scripts could otherwise poison the cache that later reviews restore. `node-cache` now applies only with `save-dependency-cache`, because actions/setup-node also saves its cache. Warm the cache from the default branch instead.
+
 ## v1.2.1
 
 ### Fixed

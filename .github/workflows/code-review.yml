@@ -103,7 +103,7 @@ on:
         type: string
         default: ""
       node-cache:
-        description: Package manager cache for actions/setup-node (`npm`, `yarn`, or `pnpm`). Empty disables it.
+        description: Package manager cache for actions/setup-node (`npm`, `yarn`, or `pnpm`). Only used with `save-dependency-cache`, because actions/setup-node also saves its cache. Empty disables it.
         required: false
         type: string
         default: ""
@@ -127,6 +127,11 @@ on:
         required: false
         type: string
         default: "**/{package-lock.json,yarn.lock,pnpm-lock.yaml}"
+      save-dependency-cache:
+        description: Save the dependency cache after installing the pull request's dependencies. Off by default, so a pull request can never write a cache that later reviews restore; warm the cache from the default branch instead.
+        required: false
+        type: boolean
+        default: false
     secrets:
       AGENT_APP_PRIVATE_KEY:
         description: Private key of the review GitHub App.
@@ -402,7 +407,7 @@ jobs:
         if: ${{ inputs.node-version != '' }}
         with:
           node-version: ${{ inputs.node-version }}
-          cache: ${{ inputs.node-cache }}
+          cache: ${{ inputs.save-dependency-cache && inputs.node-cache || '' }}
 
       - name: Install dependencies
         if: ${{ inputs.install-command != '' && steps.dependency-cache.outputs.cache-hit != 'true' }}
@@ -411,7 +416,7 @@ jobs:
         run: bash -euo pipefail -c "$INSTALL_COMMAND"
 
       - name: Save dependency cache
-        if: ${{ inputs.dependency-cache-path != '' && inputs.install-command != '' && steps.dependency-cache.outputs.cache-hit != 'true' }}
+        if: ${{ inputs.save-dependency-cache && inputs.dependency-cache-path != '' && inputs.install-command != '' && steps.dependency-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: ${{ inputs.dependency-cache-path }}
