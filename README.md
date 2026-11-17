@@ -137,6 +137,17 @@ already cancels an older review of the same pull request.
 Pass them with `secrets: inherit` or explicitly under the same names. Secrets stored in the `environment` are also
 available to the review job.
 
+`secrets: inherit` only works when the caller belongs to the same owner as this repository (`fbrissi`). Callers in
+another organization, such as `oliblish-dev`, must pass each secret explicitly, or organization secrets arrive empty:
+
+```yaml
+    secrets:
+      AGENT_APP_PRIVATE_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      OPEN_AI_TOKEN: ${{ secrets.OPEN_AI_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+```
+
 | Secret | Required | Description |
 |---|---|---|
 | `AGENT_APP_PRIVATE_KEY` | yes | Private key of the review GitHub App. |
@@ -280,8 +291,8 @@ and grant per job:
   `GITHUB_TOKEN` and publishes through a short-lived GitHub App token scoped to `contents: read`, `issues: read`, and
   `pull-requests: write`, whatever else the App can do. Claude Code runs with `--strict-mcp-config`,
   so project MCP servers never start in CI.
-- **Explicit secrets.** Reusable workflows declare every secret they read. Pass them explicitly, with
-  `secrets: inherit`, or through the review environment; never interpolate secrets into scripts.
+- **Explicit secrets.** Reusable workflows declare every secret they read. Pass them explicitly (required
+  for callers outside the `fbrissi` account), with `secrets: inherit`, or through the review environment; never interpolate secrets into scripts.
 - **Untrusted input.** Inputs and PR data reach scripts only through environment variables.
 - The harnesses run with permission prompts disabled. Only review pull requests from trusted contributors, and do
   not run these workflows on `pull_request_target` with untrusted code.
