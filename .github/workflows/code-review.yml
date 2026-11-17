@@ -56,7 +56,7 @@ on:
         description: Tag or commit SHA of fbrissi/ai-skills used when `review-skill-source` is `ai-skills`.
         required: false
         type: string
-        default: v0.1.0
+        default: v0.2.0
       base-skills-path:
         description: Directory holding one folder per skill in the reviewed repository, used when `review-skill-source` is `base`.
         required: false

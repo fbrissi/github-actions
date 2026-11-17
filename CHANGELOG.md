@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.4.0
+
+### Changed
+
+- Pin the shared skills to fbrissi/ai-skills `v0.2.0`: the `ai-harness` action's `skills-ref` and `code-review.yml`'s `ai-skills-ref` defaults move from `v0.1.0`, so the review-changes skill resolves linked tickets from any supported provider.
+
 ## v1.3.0
 
 ### Added
