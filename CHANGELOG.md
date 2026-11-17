@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.1.0
+
+### Added
+
+- Reusable workflows fall back to the calling repository's configuration variables when an input is empty: `CI_RUNNER` for `runs-on` in every workflow, and `AI_HARNESS`, `OPENCODE_MODEL`, `OPENCODE_VARIANT`, `CLAUDE_MODEL`, `CLAUDE_EFFORT`, and `AGENT_APP_ID` in `code-review.yml`. The review job resolves them inside its `environment`, so environment-level variables work too.
+
+### Changed
+
+- `code-review.yml` no longer requires the `agent-app-id` input when the `AGENT_APP_ID` variable is set.
+
 ## v1.0.0
 
 ### Added

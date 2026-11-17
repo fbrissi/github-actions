@@ -24,10 +24,10 @@ on:
         type: boolean
         default: false
       runs-on:
-        description: Runner label.
+        description: Runner label. Empty uses the `CI_RUNNER` variable, then `ubuntu-latest`.
         required: false
         type: string
-        default: ubuntu-latest
+        default: ""
     outputs:
       version:
         description: The release version added by the pull request, for example `v1.2.3`.
@@ -38,7 +38,7 @@ permissions: {}
 jobs:
   release-note:
     name: Validate release note
-    runs-on: ${{ inputs.runs-on }}
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
     permissions:
       contents: read
     outputs:

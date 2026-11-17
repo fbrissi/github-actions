@@ -69,10 +69,10 @@ on:
         type: string
         default: tag
       runs-on:
-        description: Runner label for every job.
+        description: Runner label for every job. Empty uses the `CI_RUNNER` variable, then `ubuntu-latest`.
         required: false
         type: string
-        default: ubuntu-latest
+        default: ""
     secrets:
       TFC_API_TOKEN:
         description: HCP Terraform API token, required with `tfc-workspace`.
@@ -94,7 +94,7 @@ permissions: {}
 jobs:
   prepare:
     name: Prepare Release
-    runs-on: ${{ inputs.runs-on }}
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
     permissions:
       contents: read
     outputs:
@@ -231,7 +231,7 @@ jobs:
     name: Wait for Infrastructure
     needs: prepare
     if: ${{ needs.prepare.outputs.skip != 'true' && needs.prepare.outputs.terraform_changed == 'true' }}
-    runs-on: ${{ inputs.runs-on }}
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
     permissions: {}
     timeout-minutes: ${{ inputs.infrastructure-timeout-minutes }}
     steps:
@@ -260,7 +260,7 @@ jobs:
       ${{ always() && !cancelled()
       && needs.prepare.result == 'success' && needs.prepare.outputs.skip != 'true'
       && (needs.wait-for-infrastructure.result == 'success' || needs.wait-for-infrastructure.result == 'skipped') }}
-    runs-on: ${{ inputs.runs-on }}
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
     permissions:
       actions: write
       contents: write

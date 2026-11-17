@@ -69,13 +69,6 @@ jobs:
       pull-requests: read
     with:
       pr-number: ${{ inputs.pr_number }}
-      harness: ${{ vars.AI_HARNESS }}
-      opencode-model: ${{ vars.OPENCODE_MODEL }}
-      opencode-variant: ${{ vars.OPENCODE_VARIANT }}
-      claude-model: ${{ vars.CLAUDE_MODEL }}
-      claude-effort: ${{ vars.CLAUDE_EFFORT }}
-      agent-app-id: ${{ vars.AGENT_APP_ID }}
-      runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
       node-version: "24"
       node-cache: yarn
       install-command: yarn install --frozen-lockfile
@@ -100,7 +93,8 @@ Trigger it after the quality checks pass, on the default branch:
             });
 ```
 
-The dispatching job needs `actions: write`. Do not add a `concurrency` group to the caller: the reusable workflow
+Harness and model settings come from the [variables](#variables) of the calling repository (or of the review
+`environment`) unless the matching input is set. The dispatching job needs `actions: write`. Do not add a `concurrency` group to the caller: the reusable workflow
 already cancels an older review of the same pull request.
 
 ### Inputs
@@ -108,21 +102,21 @@ already cancels an older review of the same pull request.
 | Input | Default | Description |
 |---|---|---|
 | `pr-number` | – (required) | Pull request to review. |
-| `agent-app-id` | – (required) | GitHub App that publishes the review (`pull-requests: write`, `contents: read`). |
-| `harness` | `""` (`opencode`) | `opencode` or `claude`. |
+| `agent-app-id` | `AGENT_APP_ID` | GitHub App that publishes the review (`pull-requests: write`, `contents: read`). |
+| `harness` | `AI_HARNESS`, then `opencode` | `opencode` or `claude`. |
 | `opencode-command` | `pr/review` | OpenCode command that reviews the PR (Kompass). Empty uses the review-changes skill prompt. |
 | `opencode-plugins` | `@kompassdev/opencode` | OpenCode plugins. Set `""` when `opencode-command` is empty. |
-| `opencode-model` | `""` | Required by the `opencode` harness. |
-| `opencode-variant` | `""` | OpenCode model variant. |
-| `claude-model` | `""` | Claude Code model. |
-| `claude-effort` | `""` | Claude Code effort level. |
+| `opencode-model` | `OPENCODE_MODEL` | Required by the `opencode` harness. |
+| `opencode-variant` | `OPENCODE_VARIANT` | OpenCode model variant. |
+| `claude-model` | `CLAUDE_MODEL` | Claude Code model. |
+| `claude-effort` | `CLAUDE_EFFORT` | Claude Code effort level. |
 | `prompt` | `""` | Overrides the generated prompt. |
 | `review-skill-source` | `ai-skills` | `ai-skills` (pinned `ai-skills-ref`), `base` (the PR base commit, for the skills repository itself), or `none`. |
 | `ai-skills-ref` | `v0.1.0` | `fbrissi/ai-skills` tag or SHA used with `ai-skills`. |
 | `base-skills-path` | `.rulesync/skills` | Skills directory read from the base commit with `base`. |
 | `check-name` | `Code Review` | Check run name. |
 | `environment` | `code-review` | Environment of the review job; its secrets are visible to the job. |
-| `runs-on` | `ubuntu-latest` | Runner label of every job. |
+| `runs-on` | `CI_RUNNER`, then `ubuntu-latest` | Runner label of every job. |
 | `timeout-minutes` | `25` | Harness run timeout. |
 | `job-timeout-minutes` | `30` | Review job timeout. |
 | `node-version` | `""` | Node.js version for actions/setup-node; empty skips it. |
@@ -172,7 +166,7 @@ available to the review job.
 | `check-package-version` | `false` | Require `package.json` `version` to match the release. |
 | `package-json-path` | `package.json` | `package.json` path. |
 | `allow-empty-base-heading` | `false` | Accept filling the notes of the single empty heading already on the base branch (first release). |
-| `runs-on` | `ubuntu-latest` | Runner label. |
+| `runs-on` | `CI_RUNNER`, then `ubuntu-latest` | Runner label. |
 
 Output: `version`, the release added by the pull request.
 
@@ -240,9 +234,22 @@ deploy is dispatched explicitly.
 | `infrastructure-timeout-minutes` | `360` | Timeout of the wait job (includes manual approval). |
 | `deploy-workflow` | `""` | Workflow dispatched on the tag, for example `deploy.yml`. |
 | `deploy-tag-input` | `tag` | Input of `deploy-workflow` that receives the tag; empty sends none. |
-| `runs-on` | `ubuntu-latest` | Runner label of every job. |
+| `runs-on` | `CI_RUNNER`, then `ubuntu-latest` | Runner label of every job. |
 
 Secret: `TFC_API_TOKEN` (required with `tfc-workspace`). Outputs: `version`, `skipped`.
+
+## Variables
+
+Reusable workflows read the `vars` context of the calling repository, so these configuration variables (repository,
+organization, or, for the review job, its `environment`) are used whenever the matching input is empty:
+
+| Variable | Used by | Purpose |
+|---|---|---|
+| `CI_RUNNER` | all | Runner label; defaults to `ubuntu-latest`. |
+| `AI_HARNESS` | `code-review.yml` | `opencode` (default) or `claude`. |
+| `OPENCODE_MODEL`, `OPENCODE_VARIANT` | `code-review.yml` | OpenCode model and variant. |
+| `CLAUDE_MODEL`, `CLAUDE_EFFORT` | `code-review.yml` | Claude Code model and effort. |
+| `AGENT_APP_ID` | `code-review.yml` | GitHub App that publishes the review. |
 
 ## Permissions
 

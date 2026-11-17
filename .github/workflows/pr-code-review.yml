@@ -21,10 +21,4 @@ jobs:
       pull-requests: read
     with:
       pr-number: ${{ inputs.pr_number }}
-      harness: ${{ vars.AI_HARNESS }}
-      opencode-model: ${{ vars.OPENCODE_MODEL }}
-      opencode-variant: ${{ vars.OPENCODE_VARIANT }}
-      claude-model: ${{ vars.CLAUDE_MODEL }}
-      claude-effort: ${{ vars.CLAUDE_EFFORT }}
-      agent-app-id: ${{ vars.AGENT_APP_ID }}
     secrets: inherit
