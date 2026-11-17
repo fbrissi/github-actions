@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.2.1
+
+### Fixed
+
+- Document that callers outside the `fbrissi` account must pass secrets explicitly: `secrets: inherit` does not cross owners, so organization secrets would arrive empty.
+
 ## v1.2.0
 
 ### Added
