@@ -2,6 +2,7 @@ name: Quality Checks
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
   workflow_dispatch:
@@ -57,7 +58,8 @@ jobs:
     needs: [actionlint, shellcheck, release-note]
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
-    permissions: {}
+    permissions:
+      actions: write
     steps:
       - name: Validate quality results
         env:
@@ -76,3 +78,24 @@ jobs:
             echo "Release note result: $RELEASE_NOTE_RESULT"
             exit 1
           fi
+
+      - name: Dispatch Code Review
+        if: ${{ success() && github.event_name == 'pull_request' && github.event.pull_request.draft == false && vars.CODE_REVIEW_ENABLED != 'false' }}
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const ref = context.payload.repository.default_branch;
+            try {
+              await github.rest.actions.createWorkflowDispatch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'pr-code-review.yml',
+                ref,
+                inputs: { pr_number: String(context.payload.pull_request.number) },
+              });
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+              core.warning(`pr-code-review.yml is not on ${ref} yet; Code Review was not dispatched.`);
+            }

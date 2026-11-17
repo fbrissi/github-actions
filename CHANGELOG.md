@@ -15,4 +15,4 @@ merging a pull request that adds one tags the release and moves the major tag.
 - `release.yml` reusable workflow: releases the first changelog version of a merged pull request (or a given version), idempotently creates the tag and the GitHub release, optionally waits for the HCP Terraform apply of the commit, dispatches a deploy workflow on the tag, and moves the major tag.
 - `ai-harness` action: installs pinned OpenCode 1.19.5 (SHA-256 verified) or Claude Code 2.1.319, installs skills from a pinned repository ref or a local directory, and runs one non-interactive prompt.
 - `terraform-cloud-wait` action: waits for the newest HCP Terraform run of a commit to apply.
-- Repository quality checks (actionlint, shellcheck, release note) and release orchestration for this repository.
+- Repository quality checks (actionlint, shellcheck, release note), AI code review of its own pull requests, and release orchestration for this repository.

@@ -29,7 +29,9 @@ docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.12 .github/workflo
 docker run --rm -v "$PWD":/mnt -w /mnt koalaman/shellcheck:v0.10.0 $(git ls-files '*.sh')
 ```
 
-CI runs both, plus the release-note check.
+CI runs both, plus the release-note check. When they pass, Quality Checks dispatches `pr-code-review.yml` on `main`,
+which reviews the pull request with the local `code-review.yml` (set the `CODE_REVIEW_ENABLED` variable to `false` to
+turn it off).
 
 ## Releases
 

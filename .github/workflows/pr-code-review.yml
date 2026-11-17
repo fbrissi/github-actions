@@ -1,0 +1,30 @@
+name: PR Code Review
+
+# Dispatched by Quality Checks on the default branch, so a pull request cannot change its own reviewer.
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to review
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  code-review:
+    name: Code Review
+    uses: ./.github/workflows/code-review.yml
+    permissions:
+      checks: write
+      contents: read
+      pull-requests: read
+    with:
+      pr-number: ${{ inputs.pr_number }}
+      harness: ${{ vars.AI_HARNESS }}
+      opencode-model: ${{ vars.OPENCODE_MODEL }}
+      opencode-variant: ${{ vars.OPENCODE_VARIANT }}
+      claude-model: ${{ vars.CLAUDE_MODEL }}
+      claude-effort: ${{ vars.CLAUDE_EFFORT }}
+      agent-app-id: ${{ vars.AGENT_APP_ID }}
+    secrets: inherit
