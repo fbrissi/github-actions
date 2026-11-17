@@ -117,7 +117,7 @@ already cancels an older review of the same pull request.
 | `claude-effort` | `CLAUDE_EFFORT` | Claude Code effort level. |
 | `prompt` | `""` | Overrides the generated prompt. |
 | `review-skill-source` | `ai-skills` | `ai-skills` (pinned `ai-skills-ref`), `base` (the PR base commit, for the skills repository itself), or `none`. |
-| `ai-skills-ref` | `v0.1.0` | `fbrissi/ai-skills` tag or SHA used with `ai-skills`. |
+| `ai-skills-ref` | `v0.2.0` | `fbrissi/ai-skills` tag or SHA used with `ai-skills`. |
 | `base-skills-path` | `.rulesync/skills` | Skills directory read from the base commit with `base`. |
 | `check-name` | `Code Review` | Check run name. |
 | `environment` | `code-review` | Environment of the review job; its secrets are visible to the job. |

@@ -23,7 +23,7 @@ narrowest tokens that work.
     claude-model: ${{ vars.CLAUDE_MODEL }}
     claude-effort: ${{ vars.CLAUDE_EFFORT }}
     skills: nfse-technical-note-analysis
-    skills-ref: v0.1.0
+    skills-ref: v0.2.0
     openai-api-key: ${{ secrets.OPEN_AI_TOKEN }}
     anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
     claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -46,7 +46,7 @@ narrowest tokens that work.
 | `claude-effort` | `""` | Claude Code effort level. |
 | `skills` | `""` | Whitespace-separated skill names to install. Empty installs none. |
 | `skills-repository` | `fbrissi/ai-skills` | Repository the skills are downloaded from. |
-| `skills-ref` | `v0.1.0` | Tag or commit SHA of `skills-repository`. Pin it; never use a branch. |
+| `skills-ref` | `v0.2.0` | Tag or commit SHA of `skills-repository`. Pin it; never use a branch. |
 | `skills-path` | `.rulesync/skills` | Directory in `skills-repository` with one folder per skill. |
 | `skills-local-dir` | `""` | Local directory with one folder per skill; replaces the download when set. |
 | `timeout-minutes` | `25` | Maximum harness run time. |

@@ -47,7 +47,7 @@ inputs:
   skills-ref:
     description: Tag or commit SHA of `skills-repository` to download the skills from. Pin it; never use a branch.
     required: false
-    default: v0.1.0
+    default: v0.2.0
   skills-path:
     description: Directory, inside `skills-repository`, that contains one folder per skill.
     required: false
