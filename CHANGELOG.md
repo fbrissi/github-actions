@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.2.0
+
+### Added
+
+- `code-review.yml` accepts the review GitHub App's client ID through the `agent-client-id` input or the `AGENT_APP_CLIENT_ID` variable.
+
+### Changed
+
+- `code-review.yml` scopes the review App token to `contents: read`, `issues: read`, and `pull-requests: write`, so the harness never receives the App's other permissions.
+
+### Deprecated
+
+- The `agent-app-id` input and the `AGENT_APP_ID` variable. They still work when no client ID is set.
+
 ## v1.1.0
 
 ### Added

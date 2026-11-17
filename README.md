@@ -40,6 +40,11 @@ GitHub App:
    the head commit (or that the harness skipped it on purpose, for example when there are no new findings).
 3. **Finish Code Review** completes the check run with `success` or `failure`.
 
+The review GitHub App needs repository permissions `Contents: Read and write`, `Pull requests: Read and write`, and
+`Issues: Read`, and nothing else. `Contents: write` only makes its approval count toward required reviews: the token
+handed to the harness is always scoped down to `contents: read`, `issues: read`, and `pull-requests: write`. Keep
+other automation, such as Terraform, on a separate App so the review key never reaches secrets or variables.
+
 ### Caller
 
 Dispatch the caller from the default branch so a pull request can never change its own reviewer, and so open pull
@@ -102,7 +107,8 @@ already cancels an older review of the same pull request.
 | Input | Default | Description |
 |---|---|---|
 | `pr-number` | – (required) | Pull request to review. |
-| `agent-app-id` | `AGENT_APP_ID` | GitHub App that publishes the review (`pull-requests: write`, `contents: read`). |
+| `agent-client-id` | `AGENT_APP_CLIENT_ID`, then `agent-app-id` | Client ID of the GitHub App that publishes the review. |
+| `agent-app-id` | `AGENT_APP_ID` | Deprecated: App ID, used only when no client ID is set. |
 | `harness` | `AI_HARNESS`, then `opencode` | `opencode` or `claude`. |
 | `opencode-command` | `pr/review` | OpenCode command that reviews the PR (Kompass). Empty uses the review-changes skill prompt. |
 | `opencode-plugins` | `@kompassdev/opencode` | OpenCode plugins. Set `""` when `opencode-command` is empty. |
@@ -133,7 +139,7 @@ available to the review job.
 
 | Secret | Required | Description |
 |---|---|---|
-| `AGENT_APP_PRIVATE_KEY` | yes | Private key of the `agent-app-id` App. |
+| `AGENT_APP_PRIVATE_KEY` | yes | Private key of the review GitHub App. |
 | `OPEN_AI_TOKEN` | `opencode` | OpenAI API key. |
 | `ANTHROPIC_API_KEY` | `claude` (this or the next) | Anthropic API key. |
 | `CLAUDE_CODE_OAUTH_TOKEN` | `claude` (this or the previous) | Claude Code OAuth token, used when `ANTHROPIC_API_KEY` is empty. |
@@ -249,7 +255,8 @@ organization, or, for the review job, its `environment`) are used whenever the m
 | `AI_HARNESS` | `code-review.yml` | `opencode` (default) or `claude`. |
 | `OPENCODE_MODEL`, `OPENCODE_VARIANT` | `code-review.yml` | OpenCode model and variant. |
 | `CLAUDE_MODEL`, `CLAUDE_EFFORT` | `code-review.yml` | Claude Code model and effort. |
-| `AGENT_APP_ID` | `code-review.yml` | GitHub App that publishes the review. |
+| `AGENT_APP_CLIENT_ID` | `code-review.yml` | Client ID of the GitHub App that publishes the review. |
+| `AGENT_APP_ID` | `code-review.yml` | Deprecated fallback for `AGENT_APP_CLIENT_ID`. |
 
 ## Permissions
 
@@ -270,7 +277,8 @@ and grant per job:
   the review skill out of the reviewed tree (`ai-skills`, or `base` for the skills repository itself). Skills are
   installed into the harness home directory, never read from the PR checkout.
 - **Least privilege.** Jobs declare their own permissions; the review job only gets `contents: read` from
-  `GITHUB_TOKEN` and publishes through a short-lived GitHub App token. Claude Code runs with `--strict-mcp-config`,
+  `GITHUB_TOKEN` and publishes through a short-lived GitHub App token scoped to `contents: read`, `issues: read`, and
+  `pull-requests: write`, whatever else the App can do. Claude Code runs with `--strict-mcp-config`,
   so project MCP servers never start in CI.
 - **Explicit secrets.** Reusable workflows declare every secret they read. Pass them explicitly, with
   `secrets: inherit`, or through the review environment; never interpolate secrets into scripts.

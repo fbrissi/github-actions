@@ -62,8 +62,13 @@ on:
         required: false
         type: string
         default: .rulesync/skills
+      agent-client-id:
+        description: Client ID of the GitHub App that publishes the review. Empty uses the `AGENT_APP_CLIENT_ID` variable, then `agent-app-id`.
+        required: false
+        type: string
+        default: ""
       agent-app-id:
-        description: GitHub App ID that publishes the review (`pull-requests` write, `contents` read). Empty uses the `AGENT_APP_ID` variable.
+        description: Deprecated, use `agent-client-id`. GitHub App ID used when no client ID is set. Empty uses the `AGENT_APP_ID` variable.
         required: false
         type: string
         default: ""
@@ -124,7 +129,7 @@ on:
         default: "**/{package-lock.json,yarn.lock,pnpm-lock.yaml}"
     secrets:
       AGENT_APP_PRIVATE_KEY:
-        description: Private key of the `agent-app-id` GitHub App.
+        description: Private key of the review GitHub App.
         required: false
       OPEN_AI_TOKEN:
         description: OpenAI API key for the `opencode` harness.
@@ -257,7 +262,7 @@ jobs:
           PROMPT: ${{ inputs.prompt }}
           OPENCODE_COMMAND: ${{ inputs.opencode-command }}
           OPENCODE_MODEL: ${{ inputs.opencode-model || vars.OPENCODE_MODEL }}
-          APP_ID: ${{ inputs.agent-app-id || vars.AGENT_APP_ID }}
+          APP_CLIENT_ID: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID || inputs.agent-app-id || vars.AGENT_APP_ID }}
           SKILL_SOURCE: ${{ inputs.review-skill-source }}
           PR_NUMBER: ${{ needs.start-review.outputs.pr_number }}
           HAS_APP_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY != '' }}
@@ -278,8 +283,8 @@ jobs:
               exit 1
               ;;
           esac
-          if [ -z "$APP_ID" ]; then
-            echo '::error::The agent-app-id input or the AGENT_APP_ID variable is required.'
+          if [ -z "$APP_CLIENT_ID" ]; then
+            echo '::error::The agent-client-id input or the AGENT_APP_CLIENT_ID variable is required.'
             exit 1
           fi
           if [ "$HAS_APP_KEY" != 'true' ]; then
@@ -324,8 +329,11 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ inputs.agent-app-id || vars.AGENT_APP_ID }}
+          client-id: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID || inputs.agent-app-id || vars.AGENT_APP_ID }}
           private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-issues: read
+          permission-pull-requests: write
 
       - uses: actions/checkout@v7
         with:
