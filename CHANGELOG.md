@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.5.1
+
+### Fixed
+
+- `terraform-permissions` action: quote the `change-pattern` description, whose `mode: auto` text made `action.yml` invalid YAML so every caller failed to load the action.
+- `Quality / node-tests` now parses every `actions/*/action.yml`, because actionlint does not check composite action metadata.
+
 ## v1.5.0
 
 ### Added
