@@ -1,7 +1,8 @@
 # github-actions
 
 Reusable GitHub Actions workflows and composite actions for my personal projects: AI code review with a
-switchable harness (OpenCode or Claude Code), changelog-driven releases, and HCP Terraform helpers.
+switchable harness (OpenCode or Claude Code), changelog-driven releases, HCP Terraform helpers, and a Terraform
+credential permission check.
 
 Everything here is generic enough to be shared across repositories. Project-specific logic (build matrices,
 deploys, credential rotation) stays in each project.
@@ -13,8 +14,10 @@ deploys, credential rotation) stays in each project.
 | [`code-review.yml`](#code-review) | Reusable workflow | AI review of a pull request, reported as a `Code Review` check run. |
 | [`release-note.yml`](#release-note) | Reusable workflow | Requires each pull request to add one changelog release. |
 | [`release.yml`](#release) | Reusable workflow | Tags and publishes the changelog release, then optionally deploys it. |
+| [`terraform-permissions.yml`](#terraform-permissions) | Reusable workflow | Fails before merge when the Cloudflare Terraform token lacks a permission. |
 | [`ai-harness`](actions/ai-harness/README.md) | Composite action | Installs OpenCode or Claude Code (pinned) and runs one prompt. |
 | [`terraform-cloud-wait`](actions/terraform-cloud-wait/README.md) | Composite action | Waits for the HCP Terraform apply of a commit. |
+| [`terraform-permissions`](actions/terraform-permissions/README.md) | Composite action | Checks a Cloudflare permission manifest and the real token. |
 
 ## Versioning
 
@@ -255,6 +258,40 @@ deploy is dispatched explicitly.
 
 Secret: `TFC_API_TOKEN` (required with `tfc-workspace`). Outputs: `version`, `skipped`.
 
+## Terraform Permissions
+
+`.github/workflows/terraform-permissions.yml` compares the Cloudflare API token Terraform uses with the calling
+repository's permission manifest, so a new resource type that needs a permission the token lacks fails in CI instead
+of in the HCP Terraform apply after merge. See [`terraform-permissions`](actions/terraform-permissions/README.md) for
+the manifest format, the checks, and their limits.
+
+```yaml
+  terraform-permissions:
+    name: Terraform / Cloudflare token permissions
+    uses: fbrissi/github-actions/.github/workflows/terraform-permissions.yml@v1
+    permissions:
+      contents: read
+    with:
+      change-pattern: '^(terraform/|\.github/workflows/quality-checks\.yml$)'
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+```
+
+Call it from a `pull_request` workflow (never `pull_request_target`) that also runs on pushes to the default branch,
+and make it required: do not merge while it is red, because the release apply would fail the same way.
+
+| Input | Default | Description |
+|---|---|---|
+| `manifest` | `terraform/cloudflare-token-permissions.json` | Permission manifest path. |
+| `terraform-directory` | `terraform` | Directory scanned for `*.tf` files. |
+| `mode` | `auto` | `auto` runs the live check on pull requests changing `change-pattern`, default-branch pushes, and other events; `static` or `live` force one. |
+| `change-pattern` | `^terraform/` | Extended regex matched against the files a pull request changes. |
+| `runs-on` | `CI_RUNNER`, then `ubuntu-latest` | Runner label. |
+
+| Secret | Description |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | The Terraform Cloudflare token. Fork and Dependabot pull requests have none and get a "not checked" warning; any other run without it fails. |
+
 ## Variables
 
 Reusable workflows read the `vars` context of the calling repository, so these configuration variables (repository,
@@ -279,6 +316,7 @@ and grant per job:
 | `code-review.yml` | `checks: write`, `contents: read`, `pull-requests: read` |
 | `release-note.yml` | `contents: read` |
 | `release.yml` | `actions: write`, `contents: write` |
+| `terraform-permissions.yml` | `contents: read` |
 
 ## Security
 

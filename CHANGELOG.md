@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.5.0
+
+### Added
+
+- `terraform-permissions.yml` reusable workflow and `terraform-permissions` composite action. They check a repository's Cloudflare permission manifest against its Terraform files and against the real Terraform token, so a missing token permission fails before merge instead of in the HCP Terraform apply. The check came from oliblish.com.br and nota-profile.
+- `Quality / node-tests` job that runs the action scripts' Node tests.
+
 ## v1.4.0
 
 ### Changed
