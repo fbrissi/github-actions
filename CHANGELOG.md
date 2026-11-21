@@ -10,7 +10,7 @@ merging a pull request that adds one tags the release and moves the major tag.
 
 ### Added
 
-- `terraform-permissions.yml` reusable workflow and `terraform-permissions` composite action. They check a repository's Cloudflare permission manifest against its Terraform files and against the real Terraform token, so a missing token permission fails before merge instead of in the HCP Terraform apply. The check came from oliblish.com.br and nota-profile.
+- `terraform-permissions.yml` reusable workflow and `terraform-permissions` composite action. They check a repository's Cloudflare permission manifest against its Terraform files and against the real Terraform token, so a missing token permission fails before merge instead of in the HCP Terraform apply.
 - `Quality / node-tests` job that runs the action scripts' Node tests.
 
 ## v1.4.0

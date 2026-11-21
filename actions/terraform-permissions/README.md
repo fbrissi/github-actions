@@ -59,7 +59,7 @@ receive no secrets) and every other run fails.
   "credential": {
     "githubSecret": "CLOUDFLARE_API_TOKEN",
     "terraformCloudVariable": "CLOUDFLARE_API_TOKEN",
-    "syncHint": "run rotate-credentials.yml in manual mode"
+    "syncHint": "run the credential sync workflow"
   },
   "scopes": {
     "account": { "idLocal": "cloudflare_account_id" },

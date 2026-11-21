@@ -22,7 +22,7 @@ const ACCOUNT = 'a'.repeat(32);
 const ZONE = 'b'.repeat(32);
 const TOKEN_ID = 'c'.repeat(32);
 const SECRET_VALUE = 'cf-secret-token-value-123';
-const locals = { accountId: ACCOUNT, zoneId: ZONE, zoneName: 'oliblish.com.br' };
+const locals = { accountId: ACCOUNT, zoneId: ZONE, zoneName: 'example.com' };
 const ACCOUNT_RESOURCES = { [`com.cloudflare.api.account.${ACCOUNT}`]: '*' };
 const ZONE_RESOURCES = { [`com.cloudflare.api.account.zone.${ZONE}`]: '*' };
 
@@ -187,7 +187,7 @@ describe('live check', () => {
     assert.equal(outcome.ok, false);
     const errors = output.split('\n');
     assert.equal(errors.length, 1);
-    assert.match(errors[0], /^::error::CLOUDFLARE_API_TOKEN is missing "Dynamic URL Redirects Write" \(dashboard: Single Redirect: Edit\) on zone oliblish\.com\.br \(b{32}\), needed by cloudflare_ruleset \(phase http_request_dynamic_redirect\)\. Add it to the token in Cloudflare dashboard > Manage Account > Account API Tokens/);
+    assert.match(errors[0], /^::error::CLOUDFLARE_API_TOKEN is missing "Dynamic URL Redirects Write" \(dashboard: Single Redirect: Edit\) on zone example\.com \(b{32}\), needed by cloudflare_ruleset \(phase http_request_dynamic_redirect\)\. Add it to the token in Cloudflare dashboard > Manage Account > Account API Tokens/);
   });
 
   it('asks for the read permission when the token cannot read its own policies', async () => {
