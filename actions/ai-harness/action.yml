@@ -56,6 +56,26 @@ inputs:
     description: Local directory with one folder per skill. When set, the skills are copied from it instead of downloaded.
     required: false
     default: ""
+  agents:
+    description: >-
+      Whitespace-separated Claude Code agent names to install into `~/.claude/agents`, from `agents-path` in
+      `skills-repository` at `skills-ref`. Claude harness only. Empty installs none.
+    required: false
+    default: ""
+  agents-path:
+    description: Directory, inside `skills-repository`, that contains one `<agent>.md` file per agent.
+    required: false
+    default: plugins/ai-skills/agents
+  agents-local-dir:
+    description: Local directory with one `<agent>.md` file per agent. When set, the agents are copied from it instead of downloaded.
+    required: false
+    default: ""
+  agent:
+    description: >-
+      Claude Code agent to run the prompt as the main agent (`claude --agent`), so it can delegate to other
+      installed agents. Claude harness only. Install it, and the agents it delegates to, with `agents`.
+    required: false
+    default: ""
   timeout-minutes:
     description: Maximum harness run time in minutes.
     required: false
@@ -98,6 +118,8 @@ runs:
       env:
         HARNESS: ${{ inputs.harness }}
         OUTPUT_FILE: ${{ inputs.output-file }}
+        AGENTS: ${{ inputs.agents }}
+        AGENT: ${{ inputs.agent }}
       run: |
         set -euo pipefail
         harness="${HARNESS:-opencode}"
@@ -108,6 +130,11 @@ runs:
             exit 1
             ;;
         esac
+
+        if [ "$harness" != 'claude' ] && { [ -n "$AGENTS" ] || [ -n "$AGENT" ]; }; then
+          echo "::error::The agents and agent inputs require the claude harness, got '${harness}'."
+          exit 1
+        fi
 
         setup_node=false
         if [ "$harness" = 'claude' ] && ! command -v npm >/dev/null 2>&1; then
@@ -175,8 +202,8 @@ runs:
         npm install --global --no-fund --no-audit "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
         claude --version
 
-    - name: Install skills
-      if: ${{ inputs.skills != '' }}
+    - name: Install skills and agents
+      if: ${{ inputs.skills != '' || inputs.agents != '' }}
       shell: bash
       env:
         AI_HARNESS: ${{ steps.resolve.outputs.harness }}
@@ -185,7 +212,10 @@ runs:
         SKILLS_REF: ${{ inputs.skills-ref }}
         SKILLS_PATH: ${{ inputs.skills-path }}
         SKILLS_LOCAL_DIR: ${{ inputs.skills-local-dir }}
-      run: bash "$GITHUB_ACTION_PATH/install-skills.sh"
+        AGENTS: ${{ inputs.agents }}
+        AGENTS_PATH: ${{ inputs.agents-path }}
+        AGENTS_LOCAL_DIR: ${{ inputs.agents-local-dir }}
+      run: bash "$GITHUB_ACTION_PATH/install-assets.sh"
 
     - name: Run harness
       shell: bash
@@ -199,6 +229,7 @@ runs:
         OPENCODE_VARIANT: ${{ inputs.opencode-variant }}
         CLAUDE_MODEL: ${{ inputs.claude-model }}
         CLAUDE_EFFORT: ${{ inputs.claude-effort }}
+        CLAUDE_AGENT: ${{ inputs.agent }}
         OPENAI_API_KEY: ${{ inputs.openai-api-key }}
         ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
         CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude-code-oauth-token }}
