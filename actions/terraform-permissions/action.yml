@@ -24,7 +24,7 @@ inputs:
     required: false
     default: auto
   change-pattern:
-    description: Extended regular expression matched against the files a pull request changes (`mode: auto`).
+    description: "Extended regular expression matched against the files a pull request changes (`mode: auto`)."
     required: false
     default: ^terraform/
 
