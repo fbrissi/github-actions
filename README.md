@@ -141,7 +141,7 @@ Pass them with `secrets: inherit` or explicitly under the same names. Secrets st
 available to the review job.
 
 `secrets: inherit` only works when the caller belongs to the same owner as this repository (`fbrissi`). Callers in
-another organization, such as `oliblish-dev`, must pass each secret explicitly, or organization secrets arrive empty:
+another organization must pass each secret explicitly, or organization secrets arrive empty:
 
 ```yaml
     secrets:
