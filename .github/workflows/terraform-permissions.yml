@@ -1,0 +1,57 @@
+name: Terraform Permissions
+
+on:
+  workflow_call:
+    inputs:
+      manifest:
+        description: Path of the Cloudflare permission manifest, relative to the repository root.
+        required: false
+        type: string
+        default: terraform/cloudflare-token-permissions.json
+      terraform-directory:
+        description: Directory scanned for `*.tf` files, relative to the repository root.
+        required: false
+        type: string
+        default: terraform
+      mode:
+        description: "`auto` (live check on relevant pull requests, default-branch pushes, and other events), `static`, or `live`."
+        required: false
+        type: string
+        default: auto
+      change-pattern:
+        description: Extended regular expression matched against changed files on pull requests (`mode` auto).
+        required: false
+        type: string
+        default: ^terraform/
+      runs-on:
+        description: Runner label. Empty uses the `CI_RUNNER` variable, then `ubuntu-latest`.
+        required: false
+        type: string
+        default: ""
+    secrets:
+      CLOUDFLARE_API_TOKEN:
+        description: The Cloudflare API token Terraform uses. Missing on fork and Dependabot pull requests.
+        required: false
+
+permissions: {}
+
+jobs:
+  terraform-permissions:
+    name: Cloudflare token permissions
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    # Up to four Cloudflare API calls, each up to three 30-second curl attempts with retry back-off (about 8 minutes).
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: fbrissi/github-actions/actions/terraform-permissions@v1
+        with:
+          cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          manifest: ${{ inputs.manifest }}
+          terraform-directory: ${{ inputs.terraform-directory }}
+          mode: ${{ inputs.mode }}
+          change-pattern: ${{ inputs.change-pattern }}

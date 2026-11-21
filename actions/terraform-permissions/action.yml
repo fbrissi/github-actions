@@ -1,0 +1,56 @@
+name: Terraform Permissions
+description: >-
+  Check that the Cloudflare API token Terraform uses grants every permission group its resources need:
+  a static check of a permission manifest against the Terraform files and a live check of the real token.
+author: Filipe Bojikian Rissi
+
+inputs:
+  cloudflare-api-token:
+    description: The Cloudflare API token Terraform uses. Empty on fork and Dependabot pull requests.
+    required: false
+    default: ""
+  manifest:
+    description: Path of the permission manifest, relative to the repository root.
+    required: false
+    default: terraform/cloudflare-token-permissions.json
+  terraform-directory:
+    description: Directory scanned for `*.tf` files, relative to the repository root.
+    required: false
+    default: terraform
+  mode:
+    description: >-
+      `auto` runs the live check on pull requests that change a file matching `change-pattern`, on pushes to the
+      default branch, and on every other event; `static` never calls the Cloudflare API; `live` always does.
+    required: false
+    default: auto
+  change-pattern:
+    description: Extended regular expression matched against the files a pull request changes (`mode: auto`).
+    required: false
+    default: ^terraform/
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 24
+    - name: Check Terraform credential permissions
+      shell: bash
+      env:
+        CLOUDFLARE_API_TOKEN: ${{ inputs.cloudflare-api-token }}
+        TERRAFORM_PERMISSIONS_MANIFEST: ${{ inputs.manifest }}
+        TERRAFORM_DIRECTORY: ${{ inputs.terraform-directory }}
+        MODE: ${{ inputs.mode }}
+        CHANGE_PATTERN: ${{ inputs.change-pattern }}
+        EVENT_NAME: ${{ github.event_name }}
+        REF: ${{ github.ref }}
+        DEFAULT_REF: refs/heads/${{ github.event.repository.default_branch }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        IS_FORK: ${{ github.event.pull_request.head.repo.full_name != '' && github.event.pull_request.head.repo.full_name != github.repository }}
+        PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+      run: bash "$GITHUB_ACTION_PATH/run.sh"
+
+branding:
+  icon: shield
+  color: orange

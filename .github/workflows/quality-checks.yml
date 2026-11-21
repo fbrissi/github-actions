@@ -46,6 +46,21 @@ jobs:
           shellcheck --version
           shellcheck "${scripts[@]}"
 
+  node-tests:
+    name: Quality / node-tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Test action scripts
+        run: node --test actions/*/*.test.mjs
+
   release-note:
     name: Quality / release-note
     if: ${{ github.event_name == 'pull_request' && github.base_ref == 'main' }}
@@ -55,7 +70,7 @@ jobs:
 
   quality-checks:
     name: Quality Checks
-    needs: [actionlint, shellcheck, release-note]
+    needs: [actionlint, shellcheck, node-tests, release-note]
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
@@ -65,10 +80,11 @@ jobs:
         env:
           ACTIONLINT_RESULT: ${{ needs.actionlint.result }}
           SHELLCHECK_RESULT: ${{ needs.shellcheck.result }}
+          NODE_TESTS_RESULT: ${{ needs.node-tests.result }}
           RELEASE_NOTE_RESULT: ${{ needs.release-note.result }}
         run: |
           set -euo pipefail
-          for result in "$ACTIONLINT_RESULT" "$SHELLCHECK_RESULT"; do
+          for result in "$ACTIONLINT_RESULT" "$SHELLCHECK_RESULT" "$NODE_TESTS_RESULT"; do
             if [ "$result" != 'success' ]; then
               echo "A quality job ended with: $result"
               exit 1
