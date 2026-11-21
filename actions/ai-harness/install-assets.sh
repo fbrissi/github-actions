@@ -103,6 +103,11 @@ if [ -n "$agents" ]; then
   mkdir -p "$agents_target_dir"
   for agent in $agents; do
     check_name agent "$agent"
+    # Claude Code ranks project agents above user agents, so a same-named agent in the checkout would win.
+    if [ -e "${GITHUB_WORKSPACE:-$PWD}/.claude/agents/$agent.md" ]; then
+      echo "::error::The checkout defines .claude/agents/${agent}.md, which would override the installed agent '${agent}'."
+      exit 1
+    fi
     if [ ! -f "$source_dir/$agent.md" ]; then
       echo "::error::Agent '${agent}' was not found in ${source_label}."
       exit 1
