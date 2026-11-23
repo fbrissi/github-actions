@@ -3,6 +3,9 @@
 # repository archive.
 set -euo pipefail
 
+# shellcheck source=checkout-agent.sh disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/checkout-agent.sh"
+
 : "${AI_HARNESS:?AI_HARNESS is required}"
 skills="${SKILLS:-}"
 agents="${AGENTS:-}"
@@ -103,9 +106,8 @@ if [ -n "$agents" ]; then
   mkdir -p "$agents_target_dir"
   for agent in $agents; do
     check_name agent "$agent"
-    # Claude Code ranks project agents above user agents, so a same-named agent in the checkout would win.
-    if [ -e "${GITHUB_WORKSPACE:-$PWD}/.claude/agents/$agent.md" ]; then
-      echo "::error::The checkout defines .claude/agents/${agent}.md, which would override the installed agent '${agent}'."
+    if override="$(checkout_agent_override "${GITHUB_WORKSPACE:-$PWD}" "$agent")"; then
+      echo "::error::The checkout defines ${override}, which would override the installed agent '${agent}'."
       exit 1
     fi
     if [ ! -f "$source_dir/$agent.md" ]; then

@@ -79,9 +79,10 @@ name the orchestrator in `agent`:
 ```
 
 Agents are installed into `~/.claude/agents`. Claude Code ranks project agents (`.claude/agents/` in the checkout)
-above user agents, so the action fails when the checkout defines an agent with the same name as one in `agents` or
-`agent`, and when `agent` names an agent that is not installed. Project skills and settings in the checkout still load,
-so only run agents on a trusted checkout. The `agent` and `agents` inputs fail early with the `opencode` harness.
+above user agents, so the action fails when an agent file in the checkout's `.claude/agents/` has the same file name
+or the same `name:` frontmatter as one in `agents` or `agent`, and when `agent` names an agent that is not installed.
+Project skills and settings in the checkout still load, so only run agents on a trusted checkout. The `agent` and
+`agents` inputs fail early with the `opencode` harness.
 
 Skills are installed into `~/.claude/skills` for Claude Code and `~/.config/opencode/skills` for OpenCode, so they
 never come from the checked-out (possibly untrusted) working tree. Empty credentials are unset before the run, so

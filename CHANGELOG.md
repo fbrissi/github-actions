@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.6.1
+
+### Fixed
+
+- `ai-harness` action: the checkout agent guard also matches the `name:` frontmatter of every `.claude/agents/**/*.md`
+  file, because Claude Code identifies agents by that name, not by file name. A checkout file such as
+  `.claude/agents/x.md` with `name: nfse-compliance` no longer overrides the installed agent silently.
+
 ## v1.6.0
 
 ### Added
