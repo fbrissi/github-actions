@@ -2,6 +2,9 @@
 # Runs one non-interactive prompt with the harness resolved by action.yml.
 set -euo pipefail
 
+# shellcheck source=checkout-agent.sh disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/checkout-agent.sh"
+
 : "${AI_HARNESS:?AI_HARNESS is required}"
 : "${AI_PROMPT:?AI_PROMPT is required}"
 : "${AI_OUTPUT_FILE:?AI_OUTPUT_FILE is required}"
@@ -59,8 +62,8 @@ case "$AI_HARNESS" in
           echo "::error::Agent '${CLAUDE_AGENT}' is not installed in ~/.claude/agents; add it to the agents input."
           exit 1
         fi
-        if [ -e ".claude/agents/$CLAUDE_AGENT.md" ]; then
-          echo "::error::The checkout defines .claude/agents/${CLAUDE_AGENT}.md, which would override the installed agent."
+        if override="$(checkout_agent_override "$PWD" "$CLAUDE_AGENT")"; then
+          echo "::error::The checkout defines ${override}, which would override the installed agent '${CLAUDE_AGENT}'."
           exit 1
         fi
       fi
