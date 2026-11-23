@@ -10,6 +10,7 @@ checkout_agent_override() {
   while IFS= read -r -d '' file; do
     if [ "$(basename "$file" .md)" = "$agent" ] ||
       awk -v agent="$agent" '
+        { sub(/\r$/, "") }
         NR == 1 && $0 != "---" { exit }
         NR > 1 && $0 == "---" { exit }
         NR > 1 && /^name:/ {
