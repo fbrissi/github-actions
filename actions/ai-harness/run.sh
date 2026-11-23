@@ -49,6 +49,23 @@ case "$AI_HARNESS" in
     if [ -n "${CLAUDE_EFFORT:-}" ]; then
       command+=(--effort "$CLAUDE_EFFORT")
     fi
+    if [ -n "${CLAUDE_AGENT:-}" ]; then
+      if ! [[ "$CLAUDE_AGENT" =~ ^[A-Za-z0-9_.:-]+$ ]]; then
+        echo "::error::Invalid agent name '${CLAUDE_AGENT}'."
+        exit 1
+      fi
+      if [[ "$CLAUDE_AGENT" != *:* ]]; then
+        if [ ! -f "$HOME/.claude/agents/$CLAUDE_AGENT.md" ]; then
+          echo "::error::Agent '${CLAUDE_AGENT}' is not installed in ~/.claude/agents; add it to the agents input."
+          exit 1
+        fi
+        if [ -e ".claude/agents/$CLAUDE_AGENT.md" ]; then
+          echo "::error::The checkout defines .claude/agents/${CLAUDE_AGENT}.md, which would override the installed agent."
+          exit 1
+        fi
+      fi
+      command+=(--agent "$CLAUDE_AGENT")
+    fi
     printf '%s' "$AI_PROMPT" |
       timeout --foreground --kill-after=30s "${timeout_minutes}m" "${command[@]}" 2>&1 |
       tee "$AI_OUTPUT_FILE"

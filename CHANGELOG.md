@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.6.0
+
+### Added
+
+- `ai-harness` action: `agents`, `agents-path`, and `agents-local-dir` inputs install Claude Code agents (default
+  `plugins/ai-skills/agents` from the pinned `skills-repository`) into `~/.claude/agents`, and the `agent` input runs
+  the prompt with that agent as the main agent (`claude --agent`), so orchestrator agents can delegate to worker
+  agents. Both are Claude-only and fail early with `opencode`. The action also fails when the checkout defines a
+  same-named `.claude/agents/<agent>.md` (Claude Code would prefer it) or when `agent` is not installed.
+
 ## v1.5.1
 
 ### Fixed
