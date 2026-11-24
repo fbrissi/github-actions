@@ -1,0 +1,252 @@
+name: AI Task
+description: >-
+  Run one AI task delivery task (business-refinement, technical-refinement, readiness-review, orchestrate, or
+  implement) with its fbrissi/ai-skills agent, skills, and an explicit non-interactive prompt.
+author: Filipe Bojikian Rissi
+
+inputs:
+  task:
+    description: Task to run, `business-refinement`, `technical-refinement`, `readiness-review`, `orchestrate`, or `implement`.
+    required: true
+  source:
+    description: Source ticket (Jira key or URL, GitHub issue, or GitHub milestone). Required by `business-refinement`.
+    required: false
+    default: ""
+  source-tracker:
+    description: Tracker of `source`, `github` or `jira`. Empty uses the profile, then `github`.
+    required: false
+    default: ""
+  source-language:
+    description: Language of comments on the source ticket. Empty uses the profile, then `auto` (the source's language).
+    required: false
+    default: ""
+  milestone:
+    description: GitHub milestone. Required by `orchestrate`; `technical-refinement` and `readiness-review` need it or `issue`.
+    required: false
+    default: ""
+  issue:
+    description: GitHub issue number. Required by `implement`; `technical-refinement` and `readiness-review` need it or `milestone`.
+    required: false
+    default: ""
+  branch:
+    description: Task branch to implement on. Required by `implement`.
+    required: false
+    default: ""
+  base-branch:
+    description: Base branch (the milestone branch for `implement`). Empty uses the profile, then the repository default branch.
+    required: false
+    default: ""
+  milestone-template:
+    description: Milestone title template, for example `JIRA:{key}`. Empty uses the profile, then `{key}`.
+    required: false
+    default: ""
+  output-language:
+    description: Language of what the task writes on GitHub. Empty uses the profile, then `English`.
+    required: false
+    default: ""
+  status-labels:
+    description: Multiline `state=label` overrides of the status labels (default `status:<state>`).
+    required: false
+    default: ""
+  project:
+    description: GitHub Project (`owner/number`) whose status field follows the issue state. Empty uses the profile.
+    required: false
+    default: ""
+  project-status-field:
+    description: Single-select status field of `project`. Empty uses the profile, then `Status`.
+    required: false
+    default: ""
+  project-status-options:
+    description: Multiline `state=Option name` mapping of states to `project-status-field` options. Empty uses the profile, then the Title Case of the state.
+    required: false
+    default: ""
+  research-sources:
+    description: Multiline URLs or repository paths to consult when details are missing.
+    required: false
+    default: ""
+  context:
+    description: Free-text instructions or context appended to the prompt.
+    required: false
+    default: ""
+  profile:
+    description: Repository profile path. Empty uses `docs/ai/delivery.md`.
+    required: false
+    default: ""
+  implement-workflow:
+    description: Workflow file `orchestrate` dispatches per issue. Empty uses the profile, then `ai-implement.yml`.
+    required: false
+    default: ""
+  max-parallel:
+    description: Maximum implement runs `orchestrate` keeps in progress. Empty uses the profile, then `3`.
+    required: false
+    default: ""
+  skills:
+    description: Extra whitespace-separated skills to install on top of the task's default skills.
+    required: false
+    default: ""
+  agents:
+    description: Extra whitespace-separated agents to install on top of the task's agents.
+    required: false
+    default: ""
+  harness:
+    description: AI harness. Only `claude` runs agents, so it is the only supported value.
+    required: false
+    default: claude
+  opencode-model:
+    description: Passed to ai-harness for interface parity; unused while only `claude` is supported.
+    required: false
+    default: ""
+  opencode-variant:
+    description: Passed to ai-harness for interface parity; unused while only `claude` is supported.
+    required: false
+    default: ""
+  claude-model:
+    description: Claude Code model alias or full model ID.
+    required: false
+    default: ""
+  claude-effort:
+    description: Claude Code effort level.
+    required: false
+    default: ""
+  ai-skills-ref:
+    description: Tag or commit SHA of fbrissi/ai-skills the skills and agents are installed from. Pin it; never use a branch.
+    required: false
+    default: v0.5.0
+  timeout-minutes:
+    description: Maximum harness run time in minutes.
+    required: false
+    default: "50"
+  github-token:
+    description: GitHub token (a GitHub App installation token) the agent uses for gh and git push.
+    required: true
+  openai-api-key:
+    description: OpenAI API key, passed to ai-harness; unused while only `claude` is supported.
+    required: false
+    default: ""
+  anthropic-api-key:
+    description: Anthropic API key for Claude Code.
+    required: false
+    default: ""
+  claude-code-oauth-token:
+    description: Claude Code OAuth token, used when `anthropic-api-key` is empty.
+    required: false
+    default: ""
+  jira-base-url:
+    description: Jira base URL, for example `https://example.atlassian.net`. Exported as `JIRA_BASE_URL`.
+    required: false
+    default: ""
+  jira-email:
+    description: Jira account e-mail. Exported as `JIRA_EMAIL` and masked.
+    required: false
+    default: ""
+  jira-api-token:
+    description: Jira API token. Exported as `JIRA_API_TOKEN` and masked.
+    required: false
+    default: ""
+
+outputs:
+  agent:
+    description: Agent that ran the task.
+    value: ${{ steps.resolve.outputs.agent }}
+  agents:
+    description: Installed agents.
+    value: ${{ steps.resolve.outputs.agents }}
+  skills:
+    description: Installed skills.
+    value: ${{ steps.resolve.outputs.skills }}
+  output-file:
+    description: File that holds the harness output.
+    value: ${{ steps.harness.outputs.output-file }}
+
+runs:
+  using: composite
+  steps:
+    - name: Prepare task
+      id: prepare
+      shell: bash
+      env:
+        JIRA_EMAIL: ${{ inputs.jira-email }}
+        JIRA_API_TOKEN: ${{ inputs.jira-api-token }}
+      run: |
+        set -euo pipefail
+        for name in JIRA_EMAIL JIRA_API_TOKEN; do
+          if [ -n "${!name}" ]; then
+            echo "::add-mask::${!name}"
+          fi
+        done
+        if command -v node >/dev/null 2>&1; then
+          echo 'setup-node=false' >> "$GITHUB_OUTPUT"
+        else
+          echo 'setup-node=true' >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Setup Node
+      if: ${{ steps.prepare.outputs.setup-node == 'true' }}
+      uses: actions/setup-node@v7
+      with:
+        node-version: 24
+
+    - name: Resolve task
+      id: resolve
+      shell: bash
+      env:
+        AI_TASK_TASK: ${{ inputs.task }}
+        AI_TASK_SOURCE: ${{ inputs.source }}
+        AI_TASK_SOURCE_TRACKER: ${{ inputs.source-tracker }}
+        AI_TASK_SOURCE_LANGUAGE: ${{ inputs.source-language }}
+        AI_TASK_MILESTONE: ${{ inputs.milestone }}
+        AI_TASK_ISSUE: ${{ inputs.issue }}
+        AI_TASK_BRANCH: ${{ inputs.branch }}
+        AI_TASK_BASE_BRANCH: ${{ inputs.base-branch }}
+        AI_TASK_MILESTONE_TEMPLATE: ${{ inputs.milestone-template }}
+        AI_TASK_OUTPUT_LANGUAGE: ${{ inputs.output-language }}
+        AI_TASK_STATUS_LABELS: ${{ inputs.status-labels }}
+        AI_TASK_PROJECT: ${{ inputs.project }}
+        AI_TASK_PROJECT_STATUS_FIELD: ${{ inputs.project-status-field }}
+        AI_TASK_PROJECT_STATUS_OPTIONS: ${{ inputs.project-status-options }}
+        AI_TASK_RESEARCH_SOURCES: ${{ inputs.research-sources }}
+        AI_TASK_CONTEXT: ${{ inputs.context }}
+        AI_TASK_PROFILE: ${{ inputs.profile }}
+        AI_TASK_IMPLEMENT_WORKFLOW: ${{ inputs.implement-workflow }}
+        AI_TASK_MAX_PARALLEL: ${{ inputs.max-parallel }}
+        AI_TASK_JIRA_BASE_URL: ${{ inputs.jira-base-url }}
+        AI_TASK_SKILLS: ${{ inputs.skills }}
+        AI_TASK_AGENTS: ${{ inputs.agents }}
+        AI_TASK_HARNESS: ${{ inputs.harness }}
+        HAS_GITHUB_TOKEN: ${{ inputs.github-token != '' }}
+        HAS_ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key != '' }}
+        HAS_CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude-code-oauth-token != '' }}
+        HAS_JIRA_EMAIL: ${{ inputs.jira-email != '' }}
+        HAS_JIRA_API_TOKEN: ${{ inputs.jira-api-token != '' }}
+      run: node "$GITHUB_ACTION_PATH/resolve-task.mjs"
+
+    # A composite action cannot reference a sibling action by a relative path, so it pins this repository's
+    # ai-harness at the same major tag, like the reusable workflows do.
+    - name: Run task agent
+      id: harness
+      uses: fbrissi/github-actions/actions/ai-harness@v1
+      env:
+        JIRA_BASE_URL: ${{ inputs.jira-base-url }}
+        JIRA_EMAIL: ${{ inputs.jira-email }}
+        JIRA_API_TOKEN: ${{ inputs.jira-api-token }}
+      with:
+        harness: claude
+        agent: ${{ steps.resolve.outputs.agent }}
+        agents: ${{ steps.resolve.outputs.agents }}
+        skills: ${{ steps.resolve.outputs.skills }}
+        skills-ref: ${{ inputs.ai-skills-ref }}
+        prompt: ${{ steps.resolve.outputs.prompt }}
+        opencode-model: ${{ inputs.opencode-model }}
+        opencode-variant: ${{ inputs.opencode-variant }}
+        opencode-plugins: ""
+        claude-model: ${{ inputs.claude-model }}
+        claude-effort: ${{ inputs.claude-effort }}
+        timeout-minutes: ${{ inputs.timeout-minutes }}
+        openai-api-key: ${{ inputs.openai-api-key }}
+        anthropic-api-key: ${{ inputs.anthropic-api-key }}
+        claude-code-oauth-token: ${{ inputs.claude-code-oauth-token }}
+        github-token: ${{ inputs.github-token }}
+
+branding:
+  icon: git-pull-request
+  color: purple

@@ -1,0 +1,196 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, it } from 'node:test';
+import { TASKS, buildPrompt, envName, main, readInputs, resolveAssets, resolveTask, validate } from './resolve-task.mjs';
+
+const CREDENTIALS = { 'github-token': true, 'anthropic-api-key': true };
+
+const inputsFor = (values) => readInputs(Object.fromEntries(Object.entries(values).map(([name, value]) => [envName(name), value])));
+
+const envFor = (values, flags = {}) => ({
+  ...Object.fromEntries(Object.entries(values).map(([name, value]) => [envName(name), value])),
+  HAS_GITHUB_TOKEN: 'true',
+  HAS_ANTHROPIC_API_KEY: 'true',
+  GITHUB_SERVER_URL: 'https://github.com',
+  GITHUB_REPOSITORY: 'octo/app',
+  GITHUB_RUN_ID: '42',
+  ...flags
+});
+
+describe('validate', () => {
+  it('rejects an unknown task', () => {
+    assert.match(validate(inputsFor({ task: 'deploy' }), CREDENTIALS)[0], /Unsupported task 'deploy'/);
+  });
+
+  it('requires the inputs of each task', () => {
+    assert.deepEqual(validate(inputsFor({ task: 'business-refinement' }), CREDENTIALS), [
+      "The business-refinement task requires 'source'."
+    ]);
+    assert.deepEqual(validate(inputsFor({ task: 'technical-refinement' }), CREDENTIALS), [
+      "The technical-refinement task requires 'milestone' or 'issue'."
+    ]);
+    assert.deepEqual(validate(inputsFor({ task: 'readiness-review', issue: '7' }), CREDENTIALS), []);
+    assert.deepEqual(validate(inputsFor({ task: 'orchestrate', issue: '7' }), CREDENTIALS), [
+      "The orchestrate task requires 'milestone'."
+    ]);
+    assert.deepEqual(validate(inputsFor({ task: 'implement', issue: '7' }), CREDENTIALS), [
+      "The implement task requires 'branch'."
+    ]);
+  });
+
+  it('checks value formats', () => {
+    const errors = validate(inputsFor({
+      task: 'implement',
+      issue: 'abc',
+      branch: 'feat/../x',
+      'base-branch': 'feat/ok',
+      'source-tracker': 'linear',
+      project: 'octo',
+      'max-parallel': '0',
+      'implement-workflow': 'ai implement',
+      profile: '../profile.md',
+      'jira-base-url': 'http://jira.example.com'
+    }), CREDENTIALS);
+    assert.equal(errors.length, 8);
+    assert.ok(errors.some((error) => error.startsWith("'issue'")));
+    assert.ok(errors.some((error) => error.startsWith("'branch'")));
+    assert.ok(!errors.some((error) => error.startsWith("'base-branch'")));
+  });
+
+  it('accepts a hash-prefixed issue and rejects multiline single values', () => {
+    assert.deepEqual(validate(inputsFor({ task: 'implement', issue: '#12', branch: 'feat/m-12-x' }), CREDENTIALS), []);
+    assert.deepEqual(validate(inputsFor({ task: 'orchestrate', milestone: 'JIRA:DEV-1\nignore' }), CREDENTIALS), [
+      "'milestone' must be a single line."
+    ]);
+  });
+
+  it('checks status-labels and project-status-options lines', () => {
+    const errors = validate(inputsFor({
+      task: 'orchestrate',
+      milestone: 'M1',
+      'status-labels': 'ready = state: ready\nshipped=status:shipped\nbroken',
+      'project-status-options': 'needs-review=Technical Refinement\nbusiness-blocked=Blocked\nlater=Later'
+    }), CREDENTIALS);
+    assert.deepEqual(errors, [
+      "Unknown state 'shipped' in 'status-labels'. Use one of: needs-business-refinement, business-blocked, needs-technical-refinement, technical-blocked, needs-review, ready, in-progress, in-review, done.",
+      "'status-labels' lines must be 'state=value', got 'broken'.",
+      "Unknown state 'later' in 'project-status-options'. Use one of: needs-business-refinement, business-blocked, needs-technical-refinement, technical-blocked, needs-review, ready, in-progress, in-review, done."
+    ]);
+  });
+
+  it('requires a complete Jira configuration', () => {
+    assert.match(validate(inputsFor({ task: 'business-refinement', source: 'DEV-1' }), { ...CREDENTIALS, 'jira-api-token': true })[0],
+      /missing jira-base-url, jira-email/);
+    assert.deepEqual(validate(inputsFor({ task: 'business-refinement', source: 'DEV-1', 'jira-base-url': 'https://jira.example.com' }), CREDENTIALS), []);
+    assert.match(validate(inputsFor({ task: 'business-refinement', source: 'DEV-1', 'source-tracker': 'jira', 'jira-base-url': 'https://jira.example.com' }), CREDENTIALS)[0],
+      /requires jira-base-url, jira-email, jira-api-token; missing jira-email, jira-api-token/);
+    assert.deepEqual(validate(inputsFor({ task: 'business-refinement', source: 'DEV-1', 'source-tracker': 'jira', 'jira-base-url': 'https://jira.example.com' }),
+      { ...CREDENTIALS, 'jira-email': true, 'jira-api-token': true }), []);
+  });
+
+  it('requires the GitHub token and a Claude credential, and only the claude harness', () => {
+    assert.deepEqual(validate(inputsFor({ task: 'orchestrate', milestone: 'M1', harness: 'opencode' }), {}), [
+      "Unsupported harness 'opencode'. ai-task runs agents, which only the 'claude' harness supports.",
+      "'github-token' is required.",
+      "The claude harness requires 'anthropic-api-key' or 'claude-code-oauth-token'."
+    ]);
+    assert.deepEqual(validate(inputsFor({ task: 'orchestrate', milestone: 'M1' }), { 'github-token': true, 'claude-code-oauth-token': true }), []);
+  });
+
+  it('rejects invalid extra skill and agent names', () => {
+    assert.deepEqual(validate(inputsFor({ task: 'orchestrate', milestone: 'M1', skills: 'ok ../x', agents: 'a;b' }), CREDENTIALS), [
+      "Invalid name '../x' in 'skills'.",
+      "Invalid name 'a;b' in 'agents'."
+    ]);
+  });
+});
+
+describe('resolveAssets', () => {
+  it('maps every task to its agent and skills', () => {
+    const agents = Object.fromEntries(Object.keys(TASKS).map((task) => [task, resolveAssets(inputsFor({ task })).agent]));
+    assert.deepEqual(agents, {
+      'business-refinement': 'business-analyst',
+      'technical-refinement': 'tech-lead',
+      'readiness-review': 'readiness-reviewer',
+      orchestrate: 'delivery-orchestrator',
+      implement: 'task-implementer'
+    });
+  });
+
+  it('installs the implement workers and appends caller skills and agents without duplicates', () => {
+    const assets = resolveAssets(inputsFor({ task: 'implement', skills: 'pr-fix dev', agents: 'ci-investigator qa-tester' }));
+    assert.deepEqual(assets.agents, ['task-implementer', 'developer', 'code-reviewer', 'qa-tester', 'ci-investigator']);
+    assert.deepEqual(assets.skills, ['dev', 'quality-cycle', 'pr-create', 'review-changes', 'qa-e2e', 'bdd-scenarios', 'ticket-plan', 'pr-fix']);
+  });
+});
+
+describe('buildPrompt', () => {
+  it('passes only the non-empty parameters', () => {
+    const prompt = buildPrompt(inputsFor({
+      task: 'implement',
+      issue: '#12',
+      branch: 'feat/m1-12-login',
+      'base-branch': 'feat/m1',
+      'status-labels': 'ready=state:ready\n\n done=state:done ',
+      project: 'octo/7',
+      'project-status-options': 'needs-review=Technical Refinement\nbusiness-blocked=Blocked',
+      context: 'Keep the public API stable.'
+    }), { repository: 'octo/app', runUrl: 'https://github.com/octo/app/actions/runs/42' });
+    assert.match(prompt, /^You are the task-implementer agent running the `implement` task .* in the GitHub repository octo\/app/);
+    assert.match(prompt, /Follow the `dev` skill/);
+    assert.match(prompt, /- issue: 12\n- branch: feat\/m1-12-login\n- base-branch: feat\/m1\n- status-labels:\n {4}ready=state:ready\n {4}done=state:done\n/);
+    assert.match(prompt, /- project: octo\/7\n- project-status-options:\n {4}needs-review=Technical Refinement\n {4}business-blocked=Blocked\n/);
+    assert.match(prompt, /repository profile \(`docs\/ai\/delivery\.md`\)/);
+    assert.match(prompt, /Additional context from the caller:\nKeep the public API stable\.\n$/);
+    assert.doesNotMatch(prompt, /milestone:|source:|JIRA_/);
+  });
+
+  it('adds the Jira and orchestration rules when they apply', () => {
+    const prompt = buildPrompt(inputsFor({ task: 'orchestrate', milestone: 'JIRA:DEV-1', profile: 'docs/delivery.md' }), { hasJira: true });
+    assert.match(prompt, /JIRA_BASE_URL, JIRA_EMAIL, and JIRA_API_TOKEN/);
+    assert.match(prompt, /dispatching the implement workflow/);
+    assert.match(prompt, /- profile: docs\/delivery\.md/);
+    assert.match(prompt, /repository profile \(`docs\/delivery\.md`\)/);
+  });
+});
+
+describe('main', () => {
+  it('writes the outputs', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ai-task-'));
+    try {
+      const output = join(dir, 'output');
+      const logs = [];
+      const code = main({ ...envFor({ task: 'readiness-review', milestone: 'M1' }), GITHUB_OUTPUT: output }, (line) => logs.push(line));
+      assert.equal(code, 0);
+      const text = readFileSync(output, 'utf8');
+      assert.match(text, /^agent=readiness-reviewer\nagents=readiness-reviewer\nskills=readiness-review\nprompt<<(PROMPT_[0-9a-f-]+)\n[\s\S]+\n\1\n$/);
+      assert.match(text, /run: https:\/\/github\.com\/octo\/app\/actions\/runs\/42/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports every error and fails', () => {
+    const logs = [];
+    const code = main(envFor({ task: 'implement' }, { HAS_GITHUB_TOKEN: 'false' }), (line) => logs.push(line));
+    assert.equal(code, 1);
+    assert.deepEqual(logs, [
+      "::error::The implement task requires 'issue'.",
+      "::error::The implement task requires 'branch'.",
+      "::error::'github-token' is required."
+    ]);
+  });
+
+  it('enables the Jira rule only with a Jira base URL', () => {
+    const result = resolveTask(envFor({ task: 'business-refinement', source: 'DEV-1', 'jira-base-url': 'https://jira.example.com' },
+      { HAS_JIRA_EMAIL: 'true', HAS_JIRA_API_TOKEN: 'true' }));
+    assert.deepEqual(result.errors, []);
+    assert.match(result.prompt, /- jira-base-url: https:\/\/jira\.example\.com/);
+    assert.match(result.prompt, /JIRA_API_TOKEN/);
+    const withoutCredentials = resolveTask(envFor({ task: 'business-refinement', source: 'DEV-1', 'jira-base-url': 'https://jira.example.com' }));
+    assert.deepEqual(withoutCredentials.errors, []);
+    assert.doesNotMatch(withoutCredentials.prompt, /jira|JIRA/);
+  });
+});

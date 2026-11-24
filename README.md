@@ -15,10 +15,12 @@ deploys, credential rotation) stays in each project.
 | [`pr-feedback-dispatch.yml`](#pr-feedback-dispatch) | Reusable workflow | Turns review and check events into fix and merge-decision dispatches on the default branch. |
 | [`pr-fix.yml`](#pr-fix) | Reusable workflow | One AI pass that fixes review feedback and failing CI on an opted-in pull request. |
 | [`merge-decision.yml`](#merge-decision) | Reusable workflow | Deterministic merge gates, then an AI risk rating that holds or (opt-in) merges. |
+| [`ai-task.yml`](#ai-task) | Reusable workflow | Runs one AI task delivery task (refinement, readiness, orchestration, implementation) with its agent. |
 | [`release-note.yml`](#release-note) | Reusable workflow | Requires each pull request to add one changelog release. |
 | [`release.yml`](#release) | Reusable workflow | Tags and publishes the changelog release, then optionally deploys it. |
 | [`terraform-permissions.yml`](#terraform-permissions) | Reusable workflow | Fails before merge when the Cloudflare Terraform token lacks a permission. |
 | [`ai-harness`](actions/ai-harness/README.md) | Composite action | Installs OpenCode or Claude Code (pinned) and runs one prompt. |
+| [`ai-task`](actions/ai-task/README.md) | Composite action | Validates an AI delivery task, installs its agents and skills, and runs it with `ai-harness`. |
 | [`terraform-cloud-wait`](actions/terraform-cloud-wait/README.md) | Composite action | Waits for the HCP Terraform apply of a commit. |
 | [`terraform-permissions`](actions/terraform-permissions/README.md) | Composite action | Checks a Cloudflare permission manifest and the real token. |
 
@@ -31,8 +33,9 @@ major tag (`v1`) to it.
 - `@v1` follows every compatible release. This is what the examples use.
 - `@v1.2.3` or a full commit SHA freezes the version; Dependabot (`github-actions` ecosystem) can bump it.
 
-Breaking input, secret, or behavior changes only ship in a new major version. The reusable workflows call this
-repository's own actions at the same major tag (`@v1`).
+Breaking input, secret, or behavior changes only ship in a new major version. The reusable workflows, and the
+`ai-task` action (which runs `ai-harness`), call this repository's own actions at the same major tag (`@v1`): a
+composite action cannot reference a sibling action by a relative path once it is called from a remote ref.
 
 ## Code Review
 
@@ -397,6 +400,262 @@ merge by the branch rules. Without `Workflows`, it cannot merge a pull request t
 and `runs-on` work as in [Code Review](#inputs). Secrets are the same as [Code Review](#secrets). Output: `result`
 (`decide` or `skip`).
 
+## AI Task
+
+`.github/workflows/ai-task.yml` runs one task of the AI task delivery flow with the
+[`ai-task`](actions/ai-task/README.md) action: it creates a GitHub App token scoped to the task, checks out the
+calling ref with full history and the token as push credentials, sets the git identity to the App bot, installs
+dependencies, and runs the task's [fbrissi/ai-skills](https://github.com/fbrissi/ai-skills) agent with Claude Code.
+
+| Task | Agent | Input | What it does |
+|---|---|---|---|
+| `business-refinement` | `business-analyst` | `source` | Turns a source ticket (Jira, GitHub issue, or milestone) into a GitHub milestone and business-level issues, or asks the source what is unclear. |
+| `technical-refinement` | `tech-lead` | `milestone` or `issue` | Writes the technical plan of each issue so the milestone's issues can be built in parallel. |
+| `readiness-review` | `readiness-reviewer` | `milestone` or `issue` | Marks each issue ready or sends it back to refinement. |
+| `orchestrate` | `delivery-orchestrator` | `milestone` | Creates the milestone and task branches and dispatches `implement` for each ready issue whose dependencies are done; opens the milestone PR when every issue is done. Never codes. |
+| `implement` | `task-implementer` | `issue`, `branch`, `base-branch` | Implements the issue, runs the review and QA cycle, and opens a PR into the milestone branch. |
+
+Runs never wait for input: blocked tasks leave their questions on the ticket or issue and stop. Inputs left empty
+are not sent, so the repository profile (`docs/ai/delivery.md`) and then the skill defaults apply.
+
+Runs are serialized per repository, task, and issue (or milestone, or source) without cancelling: a new run waits
+for the current one, and only the newest waiting run is kept.
+
+### GitHub App
+
+The App the agent acts as needs these repository permissions: `Contents`, `Issues`, `Pull requests`, and `Actions`
+(read and write), plus `Organization projects` (read and write) on an organization installation when `project` is
+used. The token handed to the agent is scoped per task:
+
+| Task | Token permissions |
+|---|---|
+| `business-refinement`, `technical-refinement`, `readiness-review` | `contents: read`, `issues: write`, `pull-requests: read` |
+| `orchestrate` | `contents: write`, `issues: write`, `pull-requests: write`, `actions: write` |
+| `implement` | `contents: write`, `issues: write`, `pull-requests: write` |
+| any, with `project` | adds `organization-projects: write` |
+
+Organization issue field values (for example Priority, Effort, Start date, Target date) are set with the
+`Issues: write` permission every task already gets. The organization `Issue fields` permission only covers listing
+and managing the field definitions (`/orgs/{org}/issue-fields`), and `actions/create-github-app-token@v3` cannot
+request it yet, so the scoped token does not carry it.
+
+Set `project` as a workflow input, not only in the profile, so the token gets the projects permission. Projects
+must belong to the organization that owns the repository: App installation tokens cannot reach projects of
+a user account or of another organization. The token expires after one hour, so keep `timeout-minutes` under it. It
+has no `workflows` permission, so the agent cannot push changes to `.github/workflows/`.
+
+### Callers
+
+Each task gets its own `workflow_dispatch` caller on the default branch. The caller job only needs
+`contents: read`; everything the agent does goes through the App token.
+
+```yaml
+# .github/workflows/ai-business-refinement.yml
+name: AI Business Refinement
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: Source ticket (Jira key or URL, GitHub issue, or milestone)
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  refine:
+    uses: fbrissi/github-actions/.github/workflows/ai-task.yml@v1
+    permissions:
+      contents: read
+    with:
+      task: business-refinement
+      source: ${{ inputs.source }}
+      source-tracker: jira
+      milestone-template: JIRA:{key}
+    secrets:
+      AGENT_APP_PRIVATE_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+      JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+```
+
+Technical refinement, readiness review, and orchestration take a milestone; only the `task` differs:
+
+```yaml
+# .github/workflows/ai-technical-refinement.yml (and ai-readiness-review.yml, ai-orchestrate.yml)
+name: AI Technical Refinement
+
+on:
+  workflow_dispatch:
+    inputs:
+      milestone:
+        description: GitHub milestone
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  task:
+    uses: fbrissi/github-actions/.github/workflows/ai-task.yml@v1
+    permissions:
+      contents: read
+    with:
+      task: technical-refinement # readiness-review, orchestrate
+      milestone: ${{ inputs.milestone }}
+      node-version: "24"
+      install-command: npm ci
+    secrets:
+      AGENT_APP_PRIVATE_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+```
+
+The orchestrator dispatches the implement caller (`implement-workflow`, default `ai-implement.yml`) with the inputs
+`issue`, `branch`, and `base_branch`:
+
+```yaml
+# .github/workflows/ai-implement.yml
+name: AI Implement
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Issue number
+        required: true
+        type: string
+      branch:
+        description: Task branch
+        required: true
+        type: string
+      base_branch:
+        description: Milestone branch the PR targets
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  implement:
+    uses: fbrissi/github-actions/.github/workflows/ai-task.yml@v1
+    permissions:
+      contents: read
+    with:
+      task: implement
+      issue: ${{ inputs.issue }}
+      branch: ${{ inputs.branch }}
+      base-branch: ${{ inputs.base_branch }}
+      node-version: "24"
+      install-command: npm ci
+      dependency-cache-path: node_modules
+    secrets:
+      AGENT_APP_PRIVATE_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+```
+
+Re-run the orchestrator each time a task PR merges into a milestone branch. Task branches are named
+`<milestone branch>-<issue>-<slug>`, which is what the `if` checks; the milestone comes from the PR, or from the
+issues it closes:
+
+```yaml
+# .github/workflows/ai-orchestrate-on-merge.yml
+name: AI Orchestrate on Merge
+
+on:
+  pull_request:
+    types: [closed]
+    branches: ["feat/**"]
+
+permissions: {}
+
+jobs:
+  dispatch:
+    if: ${{ github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, format('{0}-', github.event.pull_request.base.ref)) }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            let milestone = pr.milestone?.title;
+            if (!milestone) {
+              const { repository } = await github.graphql(
+                `query($owner: String!, $repo: String!, $number: Int!) {
+                  repository(owner: $owner, name: $repo) {
+                    pullRequest(number: $number) {
+                      closingIssuesReferences(first: 10) { nodes { milestone { title } } }
+                    }
+                  }
+                }`,
+                { owner: context.repo.owner, repo: context.repo.repo, number: pr.number },
+              );
+              milestone = repository.pullRequest.closingIssuesReferences.nodes
+                .map((issue) => issue.milestone?.title)
+                .find(Boolean);
+            }
+            if (!milestone) {
+              core.notice(`PR #${pr.number} has no milestone; orchestrate was not dispatched.`);
+              return;
+            }
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'ai-orchestrate.yml',
+              ref: context.payload.repository.default_branch,
+              inputs: { milestone },
+            });
+```
+
+Merges made with `GITHUB_TOKEN` do not trigger `pull_request` workflows, so this only fires for PRs merged by a
+GitHub App (such as the agent's App) or a person. A `workflow_dispatch` sent with `GITHUB_TOKEN`, as above, does
+start the orchestrator.
+
+### Inputs
+
+Task parameters are the [`ai-task` action inputs](actions/ai-task/README.md#inputs) under the same names: `task`,
+`source`, `source-tracker`, `source-language`, `milestone`, `issue`, `branch`, `base-branch`, `milestone-template`,
+`output-language`, `status-labels`, `project`, `project-status-field`, `project-status-options`, `research-sources`, `context`, `profile`,
+`implement-workflow`, `max-parallel`, `skills`, `agents`, and `ai-skills-ref` (default `v0.5.0`). The workflow adds:
+
+| Input | Default | Description |
+|---|---|---|
+| `harness` | `claude` | Only `claude` is supported (agents need Claude Code). |
+| `claude-model`, `claude-effort` | `CLAUDE_MODEL`, `CLAUDE_EFFORT` | Claude Code model and effort. |
+| `opencode-model`, `opencode-variant` | `OPENCODE_MODEL`, `OPENCODE_VARIANT` | Passed through; unused while only `claude` is supported. |
+| `jira-base-url` | `JIRA_BASE_URL` | Jira base URL; Jira is used only with the `JIRA_EMAIL` and `JIRA_API_TOKEN` secrets. |
+| `agent-client-id` | `AGENT_APP_CLIENT_ID` | Client ID of the GitHub App the agent acts as. |
+| `environment` | `""` | Environment of the task job; empty runs without one. |
+| `runs-on` | `CI_RUNNER`, then `ubuntu-latest` | Runner label. |
+| `timeout-minutes` | `50` | Harness run timeout; keep it under the one-hour App token lifetime. |
+| `job-timeout-minutes` | `60` | Task job timeout. |
+| `node-version` | `""` | Node.js version for actions/setup-node; empty skips it. |
+| `node-cache` | `""` | `npm`, `yarn`, or `pnpm` cache for actions/setup-node. Only used with `save-dependency-cache`. |
+| `install-command` | `""` | Dependency install command; empty skips it. |
+| `dependency-cache-path` | `""` | Paths cached around `install-command`. |
+| `dependency-cache-prefix` | `ai-task-deps-v1` | Cache key prefix; the key is `<prefix>-<os>-<arch>-<hash>`. |
+| `dependency-cache-files` | `**/{package-lock.json,yarn.lock,pnpm-lock.yaml}` | Files hashed into the cache key. |
+| `save-dependency-cache` | `false` | Save the cache after installing. |
+
+### Secrets
+
+| Secret | Required | Description |
+|---|---|---|
+| `AGENT_APP_PRIVATE_KEY` | yes | Private key of the GitHub App the agent acts as. |
+| `ANTHROPIC_API_KEY` | this or the next | Anthropic API key. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | this or the previous | Claude Code OAuth token, used when `ANTHROPIC_API_KEY` is empty. |
+| `OPEN_AI_TOKEN` | no | Passed through; unused while only `claude` is supported. |
+| `JIRA_EMAIL`, `JIRA_API_TOKEN` | Jira sources | Jira credentials, masked and exported to the agent as `JIRA_EMAIL` and `JIRA_API_TOKEN`. |
+
+Output: `agent`, the agent that ran the task.
+
 ## Release Note
 
 `.github/workflows/release-note.yml` runs on `pull_request` and fails unless the pull request adds exactly one
@@ -533,10 +792,11 @@ organization, or, for the review job, its `environment`) are used whenever the m
 | Variable | Used by | Purpose |
 |---|---|---|
 | `CI_RUNNER` | all | Runner label; defaults to `ubuntu-latest`. |
-| `AI_HARNESS` | AI workflows | `opencode` (default) or `claude`. |
+| `AI_HARNESS` | AI workflows except `ai-task.yml` | `opencode` (default) or `claude`. |
 | `OPENCODE_MODEL`, `OPENCODE_VARIANT` | AI workflows | OpenCode model and variant. |
 | `CLAUDE_MODEL`, `CLAUDE_EFFORT` | AI workflows | Claude Code model and effort. |
 | `AGENT_APP_CLIENT_ID` | AI workflows | Client ID of the GitHub App the workflow acts as (set it per `environment` to use one App per role). |
+| `JIRA_BASE_URL` | `ai-task.yml` | Jira base URL. |
 | `AGENT_APP_ID` | `code-review.yml` | Deprecated fallback for `AGENT_APP_CLIENT_ID`. |
 
 ## Permissions
@@ -550,6 +810,7 @@ and grant per job:
 | `pr-feedback-dispatch.yml` | `actions: write`, `pull-requests: read` |
 | `pr-fix.yml` | `checks: write`, `issues: read`, `pull-requests: read` |
 | `merge-decision.yml` | `actions: read`, `checks: read`, `contents: read`, `issues: read`, `pull-requests: read`, `statuses: read` |
+| `ai-task.yml` | `contents: read` |
 | `release-note.yml` | `contents: read` |
 | `release.yml` | `actions: write`, `contents: write` |
 | `terraform-permissions.yml` | `contents: read` |

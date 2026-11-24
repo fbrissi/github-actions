@@ -1,0 +1,355 @@
+name: AI Task
+
+on:
+  workflow_call:
+    inputs:
+      task:
+        description: Task to run, `business-refinement`, `technical-refinement`, `readiness-review`, `orchestrate`, or `implement`.
+        required: true
+        type: string
+      source:
+        description: Source ticket (Jira key or URL, GitHub issue, or GitHub milestone). Required by `business-refinement`.
+        required: false
+        type: string
+        default: ""
+      source-tracker:
+        description: Tracker of `source`, `github` or `jira`. Empty uses the profile, then `github`.
+        required: false
+        type: string
+        default: ""
+      source-language:
+        description: Language of comments on the source ticket. Empty uses the profile, then `auto`.
+        required: false
+        type: string
+        default: ""
+      milestone:
+        description: GitHub milestone. Required by `orchestrate`; refinement and readiness tasks need it or `issue`.
+        required: false
+        type: string
+        default: ""
+      issue:
+        description: GitHub issue number. Required by `implement`.
+        required: false
+        type: string
+        default: ""
+      branch:
+        description: Task branch. Required by `implement`.
+        required: false
+        type: string
+        default: ""
+      base-branch:
+        description: Base branch (the milestone branch for `implement`). Empty uses the profile, then the default branch.
+        required: false
+        type: string
+        default: ""
+      milestone-template:
+        description: Milestone title template, for example `JIRA:{key}`. Empty uses the profile, then `{key}`.
+        required: false
+        type: string
+        default: ""
+      output-language:
+        description: Language of what the task writes on GitHub. Empty uses the profile, then `English`.
+        required: false
+        type: string
+        default: ""
+      status-labels:
+        description: Multiline `state=label` overrides of the status labels.
+        required: false
+        type: string
+        default: ""
+      project:
+        description: GitHub Project (`owner/number`) whose status field follows the issue state. Grants the App token `organization-projects` write.
+        required: false
+        type: string
+        default: ""
+      project-status-field:
+        description: Single-select status field of `project`. Empty uses the profile, then `Status`.
+        required: false
+        type: string
+        default: ""
+      project-status-options:
+        description: Multiline `state=Option name` mapping of states to `project-status-field` options. Empty uses the profile, then the Title Case of the state.
+        required: false
+        type: string
+        default: ""
+      research-sources:
+        description: Multiline URLs or repository paths to consult when details are missing.
+        required: false
+        type: string
+        default: ""
+      context:
+        description: Free-text instructions or context appended to the prompt.
+        required: false
+        type: string
+        default: ""
+      profile:
+        description: Repository profile path. Empty uses `docs/ai/delivery.md`.
+        required: false
+        type: string
+        default: ""
+      implement-workflow:
+        description: Workflow file `orchestrate` dispatches per issue. Empty uses the profile, then `ai-implement.yml`.
+        required: false
+        type: string
+        default: ""
+      max-parallel:
+        description: Maximum implement runs `orchestrate` keeps in progress. Empty uses the profile, then `3`.
+        required: false
+        type: string
+        default: ""
+      skills:
+        description: Extra whitespace-separated skills to install.
+        required: false
+        type: string
+        default: ""
+      agents:
+        description: Extra whitespace-separated agents to install.
+        required: false
+        type: string
+        default: ""
+      harness:
+        description: AI harness. Only `claude` is supported.
+        required: false
+        type: string
+        default: claude
+      opencode-model:
+        description: Accepted for interface parity with the other workflows and passed to the harness; unused while only `claude` is supported. Empty uses the `OPENCODE_MODEL` variable.
+        required: false
+        type: string
+        default: ""
+      opencode-variant:
+        description: Accepted for interface parity and passed to the harness; unused while only `claude` is supported. Empty uses the `OPENCODE_VARIANT` variable.
+        required: false
+        type: string
+        default: ""
+      claude-model:
+        description: Claude Code model alias or full model ID. Empty uses the `CLAUDE_MODEL` variable.
+        required: false
+        type: string
+        default: ""
+      claude-effort:
+        description: Claude Code effort level. Empty uses the `CLAUDE_EFFORT` variable.
+        required: false
+        type: string
+        default: ""
+      ai-skills-ref:
+        description: Tag or commit SHA of fbrissi/ai-skills the skills and agents are installed from.
+        required: false
+        type: string
+        default: v0.5.0
+      jira-base-url:
+        description: Jira base URL. Empty uses the `JIRA_BASE_URL` variable.
+        required: false
+        type: string
+        default: ""
+      agent-client-id:
+        description: Client ID of the GitHub App the agent acts as. Empty uses the `AGENT_APP_CLIENT_ID` variable.
+        required: false
+        type: string
+        default: ""
+      environment:
+        description: GitHub environment of the task job; its secrets and variables are available to the job. Empty runs without one.
+        required: false
+        type: string
+        default: ""
+      runs-on:
+        description: Runner label. Empty uses the `CI_RUNNER` variable, then `ubuntu-latest`.
+        required: false
+        type: string
+        default: ""
+      timeout-minutes:
+        description: Maximum harness run time in minutes. GitHub App tokens expire after one hour.
+        required: false
+        type: number
+        default: 50
+      job-timeout-minutes:
+        description: Timeout of the task job; keep it above `timeout-minutes`.
+        required: false
+        type: number
+        default: 60
+      node-version:
+        description: Node.js version installed before `install-command`. Empty skips actions/setup-node.
+        required: false
+        type: string
+        default: ""
+      node-cache:
+        description: Package manager cache for actions/setup-node (`npm`, `yarn`, or `pnpm`). Only used with `save-dependency-cache`.
+        required: false
+        type: string
+        default: ""
+      install-command:
+        description: Command that installs the project dependencies. Empty skips it.
+        required: false
+        type: string
+        default: ""
+      dependency-cache-path:
+        description: Paths cached around `install-command`, for example `node_modules`. Empty disables the cache.
+        required: false
+        type: string
+        default: ""
+      dependency-cache-prefix:
+        description: Cache key prefix; the key is `<prefix>-<os>-<arch>-<hash of dependency-cache-files>`.
+        required: false
+        type: string
+        default: ai-task-deps-v1
+      dependency-cache-files:
+        description: Glob whose files are hashed into the dependency cache key.
+        required: false
+        type: string
+        default: "**/{package-lock.json,yarn.lock,pnpm-lock.yaml}"
+      save-dependency-cache:
+        description: Save the dependency cache after installing. Off by default; warm the cache from the default branch instead.
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      AGENT_APP_PRIVATE_KEY:
+        description: Private key of the GitHub App the agent acts as.
+        required: false
+      OPEN_AI_TOKEN:
+        description: OpenAI API key, passed to the harness; unused while only `claude` is supported.
+        required: false
+      ANTHROPIC_API_KEY:
+        description: Anthropic API key for Claude Code.
+        required: false
+      CLAUDE_CODE_OAUTH_TOKEN:
+        description: Claude Code OAuth token, used when `ANTHROPIC_API_KEY` is empty.
+        required: false
+      JIRA_EMAIL:
+        description: Jira account e-mail.
+        required: false
+      JIRA_API_TOKEN:
+        description: Jira API token.
+        required: false
+    outputs:
+      agent:
+        description: Agent that ran the task.
+        value: ${{ jobs.task.outputs.agent }}
+
+concurrency:
+  group: fbrissi-ai-task-${{ github.repository }}-${{ inputs.task }}-${{ inputs.issue || inputs.milestone || inputs.source }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  task:
+    name: AI Task / ${{ inputs.task }}
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+    timeout-minutes: ${{ inputs.job-timeout-minutes }}
+    environment:
+      name: ${{ inputs.environment }}
+    outputs:
+      agent: ${{ steps.task.outputs.agent }}
+    steps:
+      - name: Check settings
+        env:
+          APP_CLIENT_ID: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          HAS_APP_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          if [ -z "$APP_CLIENT_ID" ]; then
+            echo '::error::The agent-client-id input or the AGENT_APP_CLIENT_ID variable is required.'
+            exit 1
+          fi
+          if [ "$HAS_APP_KEY" != 'true' ]; then
+            echo '::error::The AGENT_APP_PRIVATE_KEY secret is required.'
+            exit 1
+          fi
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+          # Only orchestrate and implement push branches and open pull requests; only orchestrate dispatches workflows.
+          permission-contents: ${{ (inputs.task == 'orchestrate' || inputs.task == 'implement') && 'write' || 'read' }}
+          permission-issues: write
+          permission-pull-requests: ${{ (inputs.task == 'orchestrate' || inputs.task == 'implement') && 'write' || 'read' }}
+          permission-actions: ${{ inputs.task == 'orchestrate' && 'write' || '' }}
+          permission-organization-projects: ${{ inputs.project != '' && 'write' || '' }}
+
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0
+
+      - name: Configure git identity
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          bot="${APP_SLUG}[bot]"
+          bot_id="$(gh api "users/${bot}" --jq .id)"
+          git config user.name "$bot"
+          git config user.email "${bot_id}+${bot}@users.noreply.github.com"
+
+      - uses: actions/cache/restore@v6
+        id: dependency-cache
+        if: ${{ inputs.dependency-cache-path != '' }}
+        with:
+          path: ${{ inputs.dependency-cache-path }}
+          key: ${{ inputs.dependency-cache-prefix }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(inputs.dependency-cache-files) }}
+
+      - uses: actions/setup-node@v7
+        if: ${{ inputs.node-version != '' }}
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: ${{ inputs.save-dependency-cache && inputs.node-cache || '' }}
+
+      - name: Install dependencies
+        if: ${{ inputs.install-command != '' && steps.dependency-cache.outputs.cache-hit != 'true' }}
+        env:
+          INSTALL_COMMAND: ${{ inputs.install-command }}
+        run: bash -euo pipefail -c "$INSTALL_COMMAND"
+
+      - name: Save dependency cache
+        if: ${{ inputs.save-dependency-cache && inputs.dependency-cache-path != '' && inputs.install-command != '' && steps.dependency-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ inputs.dependency-cache-path }}
+          key: ${{ steps.dependency-cache.outputs.cache-primary-key }}
+
+      - name: Run AI task
+        id: task
+        uses: fbrissi/github-actions/actions/ai-task@v1
+        with:
+          task: ${{ inputs.task }}
+          source: ${{ inputs.source }}
+          source-tracker: ${{ inputs.source-tracker }}
+          source-language: ${{ inputs.source-language }}
+          milestone: ${{ inputs.milestone }}
+          issue: ${{ inputs.issue }}
+          branch: ${{ inputs.branch }}
+          base-branch: ${{ inputs.base-branch }}
+          milestone-template: ${{ inputs.milestone-template }}
+          output-language: ${{ inputs.output-language }}
+          status-labels: ${{ inputs.status-labels }}
+          project: ${{ inputs.project }}
+          project-status-field: ${{ inputs.project-status-field }}
+          project-status-options: ${{ inputs.project-status-options }}
+          research-sources: ${{ inputs.research-sources }}
+          context: ${{ inputs.context }}
+          profile: ${{ inputs.profile }}
+          implement-workflow: ${{ inputs.implement-workflow }}
+          max-parallel: ${{ inputs.max-parallel }}
+          skills: ${{ inputs.skills }}
+          agents: ${{ inputs.agents }}
+          harness: ${{ inputs.harness }}
+          opencode-model: ${{ inputs.opencode-model || vars.OPENCODE_MODEL }}
+          opencode-variant: ${{ inputs.opencode-variant || vars.OPENCODE_VARIANT }}
+          claude-model: ${{ inputs.claude-model || vars.CLAUDE_MODEL }}
+          claude-effort: ${{ inputs.claude-effort || vars.CLAUDE_EFFORT }}
+          ai-skills-ref: ${{ inputs.ai-skills-ref }}
+          timeout-minutes: ${{ inputs.timeout-minutes }}
+          github-token: ${{ steps.app-token.outputs.token }}
+          openai-api-key: ${{ secrets.OPEN_AI_TOKEN }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          jira-base-url: ${{ inputs.jira-base-url || vars.JIRA_BASE_URL }}
+          jira-email: ${{ secrets.JIRA_EMAIL }}
+          jira-api-token: ${{ secrets.JIRA_API_TOKEN }}

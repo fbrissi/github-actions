@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.8.0
+
+### Added
+
+- `ai-task` action: runs one AI task delivery task (`business-refinement`, `technical-refinement`, `readiness-review`,
+  `orchestrate`, or `implement`) with its fbrissi/ai-skills agent. It validates the task and the inputs it requires,
+  installs the task's agents and skills (default `ai-skills-ref` `v0.5.0`) plus any extra `skills` and `agents`,
+  passes every non-empty parameter explicitly in a non-interactive prompt so the repository profile fills the rest,
+  and exports masked Jira credentials only to the harness step. It runs `ai-harness@v1`.
+- `ai-task.yml` reusable workflow: creates a GitHub App token scoped per task (`actions: write` only for
+  `orchestrate`, `contents` and `pull-requests` write only for `orchestrate` and `implement`,
+  `organization-projects: write` only with `project`), checks out with full history and push credentials, commits as
+  the App bot, installs dependencies, and runs `ai-task`. Runs are serialized per task and issue, milestone, or source.
+
 ## v1.7.0
 
 ### Added
