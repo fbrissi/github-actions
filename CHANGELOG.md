@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.7.0
+
+### Added
+
+- `pr-feedback-dispatch.yml` reusable workflow: on `pull_request_review` and `check_run` events, dispatches the fix
+  workflow for `changes_requested` or commented reviews (except from `ignore-authors`) and the merge decision workflow
+  for approvals or a successful `merge-check-name` check run, always on the default branch and never for forks.
+- `pr-fix.yml` reusable workflow: one AI pass of the `pr-fix` skill on an opted-in (`opt-in-label` or
+  `branch-prefixes`) same-repository pull request, pushed with a GitHub App token so CI runs again. Deterministic
+  gates skip drafts, forks, and repeated passes on the same head without new feedback; after `max-rounds` it adds
+  `escalation-label` and stops. Reports a `PR Fix` check run.
+- `merge-decision.yml` reusable workflow: deterministic merge gates (state, `branch-prefixes`, hold labels, conflicts, checks, human
+  approvals on the head commit, unresolved threads, one decision per head commit), then the `merge-risk` skill in
+  decide mode on the base branch checkout. Holds unless `auto-merge` is on; merges with the App token.
+
 ## v1.6.1
 
 ### Fixed

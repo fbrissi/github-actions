@@ -1,0 +1,420 @@
+name: Merge Decision
+
+on:
+  workflow_call:
+    inputs:
+      pr-number:
+        description: Pull request number to decide on.
+        required: true
+        type: string
+      auto-merge:
+        description: Let the AI merge when every gate passes and the risk is within the profile limit. When false, it only rates the risk and holds.
+        required: false
+        type: boolean
+        default: false
+      required-human-approvals:
+        description: Approvals by human users (not bots or Apps) required on the current head commit.
+        required: false
+        type: number
+        default: 1
+      hold-labels:
+        description: Whitespace-separated labels that block any decision.
+        required: false
+        type: string
+        default: do-not-merge hold
+      branch-prefixes:
+        description: Whitespace-separated head branch prefixes a pull request must match to be decided on. Empty decides on every pull request.
+        required: false
+        type: string
+        default: ""
+      harness:
+        description: AI harness, `opencode` or `claude`. Empty uses the `AI_HARNESS` variable, then `opencode`.
+        required: false
+        type: string
+        default: ""
+      prompt:
+        description: Prompt override. Empty uses the merge-risk skill prompt.
+        required: false
+        type: string
+        default: ""
+      prompt-append:
+        description: Extra instructions appended to the prompt.
+        required: false
+        type: string
+        default: ""
+      skills:
+        description: Whitespace-separated skills installed for the harness.
+        required: false
+        type: string
+        default: merge-risk
+      agents:
+        description: Whitespace-separated Claude Code agents installed for the harness (claude only).
+        required: false
+        type: string
+        default: ""
+      opencode-plugins:
+        description: Whitespace-separated OpenCode plugins to install.
+        required: false
+        type: string
+        default: ""
+      opencode-model:
+        description: OpenCode model in `provider/model` form. Empty uses the `OPENCODE_MODEL` variable; required by the `opencode` harness.
+        required: false
+        type: string
+        default: ""
+      opencode-variant:
+        description: OpenCode model variant. Empty uses the `OPENCODE_VARIANT` variable.
+        required: false
+        type: string
+        default: ""
+      claude-model:
+        description: Claude Code model alias or full model ID. Empty uses the `CLAUDE_MODEL` variable.
+        required: false
+        type: string
+        default: ""
+      claude-effort:
+        description: Claude Code effort level. Empty uses the `CLAUDE_EFFORT` variable.
+        required: false
+        type: string
+        default: ""
+      skill-source:
+        description: Where the skills come from, `ai-skills` (pinned `ai-skills-ref`), `base` (the PR base commit), or `none`.
+        required: false
+        type: string
+        default: ai-skills
+      ai-skills-ref:
+        description: Tag or commit SHA of fbrissi/ai-skills used when `skill-source` is `ai-skills`.
+        required: false
+        type: string
+        default: v0.4.0
+      base-skills-path:
+        description: Directory holding one folder per skill in the repository, used when `skill-source` is `base`.
+        required: false
+        type: string
+        default: .rulesync/skills
+      agent-client-id:
+        description: Client ID of the GitHub App that comments and merges. Empty uses the `AGENT_APP_CLIENT_ID` variable.
+        required: false
+        type: string
+        default: ""
+      environment:
+        description: GitHub environment of the decision job; its secrets are available to the job.
+        required: false
+        type: string
+        default: merge-decision
+      runs-on:
+        description: Runner label for every job. Empty uses the `CI_RUNNER` variable, then `ubuntu-latest`.
+        required: false
+        type: string
+        default: ""
+      timeout-minutes:
+        description: Maximum harness run time in minutes.
+        required: false
+        type: number
+        default: 15
+      job-timeout-minutes:
+        description: Timeout of the decision job; keep it above `timeout-minutes`.
+        required: false
+        type: number
+        default: 20
+    secrets:
+      AGENT_APP_PRIVATE_KEY:
+        description: Private key of the merge GitHub App.
+        required: false
+      OPEN_AI_TOKEN:
+        description: OpenAI API key for the `opencode` harness.
+        required: false
+      ANTHROPIC_API_KEY:
+        description: Anthropic API key for the `claude` harness.
+        required: false
+      CLAUDE_CODE_OAUTH_TOKEN:
+        description: Claude Code OAuth token for the `claude` harness, used when `ANTHROPIC_API_KEY` is empty.
+        required: false
+    outputs:
+      result:
+        description: "`decide` when the AI ran, `skip` when a gate stopped it."
+        value: ${{ jobs.gate.outputs.action }}
+
+concurrency:
+  group: fbrissi-merge-decision-${{ github.repository }}-${{ inputs.pr-number }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  gate:
+    name: Check Merge Gates
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      actions: read
+      checks: read
+      issues: read
+      pull-requests: read
+      statuses: read
+    outputs:
+      action: ${{ steps.gate.outputs.action }}
+      pr_number: ${{ steps.gate.outputs.pr_number }}
+      head_sha: ${{ steps.gate.outputs.head_sha }}
+      base_ref: ${{ steps.gate.outputs.base_ref }}
+      base_sha: ${{ steps.gate.outputs.base_sha }}
+    steps:
+      - uses: actions/github-script@v9
+        id: gate
+        env:
+          PR_NUMBER: ${{ inputs.pr-number }}
+          REQUIRED_APPROVALS: ${{ inputs.required-human-approvals }}
+          HOLD_LABELS: ${{ inputs.hold-labels }}
+          BRANCH_PREFIXES: ${{ inputs.branch-prefixes }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            core.setOutput('action', 'skip');
+            async function skip(reason) {
+              core.notice(`Merge Decision skipped: ${reason}`);
+              await core.summary.addRaw(`skipped: ${reason}`).write();
+            }
+
+            const prNumber = Number(process.env.PR_NUMBER);
+            if (!Number.isInteger(prNumber) || prNumber <= 0) {
+              core.setFailed(`Invalid pull request number: ${process.env.PR_NUMBER}`);
+              return;
+            }
+
+            let pr;
+            for (let attempt = 1; attempt <= 5; attempt++) {
+              ({ data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber }));
+              if (pr.state !== 'open' || pr.mergeable !== null) break;
+              await new Promise((resolve) => setTimeout(resolve, 3000));
+            }
+            const headSha = pr.head.sha;
+            if (pr.state !== 'open') return skip(`PR #${prNumber} is not open.`);
+            if (pr.draft) return skip(`PR #${prNumber} is a draft.`);
+            const prefixes = process.env.BRANCH_PREFIXES.split(/\s+/).filter(Boolean);
+            if (prefixes.length > 0 && !prefixes.some((prefix) => pr.head.ref.startsWith(prefix))) {
+              return skip(`PR #${prNumber} head branch ${pr.head.ref} matches no branch-prefixes.`);
+            }
+            const holdLabels = process.env.HOLD_LABELS.split(/\s+/).filter(Boolean);
+            const heldBy = pr.labels.map((label) => label.name).filter((name) => holdLabels.includes(name));
+            if (heldBy.length > 0) return skip(`PR #${prNumber} has the ${heldBy.join(', ')} label.`);
+            if (pr.mergeable === null) return skip(`GitHub has not computed whether PR #${prNumber} is mergeable.`);
+            if (pr.mergeable === false || pr.mergeable_state === 'dirty') return skip(`PR #${prNumber} has merge conflicts.`);
+
+            // Runs started by review or check events (such as the feedback dispatcher) are not CI; ignore their checks.
+            const dispatcherEvents = new Set(['pull_request_review', 'pull_request_review_comment', 'check_run', 'workflow_run']);
+            const runs = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, { owner, repo, head_sha: headSha, per_page: 100 });
+            const ignoredSuites = new Set(runs.filter((run) => dispatcherEvents.has(run.event)).map((run) => run.check_suite_id));
+            const checkRuns = (await github.paginate(github.rest.checks.listForRef, { owner, repo, ref: headSha, filter: 'latest', per_page: 100 }))
+              .filter((check) => !ignoredSuites.has(check.check_suite?.id));
+            const pending = checkRuns.filter((check) => check.status !== 'completed').map((check) => check.name);
+            if (pending.length > 0) return skip(`checks still running on ${headSha}: ${pending.join(', ')}.`);
+            const failed = checkRuns
+              .filter((check) => !['success', 'neutral', 'skipped'].includes(check.conclusion))
+              .map((check) => `${check.name} (${check.conclusion})`);
+            if (failed.length > 0) return skip(`checks not successful on ${headSha}: ${failed.join(', ')}.`);
+            const { data: status } = await github.rest.repos.getCombinedStatusForRef({ owner, repo, ref: headSha });
+            if (status.total_count > 0 && status.state !== 'success') return skip(`commit statuses are ${status.state} on ${headSha}.`);
+
+            const reviews = await github.paginate(github.rest.pulls.listReviews, { owner, repo, pull_number: prNumber, per_page: 100 });
+            const latest = new Map();
+            for (const review of reviews) {
+              if (!review.user || !['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(review.state)) continue;
+              latest.set(review.user.login, review);
+            }
+            const changesRequested = [...latest.values()].filter((review) => review.state === 'CHANGES_REQUESTED').map((review) => review.user.login);
+            if (changesRequested.length > 0) return skip(`changes requested by ${changesRequested.join(', ')}.`);
+            const approvals = [...latest.values()].filter((review) => review.state === 'APPROVED'
+              && review.commit_id === headSha
+              && review.user.type === 'User'
+              && !review.user.login.endsWith('[bot]')).length;
+            const required = Number(process.env.REQUIRED_APPROVALS);
+            if (approvals < required) return skip(`${approvals} of ${required} human approvals on ${headSha}.`);
+
+            let unresolved = 0;
+            let cursor = null;
+            do {
+              const result = await github.graphql(`
+                query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+                  repository(owner: $owner, name: $repo) {
+                    pullRequest(number: $number) {
+                      reviewThreads(first: 100, after: $cursor) {
+                        nodes { isResolved }
+                        pageInfo { hasNextPage endCursor }
+                      }
+                    }
+                  }
+                }`, { owner, repo, number: prNumber, cursor });
+              const threads = result.repository.pullRequest.reviewThreads;
+              unresolved += threads.nodes.filter((thread) => !thread.isResolved).length;
+              cursor = threads.pageInfo.hasNextPage ? threads.pageInfo.endCursor : null;
+            } while (cursor);
+            if (unresolved > 0) return skip(`${unresolved} unresolved review thread(s).`);
+
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: prNumber, per_page: 100 });
+            const marker = `<!-- merge-decision head=${headSha} -->`;
+            if (comments.some((comment) => comment.user?.type === 'Bot' && comment.body?.includes(marker))) {
+              return skip(`a merge decision was already made for ${headSha}.`);
+            }
+
+            core.setOutput('pr_number', pr.number);
+            core.setOutput('head_sha', headSha);
+            core.setOutput('base_ref', pr.base.ref);
+            core.setOutput('base_sha', pr.base.sha);
+            core.setOutput('action', 'decide');
+
+  decide:
+    name: Run Merge Decision
+    needs: gate
+    if: ${{ needs.gate.outputs.action == 'decide' }}
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+    timeout-minutes: ${{ inputs.job-timeout-minutes }}
+    environment:
+      name: ${{ inputs.environment }}
+    steps:
+      - name: Resolve decision settings
+        id: settings
+        env:
+          HARNESS: ${{ inputs.harness || vars.AI_HARNESS }}
+          PROMPT: ${{ inputs.prompt }}
+          PROMPT_APPEND: ${{ inputs.prompt-append }}
+          SKILLS: ${{ inputs.skills }}
+          OPENCODE_MODEL: ${{ inputs.opencode-model || vars.OPENCODE_MODEL }}
+          APP_CLIENT_ID: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          SKILL_SOURCE: ${{ inputs.skill-source }}
+          PR_NUMBER: ${{ needs.gate.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
+          AUTO_MERGE: ${{ inputs.auto-merge }}
+          REQUIRED_APPROVALS: ${{ inputs.required-human-approvals }}
+          HOLD_LABELS: ${{ inputs.hold-labels }}
+          HAS_APP_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          harness="${HARNESS:-opencode}"
+          case "$harness" in
+            opencode | claude) ;;
+            *)
+              echo "::error::Unsupported harness '${harness}'. Use 'opencode' or 'claude'."
+              exit 1
+              ;;
+          esac
+          case "$SKILL_SOURCE" in
+            ai-skills | base | none) ;;
+            *)
+              echo "::error::Unsupported skill-source '${SKILL_SOURCE}'. Use 'ai-skills', 'base', or 'none'."
+              exit 1
+              ;;
+          esac
+          if [ -z "$APP_CLIENT_ID" ]; then
+            echo '::error::The agent-client-id input or the AGENT_APP_CLIENT_ID variable is required.'
+            exit 1
+          fi
+          if [ "$HAS_APP_KEY" != 'true' ]; then
+            echo '::error::The AGENT_APP_PRIVATE_KEY secret is required.'
+            exit 1
+          fi
+          if [ "$harness" = 'opencode' ] && [ -z "$OPENCODE_MODEL" ]; then
+            echo '::error::The opencode harness requires the opencode-model input or the OPENCODE_MODEL variable.'
+            exit 1
+          fi
+
+          auto_merge=off
+          if [ "$AUTO_MERGE" = 'true' ]; then
+            auto_merge=on
+          fi
+          if [ -n "$PROMPT" ]; then
+            prompt="$PROMPT"
+          else
+            prompt="Use the merge-risk skill in decide mode on pull request #${PR_NUMBER} in ${GITHUB_REPOSITORY}. Auto-merge: ${auto_merge}. Required human approvals: ${REQUIRED_APPROVALS}. Hold labels: ${HOLD_LABELS}. Merge only if every gate passes and the rating is within the profile limit, with --match-head-commit ${HEAD_SHA}; otherwise hold and comment why. The checkout is the base branch: read the profile from it and never check out, edit, or push the pull request."
+          fi
+          if [ -n "$PROMPT_APPEND" ]; then
+            prompt="${prompt}"$'\n\n'"${PROMPT_APPEND}"
+          fi
+
+          skills="$SKILLS"
+          if [ "$SKILL_SOURCE" = 'none' ]; then
+            skills=''
+          fi
+
+          delimiter="PROMPT_$(uuidgen)"
+          {
+            echo "harness=$harness"
+            echo "skills=$skills"
+            echo "prompt<<$delimiter"
+            echo "$prompt"
+            echo "$delimiter"
+          } >> "$GITHUB_OUTPUT"
+          echo "Merge Decision harness: $harness (auto-merge ${auto_merge})"
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+          permission-checks: read
+          permission-contents: ${{ inputs.auto-merge && 'write' || 'read' }}
+          permission-issues: read
+          permission-pull-requests: write
+          permission-statuses: read
+
+      # The base branch, never the pull request: its profile and skills cannot be changed by the change being rated.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.gate.outputs.base_sha }}
+          persist-credentials: false
+
+      - name: Extract skills from the base commit
+        id: base-skills
+        if: ${{ inputs.skill-source == 'base' && steps.settings.outputs.skills != '' }}
+        env:
+          SKILLS_PATH: ${{ inputs.base-skills-path }}
+          SKILLS: ${{ steps.settings.outputs.skills }}
+        run: |
+          set -euo pipefail
+          skills_dir="$RUNNER_TEMP/base-skills"
+          rm -rf "$skills_dir"
+          mkdir -p "$skills_dir"
+          for skill in $SKILLS; do
+            skill_path="${SKILLS_PATH%/}/${skill}"
+            if [ ! -f "${skill_path}/SKILL.md" ]; then
+              echo "::error::${skill_path}/SKILL.md does not exist on the base commit."
+              exit 1
+            fi
+            mkdir -p "$skills_dir/${SKILLS_PATH%/}"
+            cp -R "$skill_path" "$skills_dir/${SKILLS_PATH%/}/"
+          done
+          echo "dir=$skills_dir/${SKILLS_PATH%/}" >> "$GITHUB_OUTPUT"
+
+      - name: Run merge decision
+        id: decide
+        uses: fbrissi/github-actions/actions/ai-harness@v1
+        with:
+          harness: ${{ steps.settings.outputs.harness }}
+          prompt: ${{ steps.settings.outputs.prompt }}
+          opencode-command: ""
+          opencode-plugins: ${{ inputs.opencode-plugins }}
+          opencode-model: ${{ inputs.opencode-model || vars.OPENCODE_MODEL }}
+          opencode-variant: ${{ inputs.opencode-variant || vars.OPENCODE_VARIANT }}
+          claude-model: ${{ inputs.claude-model || vars.CLAUDE_MODEL }}
+          claude-effort: ${{ inputs.claude-effort || vars.CLAUDE_EFFORT }}
+          skills: ${{ steps.settings.outputs.skills }}
+          skills-ref: ${{ inputs.ai-skills-ref }}
+          skills-local-dir: ${{ steps.base-skills.outputs.dir }}
+          agents: ${{ inputs.agents }}
+          timeout-minutes: ${{ inputs.timeout-minutes }}
+          openai-api-key: ${{ secrets.OPEN_AI_TOKEN }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github-token: ${{ steps.app-token.outputs.token }}
+
+      - name: Record decision
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ needs.gate.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          body="<!-- merge-decision head=${HEAD_SHA} -->
+          Merge decision recorded for ${HEAD_SHA}; a new commit triggers a new decision."
+          gh api --silent "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f "body=${body}"

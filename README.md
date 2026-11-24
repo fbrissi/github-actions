@@ -12,6 +12,9 @@ deploys, credential rotation) stays in each project.
 | Component | Type | Purpose |
 |---|---|---|
 | [`code-review.yml`](#code-review) | Reusable workflow | AI review of a pull request, reported as a `Code Review` check run. |
+| [`pr-feedback-dispatch.yml`](#pr-feedback-dispatch) | Reusable workflow | Turns review and check events into fix and merge-decision dispatches on the default branch. |
+| [`pr-fix.yml`](#pr-fix) | Reusable workflow | One AI pass that fixes review feedback and failing CI on an opted-in pull request. |
+| [`merge-decision.yml`](#merge-decision) | Reusable workflow | Deterministic merge gates, then an AI risk rating that holds or (opt-in) merges. |
 | [`release-note.yml`](#release-note) | Reusable workflow | Requires each pull request to add one changelog release. |
 | [`release.yml`](#release) | Reusable workflow | Tags and publishes the changelog release, then optionally deploys it. |
 | [`terraform-permissions.yml`](#terraform-permissions) | Reusable workflow | Fails before merge when the Cloudflare Terraform token lacks a permission. |
@@ -164,6 +167,236 @@ another organization must pass each secret explicitly, or organization secrets a
 |---|---|
 | `check-run-id` | Check run that reports the review. |
 
+## PR Feedback Loop
+
+Three workflows follow a pull request up event by event instead of one agent that blocks on CI:
+
+1. A review arrives. [`pr-feedback-dispatch.yml`](#pr-feedback-dispatch) dispatches the fix workflow for
+   `changes_requested` (or `commented` with a body or inline comments) and the merge workflow for `approved`.
+2. [`pr-fix.yml`](#pr-fix) runs one fix pass and pushes with a GitHub App token. Unlike `GITHUB_TOKEN` pushes, App
+   pushes trigger CI, so the code review runs again and its review closes the loop.
+3. [`merge-decision.yml`](#merge-decision) checks the merge gates without AI and, when they pass, rates the risk
+   with the `merge-risk` skill. It holds by default and merges only with `auto-merge: true`.
+
+Both targets are dispatched on the default branch, so a pull request can never change its own fixer or merger. Use
+separate GitHub Apps (one `environment` each, with its own `AGENT_APP_CLIENT_ID` and `AGENT_APP_PRIVATE_KEY`) for
+review, fix, and merge, so the fixer's replies are never mistaken for review feedback and the reviewer can never
+merge.
+
+### PR Feedback Dispatch
+
+`.github/workflows/pr-feedback-dispatch.yml` needs no secrets and never checks out code. It skips fork pull
+requests, whose `GITHUB_TOKEN` is read-only.
+
+```yaml
+# .github/workflows/pr-feedback.yml
+name: PR Feedback
+
+on:
+  pull_request_review:
+    types: [submitted]
+  check_run:
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  dispatch:
+    name: PR Feedback
+    uses: fbrissi/github-actions/.github/workflows/pr-feedback-dispatch.yml@v1
+    permissions:
+      actions: write
+      pull-requests: read
+    with:
+      ignore-authors: my-fixer-app[bot]
+```
+
+| Input | Default | Description |
+|---|---|---|
+| `fix-workflow` | `pr-fix.yml` | Dispatched with `pr_number` on a `changes_requested` review, or a `commented` one with a body or inline comments. Empty disables it. |
+| `merge-workflow` | `merge-decision.yml` | Dispatched with `pr_number` on an `approved` review or a successful `merge-check-name` check run. Empty disables it. |
+| `ignore-authors` | `""` | Logins whose reviews never dispatch a fix, for example the fixer App bot, whose thread replies also emit review events. |
+| `merge-check-name` | `Code Review` | Successful check run that dispatches `merge-workflow` for each pull request in `check_run.pull_requests` (same repository only). Empty disables it. |
+| `runs-on` | `CI_RUNNER`, then `ubuntu-latest` | Runner label. |
+
+GitHub never starts `check_run` workflows for check runs whose suite was created by GitHub Actions, and events caused
+by `GITHUB_TOKEN` never start workflows (except `workflow_dispatch` and `repository_dispatch`). The `Code Review`
+check run of [`code-review.yml`](#code-review) is one of those, so `merge-check-name` only fires for check runs that
+another GitHub App creates. To decide again after an approval that arrived before the review finished, dispatch the
+merge workflow from the Code Review caller once the review succeeds:
+
+```yaml
+  merge-decision:
+    name: Dispatch Merge Decision
+    needs: code-review
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - uses: actions/github-script@v9
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'merge-decision.yml',
+              ref: context.payload.repository.default_branch,
+              inputs: { pr_number: process.env.PR_NUMBER },
+            });
+```
+
+### PR Fix
+
+`.github/workflows/pr-fix.yml` runs one pass of the `pr-fix` skill in auto mode on one pull request:
+
+1. **Check PR Fix Gates** skips (successfully, with `skipped: <reason>` in the step summary) unless the pull request
+   is open, not a draft, from this repository, opted in (`opt-in-label` or a `branch-prefixes` match), and without
+   `escalation-label`. Each pass leaves a `<!-- pr-fix round=N head=<sha> -->` comment; a pass is skipped when one
+   exists for the current head and nobody but the fixer has commented or reviewed since. After `max-rounds` passes it
+   adds `escalation-label`, comments once, and stops; removing the label allows `max-rounds` more. Otherwise it
+   creates a `PR Fix` check run on the head commit.
+2. **Run PR Fix** checks out the head branch with the App token, commits as the App bot, installs dependencies, and
+   runs the harness. It never watches CI or waits for comments: the next review dispatches the next pass. It then
+   records the round and fails if the branch was rewritten.
+3. **Finish PR Fix** completes the check run.
+
+```yaml
+# .github/workflows/pr-fix.yml
+name: PR Fix
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to fix
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  pr-fix:
+    name: PR Fix
+    uses: fbrissi/github-actions/.github/workflows/pr-fix.yml@v1
+    permissions:
+      checks: write
+      issues: read
+      pull-requests: read
+    with:
+      pr-number: ${{ inputs.pr_number }}
+      branch-prefixes: ai/
+      node-version: "24"
+      install-command: npm ci
+    secrets: inherit
+```
+
+The fixer GitHub App needs `Contents: Read and write`, `Pull requests: Read and write`, `Issues: Read`,
+`Actions: Read`, and `Checks: Read`. Do not grant it `Workflows`: GitHub then rejects any push that changes
+`.github/workflows/**`.
+
+| Input | Default | Description |
+|---|---|---|
+| `pr-number` | – (required) | Pull request to fix. |
+| `opt-in-label` | `ai:auto-fix` | Label that opts a pull request in. |
+| `branch-prefixes` | `""` | Head branch prefixes that also opt a pull request in. |
+| `max-rounds` | `3` | Passes before escalation. |
+| `escalation-label` | `ai:needs-human` | Added at `max-rounds`; blocks further passes while present. |
+| `skills` | `pr-fix pr-checks` | Skills installed for the harness. |
+| `agents` | `""` | Claude Code agents installed for the harness (`claude` only). |
+| `prompt` | `""` | Overrides the generated prompt. |
+| `prompt-append` | `""` | Appended to the prompt. |
+| `skill-source` | `ai-skills` | `ai-skills` (pinned `ai-skills-ref`), `base` (the PR base commit), or `none`. |
+| `ai-skills-ref` | `v0.4.0` | `fbrissi/ai-skills` tag or SHA used with `ai-skills`. |
+| `base-skills-path` | `.rulesync/skills` | Skills directory read from the base commit with `base`. |
+| `check-name` | `PR Fix` | Check run name. |
+| `environment` | `pr-fix` | Environment of the fix job; its secrets are visible to the job. |
+| `agent-client-id` | `AGENT_APP_CLIENT_ID` | Client ID of the fixer GitHub App. |
+
+`harness`, `opencode-plugins` (default `""`), `opencode-model`, `opencode-variant`, `claude-model`, `claude-effort`,
+`runs-on`, `timeout-minutes` (`25`), `job-timeout-minutes` (`30`), `node-version`, `node-cache`, `install-command`,
+`dependency-cache-path`, `dependency-cache-prefix` (`pr-fix-deps-v1`), `dependency-cache-files`, and
+`save-dependency-cache` work as in [Code Review](#inputs). Secrets are the same as [Code Review](#secrets). Output:
+`result` (`fix`, `escalate`, or `skip`).
+
+### Merge Decision
+
+`.github/workflows/merge-decision.yml` decides on one pull request:
+
+1. **Check Merge Gates** skips (successfully, with `skipped: <reason>`) unless the pull request is open, not a draft,
+   on a head branch matching `branch-prefixes` (when set), without `hold-labels`, free of conflicts, with every check
+   run and commit status on the head commit completed and
+   successful (`neutral` and `skipped` count; runs started by review or check events, such as the dispatcher, are
+   ignored), with no standing `CHANGES_REQUESTED`, at least `required-human-approvals` approvals on the head commit by
+   users (not bots or Apps), no unresolved review threads, and no decision recorded for the head commit yet.
+2. **Run Merge Decision** checks out the base commit (never the pull request) so the `merge-risk` profile cannot be
+   changed by the change it rates, runs the skill in decide mode, and records a
+   `<!-- merge-decision head=<sha> -->` comment, so each head commit is decided once. Push a commit (or delete that
+   comment) to decide again.
+
+The App token only gets `contents: write` with `auto-merge: true`, so with the default the harness cannot merge. A
+merge made with the App token, unlike one made with `GITHUB_TOKEN`, triggers the release workflows of the merged
+commit.
+
+```yaml
+# .github/workflows/merge-decision.yml
+name: Merge Decision
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to decide on
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  merge-decision:
+    name: Merge Decision
+    uses: fbrissi/github-actions/.github/workflows/merge-decision.yml@v1
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      issues: read
+      pull-requests: read
+      statuses: read
+    with:
+      pr-number: ${{ inputs.pr_number }}
+      auto-merge: false
+    secrets: inherit
+```
+
+The merge GitHub App needs `Contents: Read and write` (`Read` is enough while `auto-merge` is off),
+`Pull requests: Read and write`, `Issues: Read`, `Checks: Read`, and `Commit statuses: Read`, and must be allowed to
+merge by the branch rules. Without `Workflows`, it cannot merge a pull request that changes `.github/workflows/**`.
+
+| Input | Default | Description |
+|---|---|---|
+| `pr-number` | – (required) | Pull request to decide on. |
+| `auto-merge` | `false` | Let the AI merge; when false it only rates the risk and holds. |
+| `required-human-approvals` | `1` | Human approvals required on the head commit. |
+| `hold-labels` | `do-not-merge hold` | Labels that block a decision. |
+| `branch-prefixes` | `""` | Head branch prefixes a pull request must match; empty decides on every pull request. |
+| `skills` | `merge-risk` | Skills installed for the harness. |
+| `agents` | `""` | Claude Code agents installed for the harness (`claude` only). |
+| `prompt` | `""` | Overrides the generated prompt. |
+| `prompt-append` | `""` | Appended to the prompt. |
+| `skill-source` | `ai-skills` | `ai-skills` (pinned `ai-skills-ref`), `base` (the base commit), or `none`. |
+| `ai-skills-ref` | `v0.4.0` | `fbrissi/ai-skills` tag or SHA used with `ai-skills`. |
+| `base-skills-path` | `.rulesync/skills` | Skills directory read from the base commit with `base`. |
+| `environment` | `merge-decision` | Environment of the decision job; its secrets are visible to the job. |
+| `agent-client-id` | `AGENT_APP_CLIENT_ID` | Client ID of the merge GitHub App. |
+| `timeout-minutes` | `15` | Harness run timeout. |
+| `job-timeout-minutes` | `20` | Decision job timeout. |
+
+`harness`, `opencode-plugins` (default `""`), `opencode-model`, `opencode-variant`, `claude-model`, `claude-effort`,
+and `runs-on` work as in [Code Review](#inputs). Secrets are the same as [Code Review](#secrets). Output: `result`
+(`decide` or `skip`).
+
 ## Release Note
 
 `.github/workflows/release-note.yml` runs on `pull_request` and fails unless the pull request adds exactly one
@@ -300,10 +533,10 @@ organization, or, for the review job, its `environment`) are used whenever the m
 | Variable | Used by | Purpose |
 |---|---|---|
 | `CI_RUNNER` | all | Runner label; defaults to `ubuntu-latest`. |
-| `AI_HARNESS` | `code-review.yml` | `opencode` (default) or `claude`. |
-| `OPENCODE_MODEL`, `OPENCODE_VARIANT` | `code-review.yml` | OpenCode model and variant. |
-| `CLAUDE_MODEL`, `CLAUDE_EFFORT` | `code-review.yml` | Claude Code model and effort. |
-| `AGENT_APP_CLIENT_ID` | `code-review.yml` | Client ID of the GitHub App that publishes the review. |
+| `AI_HARNESS` | AI workflows | `opencode` (default) or `claude`. |
+| `OPENCODE_MODEL`, `OPENCODE_VARIANT` | AI workflows | OpenCode model and variant. |
+| `CLAUDE_MODEL`, `CLAUDE_EFFORT` | AI workflows | Claude Code model and effort. |
+| `AGENT_APP_CLIENT_ID` | AI workflows | Client ID of the GitHub App the workflow acts as (set it per `environment` to use one App per role). |
 | `AGENT_APP_ID` | `code-review.yml` | Deprecated fallback for `AGENT_APP_CLIENT_ID`. |
 
 ## Permissions
@@ -314,6 +547,9 @@ and grant per job:
 | Workflow | Caller job permissions |
 |---|---|
 | `code-review.yml` | `checks: write`, `contents: read`, `pull-requests: read` |
+| `pr-feedback-dispatch.yml` | `actions: write`, `pull-requests: read` |
+| `pr-fix.yml` | `checks: write`, `issues: read`, `pull-requests: read` |
+| `merge-decision.yml` | `actions: read`, `checks: read`, `contents: read`, `issues: read`, `pull-requests: read`, `statuses: read` |
 | `release-note.yml` | `contents: read` |
 | `release.yml` | `actions: write`, `contents: write` |
 | `terraform-permissions.yml` | `contents: read` |
@@ -335,6 +571,9 @@ and grant per job:
   tamper with `node_modules`. It only restores the dependency cache by default, so one pull request can never poison
   the cache that later reviews restore. Warm the same key from a workflow that runs on the default branch.
 - **Untrusted input.** Inputs and PR data reach scripts only through environment variables.
+- **Fix and merge.** `pr-fix.yml` is the only workflow that runs pull request code with secrets, and only for
+  same-repository pull requests that opted in; its App token has no `Workflows` permission. `merge-decision.yml`
+  never checks out the pull request, counts only human approvals, and cannot merge unless `auto-merge` is on.
 - The harnesses run with permission prompts disabled. Only review pull requests from trusted contributors, and do
   not run these workflows on `pull_request_target` with untrusted code.
 
