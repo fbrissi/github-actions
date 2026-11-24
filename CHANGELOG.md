@@ -12,7 +12,7 @@ merging a pull request that adds one tags the release and moves the major tag.
 
 - `ai-task` action: runs one AI task delivery task (`business-refinement`, `technical-refinement`, `readiness-review`,
   `orchestrate`, or `implement`) with its fbrissi/ai-skills agent. It validates the task and the inputs it requires,
-  installs the task's agents and skills (default `ai-skills-ref` `v0.5.0`) plus any extra `skills` and `agents`,
+  installs the task's agents and skills (default `ai-skills-ref` `v0.6.0`) plus any extra `skills` and `agents`,
   passes every non-empty parameter explicitly in a non-interactive prompt so the repository profile fills the rest,
   and exports masked Jira credentials only to the harness step. It runs `ai-harness@v1`.
 - `ai-task.yml` reusable workflow: creates a GitHub App token scoped per task (`actions: write` only for
