@@ -34,7 +34,7 @@ jobs:
         with:
           command: fix-gate
           pr-number: ${{ inputs.pr_number }}
-          branch-prefixes: feat/
+          branch-prefixes: feature/ release/ hotfix/ bugfix/
 ```
 
 ## Inputs

@@ -38,7 +38,7 @@ on:
         type: string
         default: do-not-merge hold
       branch-prefixes:
-        description: Whitespace-separated head branch prefixes a pull request must match to be decided on, for example `feat/` to cover both task branches and the milestone branch. Empty decides on every pull request.
+        description: Whitespace-separated head branch prefixes a pull request must match to be decided on, for example `feature/ release/ hotfix/ bugfix/`. Empty decides on every pull request.
         required: false
         type: string
         default: ""

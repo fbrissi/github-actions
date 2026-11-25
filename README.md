@@ -324,7 +324,7 @@ The fixer GitHub App needs `Contents: Read and write`, `Pull requests: Read and 
 |---|---|---|
 | `pr-number` | – (required) | Pull request to fix. |
 | `opt-in-label` | `ai:auto-fix` | Label that opts a pull request in. |
-| `branch-prefixes` | `""` | Head branch prefixes that also opt a pull request in (`startsWith`; `feat/` covers task and milestone branches). |
+| `branch-prefixes` | `""` | Head branch prefixes that also opt a pull request in (`startsWith`), for example `feature/ release/ hotfix/ bugfix/`. |
 | `max-rounds` | `3` | Passes before escalation. |
 | `escalation-label` | `ai:needs-human` | Added at `max-rounds`; blocks further passes while present. |
 | `skills` | `pr-fix pr-checks` | Skills installed for the harness. |
@@ -418,7 +418,7 @@ The review request uses the same App with `pull-requests: write`.
 | `human-approval-exempt-authors` | `""` (any GitHub App bot) | Authors that may skip human approval into an exempt base, for example the agent App bot `my-agent[bot]`. Pull requests by people always need `required-human-approvals`. |
 | `request-human-review` | `true` | Request a review from the flow's requester and mention them once while approvals are missing. |
 | `hold-labels` | `do-not-merge hold` | Labels that block a decision. |
-| `branch-prefixes` | `""` | Head branch prefixes a pull request must match (`startsWith`; `feat/` covers task and milestone branches); empty decides on every pull request. |
+| `branch-prefixes` | `""` | Head branch prefixes a pull request must match (`startsWith`), for example `feature/ release/ hotfix/ bugfix/`; empty decides on every pull request. |
 | `skills` | `merge-risk` | Skills installed for the harness. |
 | `agents` | `""` | Agents installed for the harness (Claude Code or OpenCode agents of the same name). |
 | `prompt` | `""` | Overrides the generated prompt. |
@@ -451,7 +451,7 @@ next stage or hands off to a human (see [How stages chain](#how-stages-chain)).
 | `technical-refinement` | `tech-lead` | `milestone` or `issue` | Writes the technical plan of each issue so the milestone's issues can be built in parallel. |
 | `readiness-review` | `readiness-reviewer` | `milestone` or `issue` | Marks each issue ready or sends it back to refinement. |
 | `orchestrate` | `delivery-orchestrator` | `milestone` | Creates the milestone and task branches and dispatches `implement` for each ready issue whose dependencies are done; opens the milestone PR when every issue is done. Never codes. |
-| `implement` | `task-implementer` | `issue`, `branch`, `base-branch` | Implements the issue, runs the review and QA cycle, and opens a PR into the milestone branch. |
+| `implement` | `task-implementer` | `issue`, `branch`, `base-branch` | Implements the issue, runs the review and QA cycle, and opens a PR into the milestone (release) branch. |
 | `issue-intake`, `issue-resolve` | `issue-resolver` | –, `issue` | See [Issue intake and resolve](#issue-intake-and-resolve). |
 
 Runs never wait for input: blocked tasks leave their questions on the ticket or issue and stop. Inputs left empty
@@ -504,8 +504,8 @@ Do these once per repository, in this order:
 8. **Callers** on the default branch (dispatch only finds workflows there): the five [stage callers](#callers),
    the [resume caller](#resume), the [orchestrate-on-merge caller](#callers), and the
    [PR follow-up callers](#pr-follow-up-for-task-branches).
-9. **Branch rules:** let the merge App merge into milestone branches (`feat/**`), and keep one human approval on the
-   default branch.
+9. **Branch rules:** let the merge App merge into release branches (`release/**`), and keep one human approval on
+   the default branch (`main`). See [Branch model](#branch-model).
 
 Start a delivery with **Actions > AI Business Refinement > Run workflow** and the Jira key (or
 `gh workflow run ai-business-refinement.yml -f source=DEV-1`). Everything after that runs on its own until a stage
@@ -834,9 +834,9 @@ jobs:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
 
-Re-run the orchestrator each time a task PR merges into a milestone branch. Task branches are named
-`<milestone branch>-<issue>-<slug>`, which is what the `if` checks; the milestone comes from the PR, or from the
-issues it closes:
+Re-run the orchestrator each time a task PR (`feature/*`) merges into a release branch, so it starts the next issues,
+and when the release PR (`release/*`) merges into the default branch, so it finishes the milestone. The milestone
+comes from the PR, or from the issues it closes (see [Branch model](#branch-model)):
 
 ```yaml
 # .github/workflows/ai-orchestrate-on-merge.yml
@@ -845,13 +845,16 @@ name: AI Orchestrate on Merge
 on:
   pull_request:
     types: [closed]
-    branches: ["feat/**"]
+    branches: ["release/**", main]
 
 permissions: {}
 
 jobs:
   dispatch:
-    if: ${{ github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, format('{0}-', github.event.pull_request.base.ref)) }}
+    if: >-
+      ${{ github.event.pull_request.merged == true && (
+      (startsWith(github.event.pull_request.head.ref, 'feature/') && startsWith(github.event.pull_request.base.ref, 'release/'))
+      || (startsWith(github.event.pull_request.head.ref, 'release/') && github.event.pull_request.base.ref == 'main')) }}
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -895,11 +898,27 @@ Merges made with `GITHUB_TOKEN` do not trigger `pull_request` workflows, so this
 GitHub App (such as the merge App) or a person. A `workflow_dispatch` sent with `GITHUB_TOKEN`, as above, does
 start the orchestrator.
 
+### Branch model
+
+The examples use this model; the concrete names (templates, the release of a bugfix) live in the repository profiles
+of fbrissi/ai-skills.
+
+| Branch | From | Pull request into | Purpose |
+|---|---|---|---|
+| `feature/*` | a `release/*` | that `release/*` | New work: one task of a milestone. |
+| `release/*` | `main` | `main` | A release being prepared; in the delivery flow, the milestone (aggregating) branch. |
+| `hotfix/*` | `main` | `main` | Urgent production fix. |
+| `bugfix/*` | `main` | the open `release/*` | Non-urgent production bug. |
+| `develop` | `main` | – | Optional backup of `main`, fast-forwarded by [Branch Sync](#branch-sync). |
+
+`main` is the default branch. Prefixes are plain `startsWith` matches and the inputs take any list, so callers that
+still have open branches with older prefixes (for example `feat/`) can keep them next to the new ones until those
+branches are merged.
+
 ### PR follow-up for task branches
 
-Task PRs (`feat/<milestone>-<issue>-<slug>` into `feat/<milestone>`) and the milestone PR (`feat/<milestone>` into
-the default branch) go through the [PR Feedback Loop](#pr-feedback-loop). Branch prefixes are plain `startsWith`
-matches, so `feat/` covers both kinds:
+Task PRs (`feature/*` into `release/*`), release PRs (`release/*` into `main`), and fix PRs (`hotfix/*` into `main`,
+`bugfix/*` into a `release/*`) go through the [PR Feedback Loop](#pr-feedback-loop):
 
 ```yaml
 # .github/workflows/pr-fix.yml
@@ -912,7 +931,8 @@ jobs:
       pull-requests: read
     with:
       pr-number: ${{ inputs.pr_number }}
-      branch-prefixes: feat/
+      branch-prefixes: feature/ release/ hotfix/ bugfix/
+      instructions: ${{ inputs.instructions }}
     secrets: inherit
 ```
 
@@ -930,16 +950,18 @@ jobs:
       statuses: read
     with:
       pr-number: ${{ inputs.pr_number }}
-      branch-prefixes: feat/
-      # Task PRs into milestone branches merge on the AI review, green CI, and a low merge-risk rating;
-      # the milestone PR into the default branch still needs one human approval.
-      human-approval-exempt-base-prefixes: feat/
+      branch-prefixes: feature/ release/ hotfix/ bugfix/
+      # PRs into a release branch opened by the agent App merge on the AI review, green CI, and a low merge-risk
+      # rating; PRs by people, and every PR into main (release and hotfix), still need one human approval.
+      human-approval-exempt-base-prefixes: release/
+      human-approval-exempt-authors: my-agent[bot]
       auto-merge: true
+      instructions: ${{ inputs.instructions }}
     secrets: inherit
 ```
 
-Keep the [PR Feedback Dispatch](#pr-feedback-dispatch) caller and the Code Review caller as they are. When the
-milestone PR waits for its approval, Merge Decision requests a review from the requester and mentions them once;
+Keep the [PR Feedback Dispatch](#pr-feedback-dispatch) caller and the Code Review caller as they are. When a
+release or hotfix PR waits for its approval, Merge Decision requests a review from the requester and mentions them once;
 their approval dispatches the decision again. When PR Fix escalates, its handoff offers a `pr-fix` resume.
 
 ### Issue intake and resolve

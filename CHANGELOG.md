@@ -79,6 +79,11 @@ merging a pull request that adds one tags the release and moves the major tag.
 
 ### Changed
 
+- The README examples follow the branch model `feature/*` (into a `release/*`), `release/*` (the milestone branch,
+  into `main`), `hotfix/*` (into `main`), and `bugfix/*` (into the open `release/*`), with `main` as the default
+  branch: `branch-prefixes: feature/ release/ hotfix/ bugfix/`, `human-approval-exempt-base-prefixes: release/`, and an
+  orchestrate-on-merge caller for `feature/*` into `release/*` and `release/*` into `main`. Prefix inputs are free
+  lists, so callers can keep older prefixes such as `feat/` while those branches are open.
 - The default harness is now `claude` everywhere: `code-review.yml`, `pr-fix.yml`, `merge-decision.yml`, `ai-task.yml`, and the `ai-harness` and `ai-task` actions use Claude Code when the input and `AI_HARNESS` are empty. Set `AI_HARNESS=opencode` to keep OpenCode.
 - `ai-task` action and `ai-task.yml` run with `opencode` or `claude`, resolved like every AI workflow: the input, then
   the `AI_HARNESS` variable, then `claude` (and `OPENCODE_MODEL`, `OPENCODE_VARIANT`, `CLAUDE_MODEL`,
