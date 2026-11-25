@@ -1,0 +1,153 @@
+name: AI Delivery
+description: >-
+  Deterministic steps of the AI task delivery flow: chain the next stage or hand off to a human after a stage run,
+  post a handoff comment with a one-click resume, resume a stage from that comment, or request a human review.
+author: Filipe Bojikian Rissi
+
+inputs:
+  command:
+    description: "`follow-up`, `handoff`, `resume`, or `request-review`."
+    required: true
+  github-token:
+    description: GitHub App installation token. `follow-up` needs `actions` and `issues` write and `pull-requests` read; `handoff` and `request-review` need `pull-requests` write; `resume` needs `actions`, `issues`, and `pull-requests` write.
+    required: true
+  task:
+    description: Stage the command is about (`follow-up` and `handoff`), for example `technical-refinement` or `pr-fix`.
+    required: false
+    default: ""
+  result:
+    description: Result of the stage run for `follow-up`, `success`, `failure`, or `cancelled`.
+    required: false
+    default: success
+  milestone:
+    description: GitHub milestone title.
+    required: false
+    default: ""
+  result-milestone:
+    description: Milestone the stage reported it worked on, used when `milestone` is empty.
+    required: false
+    default: ""
+  issue:
+    description: Issue number the run was scoped to.
+    required: false
+    default: ""
+  pr:
+    description: Pull request number (`handoff` and `request-review`).
+    required: false
+    default: ""
+  branch:
+    description: Task branch (`implement`).
+    required: false
+    default: ""
+  base-branch:
+    description: Milestone branch (`implement`).
+    required: false
+    default: ""
+  source:
+    description: Source ticket of `business-refinement`; its Jira key finds the milestone through `milestone-template`.
+    required: false
+    default: ""
+  milestone-template:
+    description: Milestone title template, for example `JIRA:{key}`.
+    required: false
+    default: ""
+  requested-by:
+    description: Login of the person who started the flow. Bots are ignored; empty uses the milestone's `requested-by` marker.
+    required: false
+    default: ""
+  blocker:
+    description: Blocker text of a `handoff` (up to three lines).
+    required: false
+    default: ""
+  marker:
+    description: Extra HTML comment lines a `handoff` starts with, for example `<!-- pr-fix escalated -->`.
+    required: false
+    default: ""
+  status-labels:
+    description: Multiline `state=label` overrides of the status labels (default `status:<state>`).
+    required: false
+    default: ""
+  stage-workflows:
+    description: Multiline `stage=workflow file` overrides of the stage callers (defaults `ai-<stage>.yml` and `pr-fix.yml`).
+    required: false
+    default: ""
+  max-auto-dispatches:
+    description: Automatic dispatches of one stage per milestone before `follow-up` hands off instead.
+    required: false
+    default: "3"
+  chain:
+    description: Let `follow-up` dispatch the next stage. When false it only hands off.
+    required: false
+    default: "true"
+  escalation-label:
+    description: Label that marks an escalated pull request or issue.
+    required: false
+    default: ai:needs-human
+  trusted-bots:
+    description: Whitespace-separated bot logins, besides `bot-login`, whose handoff comments may be resumed.
+    required: false
+    default: ""
+  bot-login:
+    description: Login of the App bot that posts handoffs, for example `my-agent[bot]`.
+    required: false
+    default: ""
+  jira-base-url:
+    description: Jira base URL, used to link the Jira ticket of a business handoff.
+    required: false
+    default: ""
+  required-approvals:
+    description: Human approvals the pull request needs (`request-review`).
+    required: false
+    default: "1"
+
+runs:
+  using: composite
+  steps:
+    - name: Check Node
+      id: node
+      shell: bash
+      run: |
+        if command -v node >/dev/null 2>&1; then
+          echo 'setup=false' >> "$GITHUB_OUTPUT"
+        else
+          echo 'setup=true' >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Setup Node
+      if: ${{ steps.node.outputs.setup == 'true' }}
+      uses: actions/setup-node@v7
+      with:
+        node-version: 24
+
+    - name: Run ${{ inputs.command }}
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        AI_DELIVERY_COMMAND: ${{ inputs.command }}
+        AI_DELIVERY_TASK: ${{ inputs.task }}
+        AI_DELIVERY_RESULT: ${{ inputs.result }}
+        AI_DELIVERY_MILESTONE: ${{ inputs.milestone }}
+        AI_DELIVERY_RESULT_MILESTONE: ${{ inputs.result-milestone }}
+        AI_DELIVERY_ISSUE: ${{ inputs.issue }}
+        AI_DELIVERY_PR: ${{ inputs.pr }}
+        AI_DELIVERY_BRANCH: ${{ inputs.branch }}
+        AI_DELIVERY_BASE_BRANCH: ${{ inputs.base-branch }}
+        AI_DELIVERY_SOURCE: ${{ inputs.source }}
+        AI_DELIVERY_MILESTONE_TEMPLATE: ${{ inputs.milestone-template }}
+        AI_DELIVERY_REQUESTED_BY: ${{ inputs.requested-by }}
+        AI_DELIVERY_BLOCKER: ${{ inputs.blocker }}
+        AI_DELIVERY_MARKER: ${{ inputs.marker }}
+        AI_DELIVERY_STATUS_LABELS: ${{ inputs.status-labels }}
+        AI_DELIVERY_STAGE_WORKFLOWS: ${{ inputs.stage-workflows }}
+        AI_DELIVERY_MAX_AUTO_DISPATCHES: ${{ inputs.max-auto-dispatches }}
+        AI_DELIVERY_CHAIN: ${{ inputs.chain }}
+        AI_DELIVERY_ESCALATION_LABEL: ${{ inputs.escalation-label }}
+        AI_DELIVERY_TRUSTED_BOTS: ${{ inputs.trusted-bots }}
+        AI_DELIVERY_BOT_LOGIN: ${{ inputs.bot-login }}
+        AI_DELIVERY_JIRA_BASE_URL: ${{ inputs.jira-base-url }}
+        AI_DELIVERY_REQUIRED_APPROVALS: ${{ inputs.required-approvals }}
+      run: node "$GITHUB_ACTION_PATH/main.mjs"
+
+branding:
+  icon: git-merge
+  color: purple
