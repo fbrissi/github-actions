@@ -40,9 +40,16 @@ merging a pull request that adds one tags the release and moves the major tag.
 - `merge-decision.yml`: `human-approval-exempt-base-prefixes` (pull requests into matching base branches, such as
   milestone branches, need no human approval) and `request-human-review` (default `true`: while approvals are
   missing, request a review from the flow's requester and mention them once).
+- `pr-gate` action: the deterministic `fix-gate`, `fix-record`, `fix-finish`, `merge-gate`, and `merge-record` steps
+  of `pr-fix.yml` and `merge-decision.yml`, with tests, so wrappers that load secrets at run time get the same gates
+  and markers.
+- `pr-feedback-dispatch.yml`: `ignore-reply-authors` skips reply-only reviews (no body, every inline comment a reply)
+  by those logins, for setups where one App both reviews and fixes.
 
 ### Changed
 
+- `pr-fix.yml` and `merge-decision.yml` run their gates and markers through `pr-gate` instead of inline scripts; the
+  behavior is unchanged.
 - `pr-fix.yml` escalation posts a handoff that mentions the requester and offers a `pr-fix` resume instead of only
   asking to remove the label.
 - README: setup from zero (App permissions, secrets, variables, labels, project status options, release order), how

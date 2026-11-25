@@ -23,6 +23,7 @@ deploys, credential rotation) stays in each project.
 | [`ai-harness`](actions/ai-harness/README.md) | Composite action | Installs OpenCode or Claude Code (pinned) and runs one prompt. |
 | [`ai-task`](actions/ai-task/README.md) | Composite action | Validates an AI delivery task, installs its agents and skills, and runs it with `ai-harness`. |
 | [`ai-delivery`](actions/ai-delivery/README.md) | Composite action | Deterministic delivery steps: chain or hand off after a stage, handoff comments, resume, review requests. |
+| [`pr-gate`](actions/pr-gate/README.md) | Composite action | Deterministic PR follow-up gates and markers of `pr-fix.yml` and `merge-decision.yml`, for wrappers that load secrets at run time. |
 | [`terraform-cloud-wait`](actions/terraform-cloud-wait/README.md) | Composite action | Waits for the HCP Terraform apply of a commit. |
 | [`terraform-permissions`](actions/terraform-permissions/README.md) | Composite action | Checks a Cloudflare permission manifest and the real token. |
 
@@ -187,6 +188,13 @@ Both targets are dispatched on the default branch, so a pull request can never c
 separate GitHub Apps (one `environment` each, with its own `AGENT_APP_CLIENT_ID` and `AGENT_APP_PRIVATE_KEY`) for
 review, fix, and merge, so the fixer's replies are never mistaken for review feedback and the reviewer can never
 merge.
+When one App does both, set `ignore-reply-authors` to its bot instead of `ignore-authors`: its fix replies are
+ignored and its new reviews still dispatch fixes.
+
+The gates and markers of both workflows live in the [`pr-gate`](actions/pr-gate/README.md) action. Callers that load
+the App key and AI keys at run time (for example from a cloud secret store), which a reusable workflow cannot receive
+as `secrets`, can build their own wrapper from `pr-gate`, [`ai-harness`](actions/ai-harness/README.md), and
+[`ai-delivery`](actions/ai-delivery/README.md) with the same behavior.
 
 ### PR Feedback Dispatch
 
@@ -221,6 +229,7 @@ jobs:
 | `fix-workflow` | `pr-fix.yml` | Dispatched with `pr_number` on a `changes_requested` review, or a `commented` one with a body or inline comments. Empty disables it. |
 | `merge-workflow` | `merge-decision.yml` | Dispatched with `pr_number` on an `approved` review or a successful `merge-check-name` check run. Empty disables it. |
 | `ignore-authors` | `""` | Logins whose reviews never dispatch a fix, for example the fixer App bot, whose thread replies also emit review events. |
+| `ignore-reply-authors` | `""` | Logins whose reply-only reviews (no body, every inline comment a reply) never dispatch a fix. Use it instead of `ignore-authors` when one App both reviews and fixes, so its new reviews still dispatch fixes. |
 | `merge-check-name` | `Code Review` | Successful check run that dispatches `merge-workflow` for each pull request in `check_run.pull_requests` (same repository only). Empty disables it. |
 | `runs-on` | `CI_RUNNER`, then `ubuntu-latest` | Runner label. |
 

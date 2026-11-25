@@ -170,115 +170,16 @@ jobs:
       required_approvals: ${{ steps.gate.outputs.required_approvals }}
       request_review: ${{ steps.gate.outputs.request_review }}
     steps:
-      - uses: actions/github-script@v9
+      - name: Check gates
         id: gate
-        env:
-          PR_NUMBER: ${{ inputs.pr-number }}
-          REQUIRED_APPROVALS: ${{ inputs.required-human-approvals }}
-          EXEMPT_BASE_PREFIXES: ${{ inputs.human-approval-exempt-base-prefixes }}
-          HOLD_LABELS: ${{ inputs.hold-labels }}
-          BRANCH_PREFIXES: ${{ inputs.branch-prefixes }}
+        uses: fbrissi/github-actions/actions/pr-gate@v1
         with:
-          script: |
-            const { owner, repo } = context.repo;
-            core.setOutput('action', 'skip');
-            async function skip(reason) {
-              core.notice(`Merge Decision skipped: ${reason}`);
-              await core.summary.addRaw(`skipped: ${reason}`).write();
-            }
-
-            const prNumber = Number(process.env.PR_NUMBER);
-            if (!Number.isInteger(prNumber) || prNumber <= 0) {
-              core.setFailed(`Invalid pull request number: ${process.env.PR_NUMBER}`);
-              return;
-            }
-
-            let pr;
-            for (let attempt = 1; attempt <= 5; attempt++) {
-              ({ data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber }));
-              if (pr.state !== 'open' || pr.mergeable !== null) break;
-              await new Promise((resolve) => setTimeout(resolve, 3000));
-            }
-            const headSha = pr.head.sha;
-            if (pr.state !== 'open') return skip(`PR #${prNumber} is not open.`);
-            if (pr.draft) return skip(`PR #${prNumber} is a draft.`);
-            const prefixes = process.env.BRANCH_PREFIXES.split(/\s+/).filter(Boolean);
-            if (prefixes.length > 0 && !prefixes.some((prefix) => pr.head.ref.startsWith(prefix))) {
-              return skip(`PR #${prNumber} head branch ${pr.head.ref} matches no branch-prefixes.`);
-            }
-            const holdLabels = process.env.HOLD_LABELS.split(/\s+/).filter(Boolean);
-            const heldBy = pr.labels.map((label) => label.name).filter((name) => holdLabels.includes(name));
-            if (heldBy.length > 0) return skip(`PR #${prNumber} has the ${heldBy.join(', ')} label.`);
-            if (pr.mergeable === null) return skip(`GitHub has not computed whether PR #${prNumber} is mergeable.`);
-            if (pr.mergeable === false || pr.mergeable_state === 'dirty') return skip(`PR #${prNumber} has merge conflicts.`);
-
-            // Runs started by review or check events (such as the feedback dispatcher) are not CI; ignore their checks.
-            const dispatcherEvents = new Set(['pull_request_review', 'pull_request_review_comment', 'check_run', 'workflow_run']);
-            const runs = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, { owner, repo, head_sha: headSha, per_page: 100 });
-            const ignoredSuites = new Set(runs.filter((run) => dispatcherEvents.has(run.event)).map((run) => run.check_suite_id));
-            const checkRuns = (await github.paginate(github.rest.checks.listForRef, { owner, repo, ref: headSha, filter: 'latest', per_page: 100 }))
-              .filter((check) => !ignoredSuites.has(check.check_suite?.id));
-            const pending = checkRuns.filter((check) => check.status !== 'completed').map((check) => check.name);
-            if (pending.length > 0) return skip(`checks still running on ${headSha}: ${pending.join(', ')}.`);
-            const failed = checkRuns
-              .filter((check) => !['success', 'neutral', 'skipped'].includes(check.conclusion))
-              .map((check) => `${check.name} (${check.conclusion})`);
-            if (failed.length > 0) return skip(`checks not successful on ${headSha}: ${failed.join(', ')}.`);
-            const { data: status } = await github.rest.repos.getCombinedStatusForRef({ owner, repo, ref: headSha });
-            if (status.total_count > 0 && status.state !== 'success') return skip(`commit statuses are ${status.state} on ${headSha}.`);
-
-            const reviews = await github.paginate(github.rest.pulls.listReviews, { owner, repo, pull_number: prNumber, per_page: 100 });
-            const latest = new Map();
-            for (const review of reviews) {
-              if (!review.user || !['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(review.state)) continue;
-              latest.set(review.user.login, review);
-            }
-            const changesRequested = [...latest.values()].filter((review) => review.state === 'CHANGES_REQUESTED').map((review) => review.user.login);
-            if (changesRequested.length > 0) return skip(`changes requested by ${changesRequested.join(', ')}.`);
-            const approvals = [...latest.values()].filter((review) => review.state === 'APPROVED'
-              && review.commit_id === headSha
-              && review.user.type === 'User'
-              && !review.user.login.endsWith('[bot]')).length;
-            const exemptPrefixes = process.env.EXEMPT_BASE_PREFIXES.split(/\s+/).filter(Boolean);
-            const required = exemptPrefixes.some((prefix) => pr.base.ref.startsWith(prefix)) ? 0 : Number(process.env.REQUIRED_APPROVALS);
-            core.setOutput('pr_number', pr.number);
-            core.setOutput('required_approvals', required);
-            if (approvals < required) {
-              core.setOutput('request_review', 'true');
-              return skip(`${approvals} of ${required} human approvals on ${headSha}.`);
-            }
-
-            let unresolved = 0;
-            let cursor = null;
-            do {
-              const result = await github.graphql(`
-                query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
-                  repository(owner: $owner, name: $repo) {
-                    pullRequest(number: $number) {
-                      reviewThreads(first: 100, after: $cursor) {
-                        nodes { isResolved }
-                        pageInfo { hasNextPage endCursor }
-                      }
-                    }
-                  }
-                }`, { owner, repo, number: prNumber, cursor });
-              const threads = result.repository.pullRequest.reviewThreads;
-              unresolved += threads.nodes.filter((thread) => !thread.isResolved).length;
-              cursor = threads.pageInfo.hasNextPage ? threads.pageInfo.endCursor : null;
-            } while (cursor);
-            if (unresolved > 0) return skip(`${unresolved} unresolved review thread(s).`);
-
-            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: prNumber, per_page: 100 });
-            const marker = `<!-- merge-decision head=${headSha} -->`;
-            if (comments.some((comment) => comment.user?.type === 'Bot' && comment.body?.includes(marker))) {
-              return skip(`a merge decision was already made for ${headSha}.`);
-            }
-
-            core.setOutput('pr_number', pr.number);
-            core.setOutput('head_sha', headSha);
-            core.setOutput('base_ref', pr.base.ref);
-            core.setOutput('base_sha', pr.base.sha);
-            core.setOutput('action', 'decide');
+          command: merge-gate
+          pr-number: ${{ inputs.pr-number }}
+          required-human-approvals: ${{ inputs.required-human-approvals }}
+          human-approval-exempt-base-prefixes: ${{ inputs.human-approval-exempt-base-prefixes }}
+          hold-labels: ${{ inputs.hold-labels }}
+          branch-prefixes: ${{ inputs.branch-prefixes }}
 
   decide:
     name: Run Merge Decision
@@ -428,15 +329,12 @@ jobs:
           github-token: ${{ steps.app-token.outputs.token }}
 
       - name: Record decision
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PR_NUMBER: ${{ needs.gate.outputs.pr_number }}
-          HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
-        run: |
-          set -euo pipefail
-          body="<!-- merge-decision head=${HEAD_SHA} -->
-          Merge decision recorded for ${HEAD_SHA}; a new commit triggers a new decision."
-          gh api --silent "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f "body=${body}"
+        uses: fbrissi/github-actions/actions/pr-gate@v1
+        with:
+          command: merge-record
+          github-token: ${{ steps.app-token.outputs.token }}
+          pr-number: ${{ needs.gate.outputs.pr_number }}
+          head-sha: ${{ needs.gate.outputs.head_sha }}
 
   request-review:
     name: Request Human Review

@@ -1,0 +1,152 @@
+name: PR Gate
+description: >-
+  Deterministic gates and markers of the PR follow-up, with no AI involved: decide whether a pr-fix pass runs or
+  escalates, whether a merge decision runs, and record each pass and decision on the pull request.
+author: Filipe Bojikian Rissi
+
+inputs:
+  command:
+    description: "`fix-gate`, `fix-record`, `fix-finish`, `merge-gate`, or `merge-record`."
+    required: true
+  github-token:
+    description: Token for the GitHub API. `fix-gate` needs `checks` write and `issues` and `pull-requests` read; `fix-finish` needs `checks` write; `merge-gate` needs `actions`, `checks`, `issues`, `pull-requests`, and `statuses` read; the record commands need a GitHub App token with `pull-requests` write, because only bot comments count as markers.
+    required: false
+    default: ${{ github.token }}
+  pr-number:
+    description: Pull request number.
+    required: false
+    default: ""
+  opt-in-label:
+    description: "`fix-gate`: label that opts a pull request into automatic fixes."
+    required: false
+    default: ai:auto-fix
+  branch-prefixes:
+    description: "`fix-gate`: head branch prefixes that also opt a pull request in. `merge-gate`: head branch prefixes a pull request must match (empty matches every pull request)."
+    required: false
+    default: ""
+  max-rounds:
+    description: "`fix-gate` and `fix-record`: fix passes allowed before escalation."
+    required: false
+    default: "3"
+  escalation-label:
+    description: "`fix-gate`: label that blocks further passes while present."
+    required: false
+    default: ai:needs-human
+  check-name:
+    description: "`fix-gate` and `fix-finish`: name of the check run reported on the head commit."
+    required: false
+    default: PR Fix
+  required-human-approvals:
+    description: "`merge-gate`: approvals by human users required on the head commit."
+    required: false
+    default: "1"
+  human-approval-exempt-base-prefixes:
+    description: "`merge-gate`: base branch prefixes whose pull requests need no human approval."
+    required: false
+    default: ""
+  hold-labels:
+    description: "`merge-gate`: labels that block any decision."
+    required: false
+    default: do-not-merge hold
+  round:
+    description: "`fix-record`: fix round number (the `round` output of `fix-gate`)."
+    required: false
+    default: ""
+  start-sha:
+    description: "`fix-record`: head commit the pass started from."
+    required: false
+    default: ""
+  outcome:
+    description: "`fix-record`: outcome of the harness step."
+    required: false
+    default: ""
+  head-sha:
+    description: "`merge-record`: head commit the decision was made on."
+    required: false
+    default: ""
+  result:
+    description: "`fix-finish`: result of the fix job, `success` or anything else."
+    required: false
+    default: ""
+  check-run-id:
+    description: "`fix-finish`: check run to complete (the `check_run_id` output of `fix-gate`)."
+    required: false
+    default: ""
+
+outputs:
+  action:
+    description: "`fix-gate`: `fix`, `escalate`, or `skip`. `merge-gate`: `decide` or `skip`."
+    value: ${{ steps.run.outputs.action }}
+  pr_number:
+    description: Pull request number, when a gate got that far.
+    value: ${{ steps.run.outputs.pr_number }}
+  round:
+    description: "`fix-gate`: round number of this pass."
+    value: ${{ steps.run.outputs.round }}
+  head_ref:
+    description: "`fix-gate`: head branch."
+    value: ${{ steps.run.outputs.head_ref }}
+  head_sha:
+    description: "`merge-gate`: head commit."
+    value: ${{ steps.run.outputs.head_sha }}
+  base_ref:
+    description: "`merge-gate`: base branch."
+    value: ${{ steps.run.outputs.base_ref }}
+  base_sha:
+    description: Base commit.
+    value: ${{ steps.run.outputs.base_sha }}
+  check_run_id:
+    description: "`fix-gate`: check run created for this pass."
+    value: ${{ steps.run.outputs.check_run_id }}
+  required_approvals:
+    description: "`merge-gate`: human approvals the pull request needs."
+    value: ${{ steps.run.outputs.required_approvals }}
+  request_review:
+    description: "`merge-gate`: `true` when human approvals are missing."
+    value: ${{ steps.run.outputs.request_review }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check Node
+      id: node
+      shell: bash
+      run: |
+        if command -v node >/dev/null 2>&1; then
+          echo 'setup=false' >> "$GITHUB_OUTPUT"
+        else
+          echo 'setup=true' >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Setup Node
+      if: ${{ steps.node.outputs.setup == 'true' }}
+      uses: actions/setup-node@v7
+      with:
+        node-version: 24
+
+    - name: Run ${{ inputs.command }}
+      id: run
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        PR_GATE_COMMAND: ${{ inputs.command }}
+        PR_GATE_PR_NUMBER: ${{ inputs.pr-number }}
+        PR_GATE_OPT_IN_LABEL: ${{ inputs.opt-in-label }}
+        PR_GATE_BRANCH_PREFIXES: ${{ inputs.branch-prefixes }}
+        PR_GATE_MAX_ROUNDS: ${{ inputs.max-rounds }}
+        PR_GATE_ESCALATION_LABEL: ${{ inputs.escalation-label }}
+        PR_GATE_CHECK_NAME: ${{ inputs.check-name }}
+        PR_GATE_REQUIRED_HUMAN_APPROVALS: ${{ inputs.required-human-approvals }}
+        PR_GATE_HUMAN_APPROVAL_EXEMPT_BASE_PREFIXES: ${{ inputs.human-approval-exempt-base-prefixes }}
+        PR_GATE_HOLD_LABELS: ${{ inputs.hold-labels }}
+        PR_GATE_ROUND: ${{ inputs.round }}
+        PR_GATE_START_SHA: ${{ inputs.start-sha }}
+        PR_GATE_OUTCOME: ${{ inputs.outcome }}
+        PR_GATE_HEAD_SHA: ${{ inputs.head-sha }}
+        PR_GATE_RESULT: ${{ inputs.result }}
+        PR_GATE_CHECK_RUN_ID: ${{ inputs.check-run-id }}
+      run: node "$GITHUB_ACTION_PATH/main.mjs"
+
+branding:
+  icon: shield
+  color: purple
