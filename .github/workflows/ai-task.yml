@@ -97,6 +97,31 @@ on:
         required: false
         type: string
         default: ""
+      requested-by:
+        description: Login of the person who started the flow; mentioned whenever the flow stops for a human and passed on to every chained stage. Empty uses `github.triggering_actor`; bots fall back to the milestone's `requested-by` marker.
+        required: false
+        type: string
+        default: ""
+      chain:
+        description: After the run, dispatch the next stage from the issues' status labels. When false the follow-up only hands off to a human.
+        required: false
+        type: boolean
+        default: true
+      stage-workflows:
+        description: Multiline `stage=workflow file` overrides of the stage callers the follow-up dispatches and the handoffs resume (defaults `ai-business-refinement.yml`, `ai-technical-refinement.yml`, `ai-readiness-review.yml`, `ai-orchestrate.yml`, `ai-implement.yml`, `pr-fix.yml`).
+        required: false
+        type: string
+        default: ""
+      max-auto-dispatches:
+        description: Automatic dispatches of one stage per milestone before the follow-up hands off instead (loop guard). A resume resets the counters.
+        required: false
+        type: number
+        default: 3
+      setup-command:
+        description: Command run after `install-command` and before the agent, for example to install Playwright browsers and start the test environment for browser QA. Empty skips it.
+        required: false
+        type: string
+        default: ""
       skills:
         description: Extra whitespace-separated skills to install.
         required: false
@@ -225,6 +250,9 @@ on:
       agent:
         description: Agent that ran the task.
         value: ${{ jobs.task.outputs.agent }}
+      milestone:
+        description: Milestone the agent reported it created or worked on.
+        value: ${{ jobs.task.outputs.milestone }}
 
 concurrency:
   group: fbrissi-ai-task-${{ github.repository }}-${{ inputs.task }}-${{ inputs.issue || inputs.milestone || inputs.source }}
@@ -243,6 +271,7 @@ jobs:
       name: ${{ inputs.environment }}
     outputs:
       agent: ${{ steps.task.outputs.agent }}
+      milestone: ${{ steps.task.outputs.milestone }}
     steps:
       - name: Check settings
         env:
@@ -314,6 +343,12 @@ jobs:
           path: ${{ inputs.dependency-cache-path }}
           key: ${{ steps.dependency-cache.outputs.cache-primary-key }}
 
+      - name: Set up test environment
+        if: ${{ inputs.setup-command != '' }}
+        env:
+          SETUP_COMMAND: ${{ inputs.setup-command }}
+        run: bash -euo pipefail -c "$SETUP_COMMAND"
+
       - name: Run AI task
         id: task
         uses: fbrissi/github-actions/actions/ai-task@v1
@@ -337,6 +372,7 @@ jobs:
           profile: ${{ inputs.profile }}
           implement-workflow: ${{ inputs.implement-workflow }}
           max-parallel: ${{ inputs.max-parallel }}
+          requested-by: ${{ inputs.requested-by || github.triggering_actor }}
           skills: ${{ inputs.skills }}
           agents: ${{ inputs.agents }}
           harness: ${{ inputs.harness }}
@@ -353,3 +389,45 @@ jobs:
           jira-base-url: ${{ inputs.jira-base-url || vars.JIRA_BASE_URL }}
           jira-email: ${{ secrets.JIRA_EMAIL }}
           jira-api-token: ${{ secrets.JIRA_API_TOKEN }}
+
+  follow-up:
+    name: AI Task / ${{ inputs.task }} follow-up
+    needs: task
+    # Runs after success, failure, timeout, and cancellation, with a fresh token: the task token may have expired.
+    if: ${{ always() }}
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions: {}
+    timeout-minutes: 10
+    environment:
+      name: ${{ inputs.environment }}
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+          permission-actions: write
+          permission-issues: write
+          permission-pull-requests: read
+
+      - name: Chain or hand off
+        uses: fbrissi/github-actions/actions/ai-delivery@v1
+        with:
+          command: follow-up
+          github-token: ${{ steps.app-token.outputs.token }}
+          task: ${{ inputs.task }}
+          result: ${{ needs.task.result }}
+          milestone: ${{ inputs.milestone }}
+          result-milestone: ${{ needs.task.outputs.milestone }}
+          issue: ${{ inputs.issue }}
+          branch: ${{ inputs.branch }}
+          base-branch: ${{ inputs.base-branch }}
+          source: ${{ inputs.source }}
+          milestone-template: ${{ inputs.milestone-template }}
+          requested-by: ${{ inputs.requested-by || github.triggering_actor }}
+          status-labels: ${{ inputs.status-labels }}
+          stage-workflows: ${{ inputs.stage-workflows }}
+          max-auto-dispatches: ${{ inputs.max-auto-dispatches }}
+          chain: ${{ inputs.chain }}
+          jira-base-url: ${{ inputs.jira-base-url || vars.JIRA_BASE_URL }}
