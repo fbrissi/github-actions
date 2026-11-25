@@ -75,6 +75,9 @@ export const PARAMETERS = [
   'jira-base-url'
 ];
 
+export const HARNESSES = ['opencode', 'claude'];
+export const DEFAULT_HARNESS = 'opencode';
+
 const MULTILINE = new Set(['status-labels', 'project-status-options', 'research-sources']);
 const NAME = /^[A-Za-z0-9_.-]+$/;
 
@@ -85,9 +88,10 @@ export const isBotLogin = (login) => /\[bot\]$/i.test(login) || login.toLowerCas
 
 export function readInputs(env = process.env) {
   const inputs = {};
-  for (const name of [...PARAMETERS, 'context', 'skills', 'agents', 'harness']) {
+  for (const name of [...PARAMETERS, 'context', 'skills', 'agents', 'harness', 'opencode-model']) {
     inputs[name] = (env[envName(name)] ?? '').trim();
   }
+  inputs.harness ||= DEFAULT_HARNESS;
   if (isBotLogin(inputs['requested-by'])) inputs['requested-by'] = '';
   return inputs;
 }
@@ -116,8 +120,8 @@ export function validate(inputs, credentials = {}) {
     }
   }
 
-  if (inputs.harness && inputs.harness !== 'claude') {
-    errors.push(`Unsupported harness '${inputs.harness}'. ai-task runs agents, which only the 'claude' harness supports.`);
+  if (!HARNESSES.includes(inputs.harness)) {
+    errors.push(`Unsupported harness '${inputs.harness}'. Use 'opencode' or 'claude'.`);
   }
 
   for (const name of PARAMETERS) {
@@ -179,10 +183,26 @@ export function validate(inputs, credentials = {}) {
   }
 
   if (!credentials['github-token']) errors.push("'github-token' is required.");
-  if (!credentials['anthropic-api-key'] && !credentials['claude-code-oauth-token']) {
-    errors.push("The claude harness requires 'anthropic-api-key' or 'claude-code-oauth-token'.");
-  }
+  errors.push(...harnessErrors(inputs, credentials));
   return errors;
+}
+
+// Credentials each harness needs. OpenCode reads the key of the provider in `opencode-model`; ai-harness passes only
+// the OpenAI key, so other providers must be configured by the caller (for example through the environment).
+export function harnessErrors(inputs, credentials = {}) {
+  if (inputs.harness === 'claude') {
+    return credentials['anthropic-api-key'] || credentials['claude-code-oauth-token']
+      ? []
+      : ["The claude harness requires 'anthropic-api-key' or 'claude-code-oauth-token'."];
+  }
+  if (inputs.harness !== 'opencode') return [];
+  const model = inputs['opencode-model'];
+  if (!model) return ["The opencode harness requires 'opencode-model' (`provider/model`)."];
+  if (!/^[^\s/]+\/\S+$/.test(model)) return [`'opencode-model' must be 'provider/model', got '${model}'.`];
+  if (model.startsWith('openai/') && !credentials['openai-api-key']) {
+    return ["The opencode harness with an 'openai/' model requires 'openai-api-key'."];
+  }
+  return [];
 }
 
 export function resolveAssets(inputs) {
@@ -260,6 +280,7 @@ export function resolveTask(env = process.env) {
     'jira-api-token': env.HAS_JIRA_API_TOKEN === 'true',
     'github-token': env.HAS_GITHUB_TOKEN === 'true',
     'anthropic-api-key': env.HAS_ANTHROPIC_API_KEY === 'true',
+    'openai-api-key': env.HAS_OPENAI_API_KEY === 'true',
     'claude-code-oauth-token': env.HAS_CLAUDE_CODE_OAUTH_TOKEN === 'true'
   };
   const errors = validate(inputs, credentials);
@@ -272,6 +293,7 @@ export function resolveTask(env = process.env) {
     : '';
   return {
     errors,
+    harness: inputs.harness,
     ...resolveAssets(inputs),
     prompt: buildPrompt(inputs, {
       repository: env.GITHUB_REPOSITORY ?? '',
@@ -289,6 +311,7 @@ export function main(env = process.env, write = console.log) {
 
   const delimiter = `PROMPT_${randomUUID()}`;
   const output = [
+    `harness=${result.harness}`,
     `agent=${result.agent}`,
     `agents=${result.agents.join(' ')}`,
     `skills=${result.skills.join(' ')}`,
@@ -298,7 +321,7 @@ export function main(env = process.env, write = console.log) {
     ''
   ].join('\n');
   if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, output);
-  write(`Task: ${env[envName('task')]}\nAgent: ${result.agent}\nAgents: ${result.agents.join(' ')}\nSkills: ${result.skills.join(' ')}`);
+  write(`Task: ${env[envName('task')]}\nHarness: ${result.harness}\nAgent: ${result.agent}\nAgents: ${result.agents.join(' ')}\nSkills: ${result.skills.join(' ')}`);
   write(`::group::Prompt\n${result.prompt}::endgroup::`);
   return 0;
 }

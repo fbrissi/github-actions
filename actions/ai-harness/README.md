@@ -49,10 +49,12 @@ narrowest tokens that work.
 | `skills-ref` | `v0.2.0` | Tag or commit SHA of `skills-repository`. Pin it; never use a branch. |
 | `skills-path` | `.rulesync/skills` | Directory in `skills-repository` with one folder per skill. |
 | `skills-local-dir` | `""` | Local directory with one folder per skill; replaces the download when set. |
-| `agents` | `""` | Whitespace-separated Claude Code agent names to install from `agents-path` at `skills-ref`. Claude only. |
-| `agents-path` | `plugins/ai-skills/agents` | Directory in `skills-repository` with one `<agent>.md` per agent. |
-| `agents-local-dir` | `""` | Local directory with one `<agent>.md` per agent; replaces the download when set. |
-| `agent` | `""` | Runs the prompt with that agent as the main agent (`claude --agent`). Claude only. |
+| `agents` | `""` | Whitespace-separated agent names to install at `skills-ref`: from `agents-path` for Claude Code, from `opencode-agents-path` for OpenCode. |
+| `agents-path` | `plugins/ai-skills/agents` | Directory in `skills-repository` with one Claude Code `<agent>.md` per agent. |
+| `agents-local-dir` | `""` | Local directory with one Claude Code `<agent>.md` per agent; replaces the download when set. |
+| `opencode-agents-path` | `plugins/ai-skills/opencode/agent` | Directory in `skills-repository` with one OpenCode `<agent>.md` per agent. |
+| `opencode-agents-local-dir` | `""` | Local directory with one OpenCode `<agent>.md` per agent; replaces the download when set. |
+| `agent` | `""` | Runs the prompt with that agent as the main agent (`claude --agent` or `opencode run --agent`). |
 | `timeout-minutes` | `25` | Maximum harness run time. |
 | `output-file` | `$RUNNER_TEMP/ai-harness-output` | File that receives the harness output. |
 | `openai-api-key` | `""` | OpenAI key for OpenCode. |
@@ -69,20 +71,29 @@ name the orchestrator in `agent`:
 ```yaml
 - uses: fbrissi/github-actions/actions/ai-harness@v1
   with:
-    harness: claude
+    harness: ${{ vars.AI_HARNESS }}
+    opencode-model: ${{ vars.OPENCODE_MODEL }}
     agent: nfse-compliance
     agents: nfse-compliance developer code-reviewer qa-tester ci-investigator pr-shepherd
     skills: nfse-technical-note-analysis merge-risk quality-cycle review-changes dev pr-create pr-fix pr-checks ticket-create
     skills-ref: v0.4.0
     prompt: scan
+    openai-api-key: ${{ secrets.OPEN_AI_TOKEN }}
+    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
     github-token: ${{ steps.app-token.outputs.token }}
 ```
 
-Agents are installed into `~/.claude/agents`. Claude Code ranks project agents (`.claude/agents/` in the checkout)
+Claude Code agents are installed into `~/.claude/agents`. Claude Code ranks project agents (`.claude/agents/` in the checkout)
 above user agents, so the action fails when an agent file in the checkout's `.claude/agents/` has the same file name
 or the same `name:` frontmatter as one in `agents` or `agent`, and when `agent` names an agent that is not installed.
-Project skills and settings in the checkout still load, so only run agents on a trusted checkout. The `agent` and
-`agents` inputs fail early with the `opencode` harness.
+Project skills and settings in the checkout still load, so only run agents on a trusted checkout.
+
+OpenCode agents are installed into `~/.config/opencode/agents` and the prompt runs with `opencode run --agent <agent>`.
+OpenCode names an agent by its file name and ranks project agents (`.opencode/agent/` and `.opencode/agents/` in the
+checkout) above global ones, so the action fails when the checkout has a file with the same name. OpenCode silently
+falls back to its default agent when `--agent` names a missing agent or one with `mode: subagent`, so the action fails
+first in both cases: the main agent must be `primary` or `all`. Agents defined in the checkout's `opencode.json` are
+not checked.
 
 Skills are installed into `~/.claude/skills` for Claude Code and `~/.config/opencode/skills` for OpenCode, so they
 never come from the checked-out (possibly untrusted) working tree. Empty credentials are unset before the run, so

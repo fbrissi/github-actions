@@ -321,7 +321,7 @@ The fixer GitHub App needs `Contents: Read and write`, `Pull requests: Read and 
 | `max-rounds` | `3` | Passes before escalation. |
 | `escalation-label` | `ai:needs-human` | Added at `max-rounds`; blocks further passes while present. |
 | `skills` | `pr-fix pr-checks` | Skills installed for the harness. |
-| `agents` | `""` | Claude Code agents installed for the harness (`claude` only). |
+| `agents` | `""` | Agents installed for the harness (Claude Code or OpenCode agents of the same name). |
 | `prompt` | `""` | Overrides the generated prompt. |
 | `prompt-append` | `""` | Appended to the prompt. |
 | `skill-source` | `ai-skills` | `ai-skills` (pinned `ai-skills-ref`), `base` (the PR base commit), or `none`. |
@@ -407,7 +407,7 @@ The review request uses the same App with `pull-requests: write`.
 | `hold-labels` | `do-not-merge hold` | Labels that block a decision. |
 | `branch-prefixes` | `""` | Head branch prefixes a pull request must match (`startsWith`; `feat/` covers task and milestone branches); empty decides on every pull request. |
 | `skills` | `merge-risk` | Skills installed for the harness. |
-| `agents` | `""` | Claude Code agents installed for the harness (`claude` only). |
+| `agents` | `""` | Agents installed for the harness (Claude Code or OpenCode agents of the same name). |
 | `prompt` | `""` | Overrides the generated prompt. |
 | `prompt-append` | `""` | Appended to the prompt. |
 | `skill-source` | `ai-skills` | `ai-skills` (pinned `ai-skills-ref`), `base` (the base commit), or `none`. |
@@ -428,7 +428,7 @@ and `runs-on` work as in [Code Review](#inputs). Secrets are the same as [Code R
 [`ai-task`](actions/ai-task/README.md) action: it creates a GitHub App token scoped to the task, checks out the
 calling ref with full history and the token as push credentials, sets the git identity to the App bot, installs
 dependencies, runs the optional `setup-command`, and runs the task's
-[fbrissi/ai-skills](https://github.com/fbrissi/ai-skills) agent with Claude Code. A follow-up job then chains the
+[fbrissi/ai-skills](https://github.com/fbrissi/ai-skills) agent with OpenCode or Claude Code (`AI_HARNESS`). A follow-up job then chains the
 next stage or hands off to a human (see [How stages chain](#how-stages-chain)).
 
 | Task | Agent | Input | What it does |
@@ -459,10 +459,12 @@ Do these once per repository, in this order:
    organization installation when `project` is used. Without `Workflows`, it can never push
    `.github/workflows/**`. Use separate Apps for [PR Fix](#pr-fix) and [Merge Decision](#merge-decision) if you
    want their permissions apart (see [PR Feedback Loop](#pr-feedback-loop)).
-3. **Secrets** (repository, organization, or the `environment`): `AGENT_APP_PRIVATE_KEY`, `ANTHROPIC_API_KEY` or
-   `CLAUDE_CODE_OAUTH_TOKEN`, and `JIRA_EMAIL` plus `JIRA_API_TOKEN` for Jira sources.
-4. **Variables:** `AGENT_APP_CLIENT_ID`, optional `CLAUDE_MODEL`, `CLAUDE_EFFORT`, `CI_RUNNER`, `JIRA_BASE_URL`, and
-   `AI_HARNESS=claude` (or `OPENCODE_MODEL`) for PR Fix and Merge Decision. See [Variables](#variables).
+3. **Secrets** (repository, organization, or the `environment`): `AGENT_APP_PRIVATE_KEY`, the harness credential
+   (`OPEN_AI_TOKEN` for OpenCode with an `openai/` model; `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` for Claude
+   Code), and `JIRA_EMAIL` plus `JIRA_API_TOKEN` for Jira sources.
+4. **Variables:** `AGENT_APP_CLIENT_ID`, the harness (`AI_HARNESS`, default `opencode`, with `OPENCODE_MODEL` and
+   optional `OPENCODE_VARIANT`, or `claude` with optional `CLAUDE_MODEL` and `CLAUDE_EFFORT`), and optional
+   `CI_RUNNER` and `JIRA_BASE_URL`. Every AI workflow reads the same ones; see [Variables](#variables).
 5. **Labels** the flow sets but never creates:
 
    ```bash
@@ -898,9 +900,7 @@ Task parameters are the [`ai-task` action inputs](actions/ai-task/README.md#inpu
 | `stage-workflows` | `""` | Multiline `stage=file` overrides of the stage callers. Defaults: `business-refinement=ai-business-refinement.yml`, `technical-refinement=ai-technical-refinement.yml`, `readiness-review=ai-readiness-review.yml`, `orchestrate=ai-orchestrate.yml`, `implement=ai-implement.yml`, `pr-fix=pr-fix.yml`. |
 | `max-auto-dispatches` | `3` | Automatic dispatches of one stage per milestone before the follow-up hands off instead. |
 | `setup-command` | `""` | Runs after `install-command` and before the agent, for example to install browsers and start the test environment. |
-| `harness` | `AI_HARNESS`, then `claude` | Only `claude` is supported (agents need Claude Code); any other value fails validation. |
-| `claude-model`, `claude-effort` | `CLAUDE_MODEL`, `CLAUDE_EFFORT` | Claude Code model and effort. |
-| `opencode-model`, `opencode-variant` | `OPENCODE_MODEL`, `OPENCODE_VARIANT` | Passed through; unused while only `claude` is supported. |
+| `harness`, `opencode-model`, `opencode-variant`, `claude-model`, `claude-effort` | see [Variables](#variables) | Harness and model, like every AI workflow. |
 | `jira-base-url` | `JIRA_BASE_URL` | Jira base URL; Jira is used only with the `JIRA_EMAIL` and `JIRA_API_TOKEN` secrets. |
 | `agent-client-id` | `AGENT_APP_CLIENT_ID` | Client ID of the GitHub App the agent acts as. |
 | `environment` | `""` | Environment of the task and follow-up jobs; empty runs without one. |
@@ -920,12 +920,13 @@ Task parameters are the [`ai-task` action inputs](actions/ai-task/README.md#inpu
 | Secret | Required | Description |
 |---|---|---|
 | `AGENT_APP_PRIVATE_KEY` | yes | Private key of the GitHub App the agent acts as. |
-| `ANTHROPIC_API_KEY` | this or the next | Anthropic API key. |
-| `CLAUDE_CODE_OAUTH_TOKEN` | this or the previous | Claude Code OAuth token, used when `ANTHROPIC_API_KEY` is empty. |
-| `OPEN_AI_TOKEN` | no | Passed through; unused while only `claude` is supported. |
+| `OPEN_AI_TOKEN` | `opencode` with an `openai/` model | OpenAI API key. |
+| `ANTHROPIC_API_KEY` | `claude`: this or the next | Anthropic API key. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | `claude`: this or the previous | Claude Code OAuth token, used when `ANTHROPIC_API_KEY` is empty. |
 | `JIRA_EMAIL`, `JIRA_API_TOKEN` | Jira sources | Jira credentials, masked and exported to the agent as `JIRA_EMAIL` and `JIRA_API_TOKEN`. |
 
-Outputs: `agent`, the agent that ran the task, and `milestone`, the milestone the agent reported it created or
+With `opencode`, the task's agents are the OpenCode agents of the same names from `fbrissi/ai-skills`
+(`plugins/ai-skills/opencode/agent`). Outputs: `agent`, the agent that ran the task, and `milestone`, the milestone the agent reported it created or
 worked on.
 
 ## Release Note
@@ -1059,13 +1060,21 @@ and make it required: do not merge while it is red, because the release apply wo
 ## Variables
 
 Reusable workflows read the `vars` context of the calling repository, so these configuration variables (repository,
-organization, or, for the review job, its `environment`) are used whenever the matching input is empty:
+organization, or, for the review job, its `environment`) are used whenever the matching input is empty.
+
+The AI workflows (`code-review.yml`, `pr-fix.yml`, `merge-decision.yml`, and `ai-task.yml`) all take the inputs
+`harness`, `opencode-model`, `opencode-variant`, `claude-model`, and `claude-effort`, and resolve each one as the input,
+then the variable below, then the default (`opencode` for the harness). Agents run with both harnesses. The
+`ai-harness` and `ai-task` actions take the same values as inputs only. Credentials: `opencode` needs
+`OPENCODE_MODEL` (and `OPEN_AI_TOKEN` for an `openai/` model); `claude` needs `ANTHROPIC_API_KEY` or
+`CLAUDE_CODE_OAUTH_TOKEN`.
 
 | Variable | Used by | Purpose |
 |---|---|---|
 | `CI_RUNNER` | all | Runner label; defaults to `ubuntu-latest`. |
-| `AI_HARNESS` | AI workflows | `opencode` (default) or `claude`. `ai-task.yml` defaults to `claude` and accepts only `claude`. |
-| `OPENCODE_MODEL`, `OPENCODE_VARIANT` | AI workflows | OpenCode model and variant. |
+| `AI_HARNESS` | AI workflows | `opencode` (default) or `claude`. |
+| `OPENCODE_MODEL` | AI workflows | OpenCode model in `provider/model` form; required with `opencode`. |
+| `OPENCODE_VARIANT` | AI workflows | OpenCode model variant (provider-specific reasoning effort). |
 | `CLAUDE_MODEL`, `CLAUDE_EFFORT` | AI workflows | Claude Code model and effort. |
 | `AGENT_APP_CLIENT_ID` | AI workflows, `ai-resume.yml` | Client ID of the GitHub App the workflow acts as (set it per `environment` to use one App per role). |
 | `JIRA_BASE_URL` | `ai-task.yml` | Jira base URL. |

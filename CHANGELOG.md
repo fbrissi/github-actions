@@ -45,9 +45,19 @@ merging a pull request that adds one tags the release and moves the major tag.
   and markers.
 - `pr-feedback-dispatch.yml`: `ignore-reply-authors` skips reply-only reviews (no body, every inline comment a reply)
   by those logins, for setups where one App both reviews and fixes.
+- `ai-harness` action: `agents` and `agent` work with OpenCode too. OpenCode agents come from the new
+  `opencode-agents-path` (default `plugins/ai-skills/opencode/agent`) or `opencode-agents-local-dir`, are installed
+  into `~/.config/opencode/agents`, and the prompt runs with `opencode run --agent <agent>`. The action fails when the
+  agent is missing, has `mode: subagent`, or is overridden by the checkout's `.opencode/agent(s)/`, because OpenCode
+  would silently fall back to its default agent.
 
 ### Changed
 
+- `ai-task` action and `ai-task.yml` run with `opencode` or `claude`, resolved like every AI workflow: the input, then
+  the `AI_HARNESS` variable, then `opencode` (and `OPENCODE_MODEL`, `OPENCODE_VARIANT`, `CLAUDE_MODEL`,
+  `CLAUDE_EFFORT` the same way). `opencode` requires `opencode-model` in `provider/model` form, plus `openai-api-key`
+  for an `openai/` model; `claude` requires `anthropic-api-key` or `claude-code-oauth-token`. New `harness` output.
+- `pr-fix.yml` and `merge-decision.yml`: `agents` installs the OpenCode agents of the same names with `opencode`.
 - `pr-fix.yml` and `merge-decision.yml` run their gates and markers through `pr-gate` instead of inline scripts; the
   behavior is unchanged.
 - `pr-fix.yml` escalation posts a handoff that mentions the requester and offers a `pr-fix` resume instead of only

@@ -58,7 +58,7 @@ on:
         type: string
         default: merge-risk
       agents:
-        description: Whitespace-separated Claude Code agents installed for the harness (claude only).
+        description: Whitespace-separated agents installed for the harness (Claude Code or OpenCode agents of the same name from `fbrissi/ai-skills`).
         required: false
         type: string
         default: ""

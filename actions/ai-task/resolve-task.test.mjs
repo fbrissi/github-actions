@@ -7,10 +7,11 @@ import { TASKS, buildPrompt, envName, main, readInputs, resolveAssets, resolveTa
 
 const CREDENTIALS = { 'github-token': true, 'anthropic-api-key': true };
 
-const inputsFor = (values) => readInputs(Object.fromEntries(Object.entries(values).map(([name, value]) => [envName(name), value])));
+// The tests default to the claude harness; the harness tests set it explicitly.
+const inputsFor = (values) => readInputs(Object.fromEntries(Object.entries({ harness: 'claude', ...values }).map(([name, value]) => [envName(name), value])));
 
 const envFor = (values, flags = {}) => ({
-  ...Object.fromEntries(Object.entries(values).map(([name, value]) => [envName(name), value])),
+  ...Object.fromEntries(Object.entries({ harness: 'claude', ...values }).map(([name, value]) => [envName(name), value])),
   HAS_GITHUB_TOKEN: 'true',
   HAS_ANTHROPIC_API_KEY: 'true',
   GITHUB_SERVER_URL: 'https://github.com',
@@ -90,13 +91,28 @@ describe('validate', () => {
       { ...CREDENTIALS, 'jira-email': true, 'jira-api-token': true }), []);
   });
 
-  it('requires the GitHub token and a Claude credential, and only the claude harness', () => {
-    assert.deepEqual(validate(inputsFor({ task: 'orchestrate', milestone: 'M1', harness: 'opencode' }), {}), [
-      "Unsupported harness 'opencode'. ai-task runs agents, which only the 'claude' harness supports.",
+  it('requires the GitHub token and a Claude credential with the claude harness', () => {
+    assert.deepEqual(validate(inputsFor({ task: 'orchestrate', milestone: 'M1' }), {}), [
       "'github-token' is required.",
       "The claude harness requires 'anthropic-api-key' or 'claude-code-oauth-token'."
     ]);
     assert.deepEqual(validate(inputsFor({ task: 'orchestrate', milestone: 'M1' }), { 'github-token': true, 'claude-code-oauth-token': true }), []);
+  });
+
+  it('defaults to the opencode harness and rejects unknown harnesses', () => {
+    assert.equal(readInputs({ [envName('task')]: 'orchestrate' }).harness, 'opencode');
+    assert.deepEqual(validate(inputsFor({ task: 'orchestrate', milestone: 'M1', harness: 'codex' }), CREDENTIALS), [
+      "Unsupported harness 'codex'. Use 'opencode' or 'claude'."
+    ]);
+  });
+
+  it('requires a provider/model and its key with the opencode harness', () => {
+    const opencode = (model, credentials) => validate(inputsFor({ task: 'orchestrate', milestone: 'M1', harness: 'opencode', 'opencode-model': model }), { 'github-token': true, ...credentials });
+    assert.deepEqual(opencode('', { 'anthropic-api-key': true }), ["The opencode harness requires 'opencode-model' (`provider/model`)."]);
+    assert.deepEqual(opencode('gpt-5', { 'openai-api-key': true }), ["'opencode-model' must be 'provider/model', got 'gpt-5'."]);
+    assert.deepEqual(opencode('openai/gpt-5', {}), ["The opencode harness with an 'openai/' model requires 'openai-api-key'."]);
+    assert.deepEqual(opencode('openai/gpt-5', { 'openai-api-key': true }), []);
+    assert.deepEqual(opencode('anthropic/claude-sonnet-4-5', {}), []);
   });
 
   it('checks requested-by and drops bots', () => {
@@ -193,7 +209,7 @@ describe('main', () => {
       const code = main({ ...envFor({ task: 'readiness-review', milestone: 'M1' }), GITHUB_OUTPUT: output }, (line) => logs.push(line));
       assert.equal(code, 0);
       const text = readFileSync(output, 'utf8');
-      assert.match(text, /^agent=readiness-reviewer\nagents=readiness-reviewer\nskills=readiness-review\nprompt<<(PROMPT_[0-9a-f-]+)\n[\s\S]+\n\1\n$/);
+      assert.match(text, /^harness=claude\nagent=readiness-reviewer\nagents=readiness-reviewer\nskills=readiness-review\nprompt<<(PROMPT_[0-9a-f-]+)\n[\s\S]+\n\1\n$/);
       assert.match(text, /run: https:\/\/github\.com\/octo\/app\/actions\/runs\/42/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -220,5 +236,14 @@ describe('main', () => {
     const withoutCredentials = resolveTask(envFor({ task: 'business-refinement', source: 'DEV-1', 'jira-base-url': 'https://jira.example.com' }));
     assert.deepEqual(withoutCredentials.errors, []);
     assert.doesNotMatch(withoutCredentials.prompt, /jira|JIRA/);
+  });
+});
+
+describe('resolveTask harness', () => {
+  it('resolves the opencode harness with an OpenAI model and key', () => {
+    const result = resolveTask(envFor({ task: 'implement', issue: '3', branch: 'feat/x', harness: 'opencode', 'opencode-model': 'openai/gpt-5' }, { HAS_OPENAI_API_KEY: 'true', HAS_ANTHROPIC_API_KEY: 'false' }));
+    assert.deepEqual(result.errors, []);
+    assert.equal(result.harness, 'opencode');
+    assert.equal(result.agent, 'task-implementer');
   });
 });

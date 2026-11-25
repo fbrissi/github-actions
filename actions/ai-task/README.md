@@ -2,8 +2,9 @@
 
 Runs one task of the AI task delivery flow with its [fbrissi/ai-skills](https://github.com/fbrissi/ai-skills) agent:
 it validates the task and its inputs, installs the task's agents and skills, builds a non-interactive prompt that
-passes every non-empty parameter explicitly, and runs it with [`ai-harness`](../ai-harness/README.md) (Claude Code,
-the agent as the main agent).
+passes every non-empty parameter explicitly, and runs it with [`ai-harness`](../ai-harness/README.md) (OpenCode or
+Claude Code, the agent as the main agent). With `opencode` the agents are the OpenCode agents of the same names from
+`plugins/ai-skills/opencode/agent`.
 
 | Task | Agent | Default skills | Requires |
 |---|---|---|---|
@@ -43,8 +44,13 @@ The [`ai-task.yml`](../../README.md#ai-task) reusable workflow does all of this.
     issue: ${{ inputs.issue }}
     branch: ${{ inputs.branch }}
     base-branch: ${{ inputs.base-branch }}
+    harness: ${{ vars.AI_HARNESS }}
+    opencode-model: ${{ vars.OPENCODE_MODEL }}
+    opencode-variant: ${{ vars.OPENCODE_VARIANT }}
     claude-model: ${{ vars.CLAUDE_MODEL }}
+    claude-effort: ${{ vars.CLAUDE_EFFORT }}
     github-token: ${{ steps.app-token.outputs.token }}
+    openai-api-key: ${{ secrets.OPEN_AI_TOKEN }}
     anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
     claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
@@ -82,16 +88,17 @@ Run settings and credentials:
 |---|---|---|
 | `skills` | `""` | Extra whitespace-separated skills. |
 | `agents` | `""` | Extra whitespace-separated agents. |
-| `harness` | `claude` | Pass the caller's `AI_HARNESS` variable. Only `claude` runs agents; any other value fails validation. |
-| `opencode-model`, `opencode-variant` | `""` | Passed to `ai-harness` for interface parity; unused while only `claude` is supported. |
+| `harness` | `opencode` | `opencode` or `claude`; pass the caller's `AI_HARNESS` variable. Empty uses `opencode`. |
+| `opencode-model` | `""` | OpenCode model in `provider/model` form. Required by `opencode`. |
+| `opencode-variant` | `""` | OpenCode model variant. |
 | `claude-model` | `""` | Claude Code model. |
 | `claude-effort` | `""` | Claude Code effort level. |
 | `ai-skills-ref` | `v0.6.0` | `fbrissi/ai-skills` tag or SHA the skills and agents come from. |
 | `timeout-minutes` | `50` | Harness run timeout. GitHub App installation tokens expire after one hour. |
 | `github-token` | – (required) | GitHub App token used for `gh` and `git push`. |
-| `openai-api-key` | `""` | Passed to `ai-harness`; unused while only `claude` is supported. |
+| `openai-api-key` | `""` | OpenAI API key. Required by `opencode` with an `openai/` model. |
 | `anthropic-api-key` | `""` | Anthropic API key. |
-| `claude-code-oauth-token` | `""` | Claude Code OAuth token, used when no Anthropic key is set. One of the two is required. |
+| `claude-code-oauth-token` | `""` | Claude Code OAuth token, used when no Anthropic key is set. `claude` requires one of the two. |
 | `jira-base-url` | `""` | Jira base URL, exported as `JIRA_BASE_URL`. |
 | `jira-email` | `""` | Exported as `JIRA_EMAIL`; masked. |
 | `jira-api-token` | `""` | Exported as `JIRA_API_TOKEN`; masked. |
@@ -104,6 +111,7 @@ the harness step, and never written into the prompt.
 
 | Output | Description |
 |---|---|
+| `harness` | Harness that ran the task. |
 | `agent` | Agent that ran the task. |
 | `agents` | Installed agents. |
 | `skills` | Installed skills. |

@@ -93,15 +93,15 @@ inputs:
     required: false
     default: ""
   harness:
-    description: AI harness, usually from the caller's `AI_HARNESS` variable. Only `claude` runs agents; any other value fails validation.
+    description: AI harness, `opencode` or `claude`, usually from the caller's `AI_HARNESS` variable. Empty uses `opencode`.
     required: false
-    default: claude
+    default: opencode
   opencode-model:
-    description: Passed to ai-harness for interface parity; unused while only `claude` is supported.
+    description: OpenCode model in `provider/model` form. Required by the `opencode` harness.
     required: false
     default: ""
   opencode-variant:
-    description: Passed to ai-harness for interface parity; unused while only `claude` is supported.
+    description: OpenCode model variant.
     required: false
     default: ""
   claude-model:
@@ -124,11 +124,11 @@ inputs:
     description: GitHub token (a GitHub App installation token) the agent uses for gh and git push.
     required: true
   openai-api-key:
-    description: OpenAI API key, passed to ai-harness; unused while only `claude` is supported.
+    description: OpenAI API key for the `opencode` harness. Required when `opencode-model` is an `openai/` model.
     required: false
     default: ""
   anthropic-api-key:
-    description: Anthropic API key for Claude Code.
+    description: Anthropic API key for the `claude` harness.
     required: false
     default: ""
   claude-code-oauth-token:
@@ -149,6 +149,9 @@ inputs:
     default: ""
 
 outputs:
+  harness:
+    description: Harness that ran the task.
+    value: ${{ steps.resolve.outputs.harness }}
   agent:
     description: Agent that ran the task.
     value: ${{ steps.resolve.outputs.agent }}
@@ -225,8 +228,10 @@ runs:
         AI_TASK_SKILLS: ${{ inputs.skills }}
         AI_TASK_AGENTS: ${{ inputs.agents }}
         AI_TASK_HARNESS: ${{ inputs.harness }}
+        AI_TASK_OPENCODE_MODEL: ${{ inputs.opencode-model }}
         HAS_GITHUB_TOKEN: ${{ inputs.github-token != '' }}
         HAS_ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key != '' }}
+        HAS_OPENAI_API_KEY: ${{ inputs.openai-api-key != '' }}
         HAS_CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude-code-oauth-token != '' }}
         HAS_JIRA_EMAIL: ${{ inputs.jira-email != '' }}
         HAS_JIRA_API_TOKEN: ${{ inputs.jira-api-token != '' }}
@@ -243,7 +248,7 @@ runs:
         JIRA_API_TOKEN: ${{ inputs.jira-api-token }}
         AI_TASK_RESULT_FILE: ${{ steps.prepare.outputs.result-file }}
       with:
-        harness: ${{ inputs.harness || 'claude' }}
+        harness: ${{ steps.resolve.outputs.harness }}
         agent: ${{ steps.resolve.outputs.agent }}
         agents: ${{ steps.resolve.outputs.agents }}
         skills: ${{ steps.resolve.outputs.skills }}

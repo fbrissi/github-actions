@@ -133,17 +133,17 @@ on:
         type: string
         default: ""
       harness:
-        description: AI harness. Empty uses the `AI_HARNESS` variable, then `claude`. Only `claude` runs agents; any other value fails validation.
+        description: AI harness, `opencode` or `claude`. Empty uses the `AI_HARNESS` variable, then `opencode`.
         required: false
         type: string
         default: ""
       opencode-model:
-        description: Accepted for interface parity with the other workflows and passed to the harness; unused while only `claude` is supported. Empty uses the `OPENCODE_MODEL` variable.
+        description: OpenCode model in `provider/model` form. Empty uses the `OPENCODE_MODEL` variable; required by the `opencode` harness.
         required: false
         type: string
         default: ""
       opencode-variant:
-        description: Accepted for interface parity and passed to the harness; unused while only `claude` is supported. Empty uses the `OPENCODE_VARIANT` variable.
+        description: OpenCode model variant. Empty uses the `OPENCODE_VARIANT` variable.
         required: false
         type: string
         default: ""
@@ -232,10 +232,10 @@ on:
         description: Private key of the GitHub App the agent acts as.
         required: false
       OPEN_AI_TOKEN:
-        description: OpenAI API key, passed to the harness; unused while only `claude` is supported.
+        description: OpenAI API key for the `opencode` harness.
         required: false
       ANTHROPIC_API_KEY:
-        description: Anthropic API key for Claude Code.
+        description: Anthropic API key for the `claude` harness.
         required: false
       CLAUDE_CODE_OAUTH_TOKEN:
         description: Claude Code OAuth token, used when `ANTHROPIC_API_KEY` is empty.
@@ -375,7 +375,7 @@ jobs:
           requested-by: ${{ inputs.requested-by || github.triggering_actor }}
           skills: ${{ inputs.skills }}
           agents: ${{ inputs.agents }}
-          harness: ${{ inputs.harness || vars.AI_HARNESS || 'claude' }}
+          harness: ${{ inputs.harness || vars.AI_HARNESS || 'opencode' }}
           opencode-model: ${{ inputs.opencode-model || vars.OPENCODE_MODEL }}
           opencode-variant: ${{ inputs.opencode-variant || vars.OPENCODE_VARIANT }}
           claude-model: ${{ inputs.claude-model || vars.CLAUDE_MODEL }}
