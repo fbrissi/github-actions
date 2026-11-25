@@ -19,6 +19,35 @@ merging a pull request that adds one tags the release and moves the major tag.
   `orchestrate`, `contents` and `pull-requests` write only for `orchestrate` and `implement`,
   `organization-projects: write` only with `project`), checks out with full history and push credentials, commits as
   the App bot, installs dependencies, and runs `ai-task`. Runs are serialized per task and issue, milestone, or source.
+- Delivery chaining in `ai-task.yml`: a `follow-up` job with a fresh App token (`actions: write`) reads the issues'
+  `status:*` labels after each run and dispatches the next stage (business refinement -> technical refinement ->
+  readiness review -> orchestrate) or hands off to a human. Failed, timed-out, or cancelled runs hand off with the run
+  link and move an issue stuck in `status:in-progress` back to `status:ready`. New inputs `chain` (default `true`),
+  `stage-workflows` (`stage=file` overrides), and `max-auto-dispatches` (loop guard, default `3`); new output
+  `milestone`.
+- `requested-by` input on `ai-task.yml` and the `ai-task` action (default `github.triggering_actor`, bots ignored):
+  the agent and every handoff mention that person, it is stored in the milestone description as
+  `<!-- ai-delivery requested-by=<login> -->`, and every chained dispatch passes it on as `requested_by`.
+- Handoff comments: mention the requester, explain the blocker, link the questions, and offer a
+  `- [ ] Resume: <stage>` checkbox plus a `gh workflow run` fallback.
+- `ai-resume.yml` reusable workflow: on `issue_comment` `edited`, resumes the stage of a handoff whose box a person
+  with write permission just checked, removes `ai:needs-human` for `pr-fix`, resets the loop guard, and replaces the
+  box with a link to the dispatched run.
+- `ai-delivery` action: the deterministic `follow-up`, `handoff`, `resume`, and `request-review` steps, with tests.
+- `setup-command` input on `ai-task.yml` to install browsers and start the test environment before the agent; the
+  `implement` prompt falls back to tests-only QA (PR checks) when no environment is reachable and never escalates for
+  that.
+- `merge-decision.yml`: `human-approval-exempt-base-prefixes` (pull requests into matching base branches, such as
+  milestone branches, need no human approval) and `request-human-review` (default `true`: while approvals are
+  missing, request a review from the flow's requester and mention them once).
+
+### Changed
+
+- `pr-fix.yml` escalation posts a handoff that mentions the requester and offers a `pr-fix` resume instead of only
+  asking to remove the label.
+- README: setup from zero (App permissions, secrets, variables, labels, project status options, release order), how
+  stages chain, resume, QA in CI, stage callers with their dispatch inputs, and PR follow-up for task branches. Issue
+  field values only need `issues: write`.
 
 ## v1.7.0
 
