@@ -898,7 +898,7 @@ Task parameters are the [`ai-task` action inputs](actions/ai-task/README.md#inpu
 | `stage-workflows` | `""` | Multiline `stage=file` overrides of the stage callers. Defaults: `business-refinement=ai-business-refinement.yml`, `technical-refinement=ai-technical-refinement.yml`, `readiness-review=ai-readiness-review.yml`, `orchestrate=ai-orchestrate.yml`, `implement=ai-implement.yml`, `pr-fix=pr-fix.yml`. |
 | `max-auto-dispatches` | `3` | Automatic dispatches of one stage per milestone before the follow-up hands off instead. |
 | `setup-command` | `""` | Runs after `install-command` and before the agent, for example to install browsers and start the test environment. |
-| `harness` | `claude` | Only `claude` is supported (agents need Claude Code). |
+| `harness` | `AI_HARNESS`, then `claude` | Only `claude` is supported (agents need Claude Code); any other value fails validation. |
 | `claude-model`, `claude-effort` | `CLAUDE_MODEL`, `CLAUDE_EFFORT` | Claude Code model and effort. |
 | `opencode-model`, `opencode-variant` | `OPENCODE_MODEL`, `OPENCODE_VARIANT` | Passed through; unused while only `claude` is supported. |
 | `jira-base-url` | `JIRA_BASE_URL` | Jira base URL; Jira is used only with the `JIRA_EMAIL` and `JIRA_API_TOKEN` secrets. |
@@ -1064,7 +1064,7 @@ organization, or, for the review job, its `environment`) are used whenever the m
 | Variable | Used by | Purpose |
 |---|---|---|
 | `CI_RUNNER` | all | Runner label; defaults to `ubuntu-latest`. |
-| `AI_HARNESS` | AI workflows except `ai-task.yml` | `opencode` (default) or `claude`. |
+| `AI_HARNESS` | AI workflows | `opencode` (default) or `claude`. `ai-task.yml` defaults to `claude` and accepts only `claude`. |
 | `OPENCODE_MODEL`, `OPENCODE_VARIANT` | AI workflows | OpenCode model and variant. |
 | `CLAUDE_MODEL`, `CLAUDE_EFFORT` | AI workflows | Claude Code model and effort. |
 | `AGENT_APP_CLIENT_ID` | AI workflows, `ai-resume.yml` | Client ID of the GitHub App the workflow acts as (set it per `environment` to use one App per role). |

@@ -82,7 +82,7 @@ Run settings and credentials:
 |---|---|---|
 | `skills` | `""` | Extra whitespace-separated skills. |
 | `agents` | `""` | Extra whitespace-separated agents. |
-| `harness` | `claude` | Only `claude` runs agents, so it is the only supported value. |
+| `harness` | `claude` | Pass the caller's `AI_HARNESS` variable. Only `claude` runs agents; any other value fails validation. |
 | `opencode-model`, `opencode-variant` | `""` | Passed to `ai-harness` for interface parity; unused while only `claude` is supported. |
 | `claude-model` | `""` | Claude Code model. |
 | `claude-effort` | `""` | Claude Code effort level. |

@@ -133,10 +133,10 @@ on:
         type: string
         default: ""
       harness:
-        description: AI harness. Only `claude` is supported.
+        description: AI harness. Empty uses the `AI_HARNESS` variable, then `claude`. Only `claude` runs agents; any other value fails validation.
         required: false
         type: string
-        default: claude
+        default: ""
       opencode-model:
         description: Accepted for interface parity with the other workflows and passed to the harness; unused while only `claude` is supported. Empty uses the `OPENCODE_MODEL` variable.
         required: false
@@ -375,7 +375,7 @@ jobs:
           requested-by: ${{ inputs.requested-by || github.triggering_actor }}
           skills: ${{ inputs.skills }}
           agents: ${{ inputs.agents }}
-          harness: ${{ inputs.harness }}
+          harness: ${{ inputs.harness || vars.AI_HARNESS || 'claude' }}
           opencode-model: ${{ inputs.opencode-model || vars.OPENCODE_MODEL }}
           opencode-variant: ${{ inputs.opencode-variant || vars.OPENCODE_VARIANT }}
           claude-model: ${{ inputs.claude-model || vars.CLAUDE_MODEL }}

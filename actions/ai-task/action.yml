@@ -93,7 +93,7 @@ inputs:
     required: false
     default: ""
   harness:
-    description: AI harness. Only `claude` runs agents, so it is the only supported value.
+    description: AI harness, usually from the caller's `AI_HARNESS` variable. Only `claude` runs agents; any other value fails validation.
     required: false
     default: claude
   opencode-model:
@@ -243,7 +243,7 @@ runs:
         JIRA_API_TOKEN: ${{ inputs.jira-api-token }}
         AI_TASK_RESULT_FILE: ${{ steps.prepare.outputs.result-file }}
       with:
-        harness: claude
+        harness: ${{ inputs.harness || 'claude' }}
         agent: ${{ steps.resolve.outputs.agent }}
         agents: ${{ steps.resolve.outputs.agents }}
         skills: ${{ steps.resolve.outputs.skills }}
