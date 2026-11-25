@@ -44,6 +44,7 @@ const pull = (overrides = {}) => ({
   labels: [],
   mergeable: true,
   mergeable_state: 'clean',
+  user: { login: 'agent[bot]', type: 'Bot' },
   head: { ref: 'feat/jira-dev-1-login', sha: HEAD, repo: { full_name: REPO } },
   base: { ref: 'feat/jira-dev-1', sha: OLD },
   ...overrides
@@ -176,6 +177,16 @@ describe('merge-gate', () => {
     assert.equal(result.outputs.required_approvals, '0');
     assert.equal(result.outputs.head_sha, HEAD);
     assert.equal(result.outputs.base_sha, OLD);
+  });
+
+  it('keeps human approval for a person, or an author not listed, into an exempt base', async () => {
+    const human = pull({ user: { login: 'alice', type: 'User' } });
+    const ctx = ctxFor({ ...base, 'human-approval-exempt-base-prefixes': 'feat/' });
+    assert.equal((await mergeGate(ctx, mergeRepo({ pr: human }), noSleep)).outputs.required_approvals, '1');
+    const listed = ctxFor({ ...base, 'human-approval-exempt-base-prefixes': 'feat/', 'human-approval-exempt-authors': 'other[bot]' });
+    assert.equal((await mergeGate(listed, mergeRepo(), noSleep)).outputs.required_approvals, '1');
+    const agent = ctxFor({ ...base, 'human-approval-exempt-base-prefixes': 'feat/', 'human-approval-exempt-authors': 'Agent[bot]' });
+    assert.equal((await mergeGate(agent, mergeRepo(), noSleep)).outputs.required_approvals, '0');
   });
 
   it('requests a review when a pull request into the default branch lacks a human approval', async () => {

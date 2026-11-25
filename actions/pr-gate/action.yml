@@ -44,6 +44,10 @@ inputs:
     description: "`merge-gate`: base branch prefixes whose pull requests need no human approval."
     required: false
     default: ""
+  human-approval-exempt-authors:
+    description: "`merge-gate`: pull request authors that may skip human approval when the base also matches `human-approval-exempt-base-prefixes`. Empty means any GitHub App bot (never a person)."
+    required: false
+    default: ""
   hold-labels:
     description: "`merge-gate`: labels that block any decision."
     required: false
@@ -138,6 +142,7 @@ runs:
         PR_GATE_CHECK_NAME: ${{ inputs.check-name }}
         PR_GATE_REQUIRED_HUMAN_APPROVALS: ${{ inputs.required-human-approvals }}
         PR_GATE_HUMAN_APPROVAL_EXEMPT_BASE_PREFIXES: ${{ inputs.human-approval-exempt-base-prefixes }}
+        PR_GATE_HUMAN_APPROVAL_EXEMPT_AUTHORS: ${{ inputs.human-approval-exempt-authors }}
         PR_GATE_HOLD_LABELS: ${{ inputs.hold-labels }}
         PR_GATE_ROUND: ${{ inputs.round }}
         PR_GATE_START_SHA: ${{ inputs.start-sha }}

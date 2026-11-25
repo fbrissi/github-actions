@@ -50,7 +50,8 @@ jobs:
 | `escalation-label` | `ai:needs-human` | `fix-gate`: blocks passes while present. |
 | `check-name` | `PR Fix` | `fix-gate` and `fix-finish`: check run name. |
 | `required-human-approvals` | `1` | `merge-gate`: human approvals on the head commit. |
-| `human-approval-exempt-base-prefixes` | `""` | `merge-gate`: base prefixes that need no human approval. |
+| `human-approval-exempt-base-prefixes` | `""` | `merge-gate`: base prefixes that need no human approval when the author is exempt too. |
+| `human-approval-exempt-authors` | `""` | `merge-gate`: authors exempt into those bases; empty means any GitHub App bot, never a person. |
 | `hold-labels` | `do-not-merge hold` | `merge-gate`: labels that block a decision. |
 | `round`, `start-sha`, `outcome` | `""` | `fix-record`: round, starting head commit, and harness outcome. |
 | `head-sha` | `""` | `merge-record`: decided head commit. |

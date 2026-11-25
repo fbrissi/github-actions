@@ -43,9 +43,14 @@ merging a pull request that adds one tags the release and moves the major tag.
 - `setup-command` input on `ai-task.yml` to install browsers and start the test environment before the agent; the
   `implement` prompt falls back to tests-only QA (PR checks) when no environment is reachable and never escalates for
   that.
-- `merge-decision.yml`: `human-approval-exempt-base-prefixes` (pull requests into matching base branches, such as
-  milestone branches, need no human approval) and `request-human-review` (default `true`: while approvals are
-  missing, request a review from the flow's requester and mention them once).
+- `merge-decision.yml`: `human-approval-exempt-base-prefixes` and `human-approval-exempt-authors` (pull requests
+  into a matching base branch, such as a `release/` branch, that are also authored by an exempt author need no human
+  approval; the author list defaults to any GitHub App bot, so pull requests by people always need approval) and
+  `request-human-review` (default `true`: while approvals are missing, request a review from the flow's requester
+  and mention them once). The decision prompt now passes the base branch, the required approvals, and the approval
+  rule: with 0 required approvals an empty `reviewDecision` passes and only `CHANGES_REQUESTED` (or
+  `REVIEW_REQUIRED` from branch protection) fails; otherwise human approvals on the head commit are counted from the
+  reviews, never from `reviewDecision` alone.
 - `pr-gate` action: the deterministic `fix-gate`, `fix-record`, `fix-finish`, `merge-gate`, and `merge-record` steps
   of `pr-fix.yml` and `merge-decision.yml`, with tests, so wrappers that load secrets at run time get the same gates
   and markers.

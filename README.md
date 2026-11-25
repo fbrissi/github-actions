@@ -353,14 +353,18 @@ The fixer GitHub App needs `Contents: Read and write`, `Pull requests: Read and 
    run and commit status on the head commit completed and
    successful (`neutral` and `skipped` count; runs started by review or check events, such as the dispatcher, are
    ignored), with no standing `CHANGES_REQUESTED`, at least `required-human-approvals` approvals on the head commit by
-   users (not bots or Apps; none when the base branch matches `human-approval-exempt-base-prefixes`), no unresolved
-   review threads, and no decision recorded for the head commit yet.
+   users (not bots or Apps; none when the base branch matches `human-approval-exempt-base-prefixes` and the author
+   matches `human-approval-exempt-authors`), no unresolved review threads, and no decision recorded for the head
+   commit yet.
 2. **Request Human Review** runs only when the approvals are missing (and `request-human-review` is on): it requests
    a review from the person who started the flow (the `requested-by` marker of the PR's milestone, or of the issues
    it closes) and mentions them once per pull request (`<!-- merge-decision review-requested=<login> -->`). Their
    approval dispatches the decision again through [PR Feedback Dispatch](#pr-feedback-dispatch).
 3. **Run Merge Decision** checks out the base commit (never the pull request) so the `merge-risk` profile cannot be
-   changed by the change it rates, runs the skill in decide mode, and records a
+   changed by the change it rates, runs the skill in decide mode with the base branch, the required approvals, and
+   the approval rule (with 0 required approvals an empty `reviewDecision` passes and only `CHANGES_REQUESTED`, or
+   `REVIEW_REQUIRED` from branch protection, fails; otherwise it counts human approvals on the head commit from the
+   reviews, never `reviewDecision` alone), and records a
    `<!-- merge-decision head=<sha> -->` comment, so each head commit is decided once. Push a commit (or delete that
    comment) to decide again.
 
@@ -409,7 +413,8 @@ The review request uses the same App with `pull-requests: write`.
 | `pr-number` | – (required) | Pull request to decide on. |
 | `auto-merge` | `false` | Let the AI merge; when false it only rates the risk and holds. |
 | `required-human-approvals` | `1` | Human approvals required on the head commit. |
-| `human-approval-exempt-base-prefixes` | `""` | Base branch prefixes whose pull requests need no human approval, for example `feat/` for task PRs into milestone branches. |
+| `human-approval-exempt-base-prefixes` | `""` | Base branch prefixes whose pull requests need no human approval when the author is exempt too, for example `release/` for task PRs into release branches. |
+| `human-approval-exempt-authors` | `""` (any GitHub App bot) | Authors that may skip human approval into an exempt base, for example the agent App bot `my-agent[bot]`. Pull requests by people always need `required-human-approvals`. |
 | `request-human-review` | `true` | Request a review from the flow's requester and mention them once while approvals are missing. |
 | `hold-labels` | `do-not-merge hold` | Labels that block a decision. |
 | `branch-prefixes` | `""` | Head branch prefixes a pull request must match (`startsWith`; `feat/` covers task and milestone branches); empty decides on every pull request. |

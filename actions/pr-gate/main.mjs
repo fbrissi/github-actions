@@ -8,7 +8,7 @@ import { createClient } from '../ai-delivery/github.mjs';
 
 const NAMES = [
   'command', 'pr-number', 'opt-in-label', 'branch-prefixes', 'max-rounds', 'escalation-label', 'check-name',
-  'required-human-approvals', 'human-approval-exempt-base-prefixes', 'hold-labels', 'round', 'start-sha', 'outcome',
+  'required-human-approvals', 'human-approval-exempt-base-prefixes', 'human-approval-exempt-authors', 'hold-labels', 'round', 'start-sha', 'outcome',
   'head-sha', 'result', 'check-run-id'
 ];
 
@@ -199,8 +199,15 @@ export async function mergeGate(ctx, api, sleep = (ms) => new Promise((resolve) 
     && review.commit_id === headSha
     && review.user.type === 'User'
     && !review.user.login.endsWith('[bot]')).length;
+  // The exemption needs both: a matching base and an exempt author (by default any GitHub App bot, never a person).
   const exemptPrefixes = words(ctx['human-approval-exempt-base-prefixes']);
-  const required = exemptPrefixes.some((prefix) => pr.base.ref.startsWith(prefix)) ? 0 : Number(ctx['required-human-approvals'] || 1);
+  const exemptAuthors = words(ctx['human-approval-exempt-authors']).map((login) => login.toLowerCase());
+  const author = pr.user?.login ?? '';
+  const exemptBase = exemptPrefixes.some((prefix) => pr.base.ref.startsWith(prefix));
+  const exemptAuthor = exemptAuthors.length > 0
+    ? exemptAuthors.includes(author.toLowerCase())
+    : pr.user?.type === 'Bot' && /\[bot\]$/i.test(author);
+  const required = exemptBase && exemptAuthor ? 0 : Number(ctx['required-human-approvals'] || 1);
   const outputs = { action: 'skip', pr_number: String(pr.number), required_approvals: String(required) };
   if (approvals < required) {
     const reason = `${approvals} of ${required} human approvals on ${headSha}.`;
