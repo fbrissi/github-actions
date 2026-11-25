@@ -6,6 +6,103 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.8.0
+
+### Added
+
+- `ai-task` action: runs one AI task delivery task (`business-refinement`, `technical-refinement`, `readiness-review`,
+  `orchestrate`, or `implement`) with its fbrissi/ai-skills agent. It validates the task and the inputs it requires,
+  installs the task's agents and skills (default `ai-skills-ref` `v0.6.0`) plus any extra `skills` and `agents`,
+  passes every non-empty parameter explicitly in a non-interactive prompt so the repository profile fills the rest,
+  and exports masked Jira credentials only to the harness step. It runs `ai-harness@v1`.
+- `ai-task.yml` reusable workflow: creates a GitHub App token scoped per task (`actions: write` only for
+  `orchestrate`, `contents` and `pull-requests` write only for `orchestrate` and `implement`,
+  `organization-projects: write` only with `project`), checks out with full history and push credentials, commits as
+  the App bot, installs dependencies, and runs `ai-task`. Runs are serialized per task and issue, milestone, or source.
+- Delivery chaining in `ai-task.yml`: a `follow-up` job with a fresh App token (`actions: write`) reads the issues'
+  `status:*` labels after each run and dispatches the next stage (business refinement -> technical refinement ->
+  readiness review -> orchestrate) or hands off to a human. Failed, timed-out, or cancelled runs hand off with the run
+  link and move an issue stuck in `status:in-progress` back to `status:ready`. New inputs `chain` (default `true`),
+  `stage-workflows` (`stage=file` overrides), and `max-auto-dispatches` (loop guard, default `3`); new output
+  `milestone`.
+- `requested-by` input on `ai-task.yml` and the `ai-task` action (default `github.triggering_actor`, bots ignored):
+  the agent and every handoff mention that person, it is stored in the milestone description as
+  `<!-- ai-delivery requested-by=<login> -->`, and every chained dispatch passes it on as `requested_by`.
+- Handoff comments: mention the requester, explain the blocker, link the questions, and end with
+  ``Reply `/ai-resume` (optionally with instructions on the next lines) to continue: <stage> -> <next stage>.``, a
+  `<!-- ai-resume ... state=open -->` marker, and a `gh workflow run` fallback.
+- `ai-resume.yml` reusable workflow: on `issue_comment` `created`, a comment whose first line is
+  `/ai-resume [stage] [instructions]` (the stage may also be a skill or agent alias such as `quality-cycle` or
+  `issue-resolver`; by an `OWNER`, `MEMBER`, or `COLLABORATOR` with write, maintain, or admin
+  permission; bots are ignored) resumes the named stage, else the newest open handoff of the agent App (or
+  `trusted-bots`) on that issue or pull request. It reacts with `eyes`, marks the handoff `state=resumed` before
+  dispatching (so a second command cannot run it twice; runs are serialized per issue or pull request), removes
+  `ai:needs-human` for `pr-fix`, resets the loop guard, dispatches the stage with the command's `instructions`, then
+  reacts with `rocket` and replies with the run link. Without an open handoff or a stage, or without permission, it
+  replies with the reason and dispatches nothing. Handoffs with the earlier checkbox still resume.
+- `ai-delivery` action: the deterministic `follow-up`, `handoff`, `resume`, and `request-review` steps, with tests.
+- `setup-command` input on `ai-task.yml` to install browsers and start the test environment before the agent; the
+  `implement` prompt falls back to tests-only QA (PR checks) when no environment is reachable and never escalates for
+  that.
+- `merge-decision.yml`: `human-approval-exempt-base-prefixes` and `human-approval-exempt-authors` (pull requests
+  into a matching base branch, such as a `release/` branch, that are also authored by an exempt author need no human
+  approval; the author list defaults to any GitHub App bot, so pull requests by people always need approval) and
+  `request-human-review` (default `true`: while approvals are missing, request a review from the flow's requester
+  and mention them once). The decision prompt now passes the base branch, the required approvals, and the approval
+  rule: with 0 required approvals an empty `reviewDecision` passes and only `CHANGES_REQUESTED` (or
+  `REVIEW_REQUIRED` from branch protection) fails; otherwise human approvals on the head commit are counted from the
+  reviews, never from `reviewDecision` alone.
+- `pr-gate` action: the deterministic `fix-gate`, `fix-record`, `fix-finish`, `merge-gate`, and `merge-record` steps
+  of `pr-fix.yml` and `merge-decision.yml`, with tests, so wrappers that load secrets at run time get the same gates
+  and markers.
+- `pr-feedback-dispatch.yml`: `ignore-reply-authors` skips reply-only reviews (no body, every inline comment a reply)
+  by those logins, for setups where one App both reviews and fixes.
+- `ai-harness` action: `agents` and `agent` work with OpenCode too. OpenCode agents come from the new
+  `opencode-agents-path` (default `plugins/ai-skills/opencode/agent`) or `opencode-agents-local-dir`, are installed
+  into `~/.config/opencode/agents`, and the prompt runs with `opencode run --agent <agent>`. The action fails when the
+  agent is missing, has `mode: subagent`, or is overridden by the checkout's `.opencode/agent(s)/`, because OpenCode
+  would silently fall back to its default agent.
+- `branch-sync.yml` reusable workflow: fast-forwards `target` (default `develop`) to `source` (default `main`), with an
+  optional GitHub App so the update triggers the target's workflows. It never force-pushes: when the target has
+  commits the source does not, it opens or comments on one issue that mentions the pusher and `mention`, and closes it
+  after the next successful sync.
+  Input `app-token-permission-workflows` (default empty) requests `Workflows` for commits that change
+  `.github/workflows/**`; a refused update returns `blocked` and is reported in the sync issue.
+- Issue tasks on `ai-task.yml` and the `ai-task` action, run by the `issue-resolver` agent of fbrissi/ai-skills:
+  `issue-intake` (reads a source such as Sentry with the `sentry-issues` skill and creates or updates GitHub issues
+  labeled `ai:resolve`) and `issue-resolve` (`issue` required: branch, change, quality cycle, pull request, then
+  stop; the PR Feedback Loop follows up). New optional `SENTRY_AUTH_TOKEN` secret and `sentry-org` and
+  `sentry-base-url` inputs (variables `SENTRY_ORG` and `SENTRY_BASE_URL`); `issue-resolve` gets `contents` and
+  `pull-requests` write. A failed run hands off with an `issue-intake` or `issue-resolve` resume (default callers
+  `ai-issue-intake.yml` and `ai-issue-resolve.yml`).
+- `instructions` input for per-run instructions, appended to the prompt as `Additional instructions for this run:`
+  on `ai-task.yml` and the `ai-task` action (`context` stays as a deprecated alias), `pr-fix.yml` and
+  `merge-decision.yml` (`prompt-append` stays as a deprecated alias), `code-review.yml` (both harnesses, including
+  the OpenCode command form), and the `ai-harness` action. Chained dispatches never pass it on.
+
+### Changed
+
+- The README examples follow the branch model `feature/*` (into a `release/*`), `release/*` (the milestone branch,
+  into `main`), `hotfix/*` (into `main`), and `bugfix/*` (into the open `release/*`), with `main` as the default
+  branch: `branch-prefixes: feature/ release/ hotfix/ bugfix/`, `human-approval-exempt-base-prefixes: release/`, and an
+  orchestrate-on-merge caller for `feature/*` into `release/*` and `release/*` into `main`. Prefix inputs are free
+  lists, so callers can keep older prefixes such as `feat/` while those branches are open.
+- The default harness is now `claude` everywhere: `code-review.yml`, `pr-fix.yml`, `merge-decision.yml`, `ai-task.yml`, and the `ai-harness` and `ai-task` actions use Claude Code when the input and `AI_HARNESS` are empty. Set `AI_HARNESS=opencode` to keep OpenCode.
+- `ai-task` action and `ai-task.yml` run with `opencode` or `claude`, resolved like every AI workflow: the input, then
+  the `AI_HARNESS` variable, then `claude` (and `OPENCODE_MODEL`, `OPENCODE_VARIANT`, `CLAUDE_MODEL`,
+  `CLAUDE_EFFORT` the same way). `opencode` requires `opencode-model` in `provider/model` form, plus `openai-api-key`
+  for an `openai/` model; `claude` requires `anthropic-api-key` or `claude-code-oauth-token`. New `harness` output.
+- `pr-fix.yml` and `merge-decision.yml`: `agents` installs the OpenCode agents of the same names with `opencode`.
+- `pr-fix.yml` and `merge-decision.yml` run their gates and markers through `pr-gate` instead of inline scripts; the
+  behavior is unchanged.
+- `pr-fix.yml` escalation posts a handoff that mentions the requester and offers a `pr-fix` resume instead of only
+  asking to remove the label.
+- README: setup from zero (App permissions, secrets, variables, labels, project status options, release order), how
+  stages chain, resume, QA in CI, stage callers with their dispatch inputs, and PR follow-up for task branches. Issue
+  field values only need `issues: write`.
+- Documentation: Mermaid diagrams of how the workflows and actions fit together, the PR feedback loop, merge
+  decision gates, stage chaining and the follow-up job, resume, issue intake and resolve, and branch sync.
+
 ## v1.7.0
 
 ### Added

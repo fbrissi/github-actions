@@ -1,0 +1,90 @@
+name: AI Resume
+
+on:
+  workflow_call:
+    inputs:
+      stage-workflows:
+        description: Multiline `stage=workflow file` overrides of the stage callers, used when a handoff does not name its workflow (defaults `ai-business-refinement.yml`, `ai-technical-refinement.yml`, `ai-readiness-review.yml`, `ai-orchestrate.yml`, `ai-implement.yml`, `pr-fix.yml`, `ai-issue-intake.yml`, `ai-issue-resolve.yml`).
+        required: false
+        type: string
+        default: ""
+      trusted-bots:
+        description: Whitespace-separated bot logins, besides the agent App's own bot, whose handoff comments `/ai-resume` may resume, for example the fixer App (`my-fixer[bot]`).
+        required: false
+        type: string
+        default: ""
+      agent-client-id:
+        description: Client ID of the GitHub App that posts handoffs and dispatches the stages. Empty uses the `AGENT_APP_CLIENT_ID` variable.
+        required: false
+        type: string
+        default: ""
+      environment:
+        description: GitHub environment of the resume job; its secrets and variables are available to the job. Empty runs without one.
+        required: false
+        type: string
+        default: ""
+      runs-on:
+        description: Runner label. Empty uses the `CI_RUNNER` variable, then `ubuntu-latest`.
+        required: false
+        type: string
+        default: ""
+    secrets:
+      AGENT_APP_PRIVATE_KEY:
+        description: Private key of the GitHub App that posts handoffs and dispatches the stages.
+        required: false
+
+# One resume at a time per issue or pull request: the second command finds the handoff already resumed.
+concurrency:
+  group: fbrissi-ai-resume-${{ github.repository }}-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  resume:
+    name: AI Resume
+    # Cheap pre-filter; the script parses the command, checks the sender's permission, and finds the handoff.
+    if: >-
+      ${{ github.event_name == 'issue_comment' && github.event.action == 'created'
+      && startsWith(github.event.comment.body, '/ai-resume')
+      && github.event.comment.user.type != 'Bot'
+      && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) }}
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions: {}
+    timeout-minutes: 10
+    environment:
+      name: ${{ inputs.environment }}
+    steps:
+      - name: Check settings
+        env:
+          APP_CLIENT_ID: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          HAS_APP_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          if [ -z "$APP_CLIENT_ID" ]; then
+            echo '::error::The agent-client-id input or the AGENT_APP_CLIENT_ID variable is required.'
+            exit 1
+          fi
+          if [ "$HAS_APP_KEY" != 'true' ]; then
+            echo '::error::The AGENT_APP_PRIVATE_KEY secret is required.'
+            exit 1
+          fi
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+          permission-actions: write
+          permission-issues: write
+          permission-pull-requests: write
+
+      - name: Resume stage
+        uses: fbrissi/github-actions/actions/ai-delivery@v1
+        with:
+          command: resume
+          github-token: ${{ steps.app-token.outputs.token }}
+          bot-login: ${{ steps.app-token.outputs.app-slug }}[bot]
+          trusted-bots: ${{ inputs.trusted-bots }}
+          stage-workflows: ${{ inputs.stage-workflows }}

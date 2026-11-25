@@ -28,7 +28,7 @@ on:
         type: string
         default: ai:needs-human
       harness:
-        description: AI harness, `opencode` or `claude`. Empty uses the `AI_HARNESS` variable, then `opencode`.
+        description: AI harness, `opencode` or `claude`. Empty uses the `AI_HARNESS` variable, then `claude`.
         required: false
         type: string
         default: ""
@@ -37,8 +37,13 @@ on:
         required: false
         type: string
         default: ""
+      instructions:
+        description: Per-run instructions appended to the prompt as "Additional instructions for this run".
+        required: false
+        type: string
+        default: ""
       prompt-append:
-        description: Extra instructions appended to the prompt, for example project priorities.
+        description: Deprecated, use `instructions`. Extra instructions appended to the prompt, for example project priorities.
         required: false
         type: string
         default: ""
@@ -48,7 +53,7 @@ on:
         type: string
         default: pr-fix pr-checks
       agents:
-        description: Whitespace-separated Claude Code agents installed for the harness (claude only).
+        description: Whitespace-separated agents installed for the harness (Claude Code or OpenCode agents of the same name from `fbrissi/ai-skills`).
         required: false
         type: string
         default: ""
@@ -197,91 +202,17 @@ jobs:
       base_sha: ${{ steps.gate.outputs.base_sha }}
       check_run_id: ${{ steps.gate.outputs.check_run_id }}
     steps:
-      - uses: actions/github-script@v9
+      - name: Check gates
         id: gate
-        env:
-          PR_NUMBER: ${{ inputs.pr-number }}
-          OPT_IN_LABEL: ${{ inputs.opt-in-label }}
-          BRANCH_PREFIXES: ${{ inputs.branch-prefixes }}
-          MAX_ROUNDS: ${{ inputs.max-rounds }}
-          ESCALATION_LABEL: ${{ inputs.escalation-label }}
-          CHECK_NAME: ${{ inputs.check-name }}
+        uses: fbrissi/github-actions/actions/pr-gate@v1
         with:
-          script: |
-            const { owner, repo } = context.repo;
-            core.setOutput('action', 'skip');
-            async function skip(reason) {
-              core.notice(`PR Fix skipped: ${reason}`);
-              await core.summary.addRaw(`skipped: ${reason}`).write();
-            }
-
-            const prNumber = Number(process.env.PR_NUMBER);
-            if (!Number.isInteger(prNumber) || prNumber <= 0) {
-              core.setFailed(`Invalid pull request number: ${process.env.PR_NUMBER}`);
-              return;
-            }
-            const maxRounds = Number(process.env.MAX_ROUNDS);
-            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
-            const labels = pr.labels.map((label) => label.name);
-            const prefixes = process.env.BRANCH_PREFIXES.split(/\s+/).filter(Boolean);
-            const optInLabel = process.env.OPT_IN_LABEL;
-            const escalationLabel = process.env.ESCALATION_LABEL;
-
-            if (pr.state !== 'open') return skip(`PR #${prNumber} is not open.`);
-            if (pr.draft) return skip(`PR #${prNumber} is a draft.`);
-            if (pr.head.repo?.full_name !== `${owner}/${repo}`) return skip(`PR #${prNumber} comes from a fork.`);
-            const qualifies = (optInLabel && labels.includes(optInLabel)) || prefixes.some((prefix) => pr.head.ref.startsWith(prefix));
-            if (!qualifies) return skip(`PR #${prNumber} has no ${optInLabel || 'opt-in'} label or matching branch prefix.`);
-            if (escalationLabel && labels.includes(escalationLabel)) return skip(`PR #${prNumber} has the ${escalationLabel} label.`);
-
-            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: prNumber, per_page: 100 });
-            // Markers only count when a bot posted them, so a person cannot fake or reset rounds.
-            const botComments = comments.filter((comment) => comment.user?.type === 'Bot');
-            const markerPattern = /<!-- pr-fix round=(\d+) head=([0-9a-f]{40}) -->/;
-            const lastEscalation = botComments.filter((comment) => comment.body?.includes('<!-- pr-fix escalated -->')).at(-1);
-            const markers = botComments.filter((comment) => markerPattern.test(comment.body ?? '')
-              && (!lastEscalation || new Date(comment.created_at) > new Date(lastEscalation.created_at)));
-            const rounds = markers.length;
-            if (lastEscalation && !escalationLabel) return skip(`PR #${prNumber} was already escalated to a human.`);
-
-            const sameHead = markers.filter((comment) => comment.body.match(markerPattern)[2] === pr.head.sha).at(-1);
-            if (sameHead) {
-              const since = new Date(sameHead.created_at);
-              const fixer = sameHead.user.login;
-              const reviews = await github.paginate(github.rest.pulls.listReviews, { owner, repo, pull_number: prNumber, per_page: 100 });
-              const reviewComments = await github.paginate(github.rest.pulls.listReviewComments, { owner, repo, pull_number: prNumber, per_page: 100 });
-              const feedback = [
-                ...reviews.map((item) => ({ login: item.user?.login, at: item.submitted_at })),
-                ...reviewComments.map((item) => ({ login: item.user?.login, at: item.created_at })),
-                ...comments.map((item) => ({ login: item.user?.login, at: item.created_at })),
-              ].filter((item) => item.login && item.login !== fixer && item.at && new Date(item.at) > since);
-              if (feedback.length === 0) return skip(`no new feedback since fix round ${sameHead.body.match(markerPattern)[1]} on ${pr.head.sha}.`);
-            }
-
-            core.setOutput('pr_number', pr.number);
-            core.setOutput('head_ref', pr.head.ref);
-            core.setOutput('base_sha', pr.base.sha);
-            core.setOutput('round', rounds + 1);
-
-            if (rounds >= maxRounds) {
-              core.setOutput('action', 'escalate');
-              core.notice(`PR #${prNumber} reached ${maxRounds} fix rounds; escalating.`);
-              return;
-            }
-
-            const checkName = process.env.CHECK_NAME;
-            const { data: checkRun } = await github.rest.checks.create({
-              owner,
-              repo,
-              name: checkName,
-              head_sha: pr.head.sha,
-              status: 'in_progress',
-              started_at: new Date().toISOString(),
-              details_url: `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`,
-              output: { title: `${checkName} in progress`, summary: `Fix round ${rounds + 1} of ${maxRounds} for PR #${prNumber}.` },
-            });
-            core.setOutput('check_run_id', checkRun.id);
-            core.setOutput('action', 'fix');
+          command: fix-gate
+          pr-number: ${{ inputs.pr-number }}
+          opt-in-label: ${{ inputs.opt-in-label }}
+          branch-prefixes: ${{ inputs.branch-prefixes }}
+          max-rounds: ${{ inputs.max-rounds }}
+          escalation-label: ${{ inputs.escalation-label }}
+          check-name: ${{ inputs.check-name }}
 
   fix:
     name: Run PR Fix
@@ -319,7 +250,7 @@ jobs:
           if [ "$ACTION" != 'fix' ]; then
             exit 0
           fi
-          harness="${HARNESS:-opencode}"
+          harness="${HARNESS:-claude}"
           case "$harness" in
             opencode | claude) ;;
             *)
@@ -387,13 +318,23 @@ jobs:
           if [ -n "$ESCALATION_LABEL" ]; then
             gh api --silent "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels" -f "labels[]=${ESCALATION_LABEL}"
           fi
-          body="<!-- pr-fix escalated -->
-          Automatic fixes stopped after ${MAX_ROUNDS} rounds; a human needs to take over this pull request."
-          if [ -n "$ESCALATION_LABEL" ]; then
-            body="${body} Remove the \`${ESCALATION_LABEL}\` label to allow ${MAX_ROUNDS} more rounds."
-          fi
-          gh api --silent "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f "body=${body}"
           echo "skipped: escalated after ${MAX_ROUNDS} rounds" >> "$GITHUB_STEP_SUMMARY"
+
+      # Mentions the requester from the milestone marker and offers the `/ai-resume` command (handled by ai-resume.yml).
+      - name: Hand off to a human
+        if: ${{ needs.gate.outputs.action == 'escalate' }}
+        uses: fbrissi/github-actions/actions/ai-delivery@v1
+        with:
+          command: handoff
+          github-token: ${{ steps.app-token.outputs.token }}
+          task: pr-fix
+          pr: ${{ needs.gate.outputs.pr_number }}
+          marker: "<!-- pr-fix escalated -->"
+          escalation-label: ${{ inputs.escalation-label }}
+          blocker: >-
+            Automatic fixes stopped after ${{ inputs.max-rounds }} rounds without a clean pull request; read the open
+            review threads and failing checks, answer or fix what the fixer could not, then resume.
+            ${{ inputs.escalation-label != '' && format('Resuming removes the `{0}` label and allows {1} more rounds.', inputs.escalation-label, inputs.max-rounds) || '' }}
 
       - uses: actions/checkout@v7
         if: ${{ needs.gate.outputs.action == 'fix' }}
@@ -474,6 +415,7 @@ jobs:
         with:
           harness: ${{ steps.settings.outputs.harness }}
           prompt: ${{ steps.settings.outputs.prompt }}
+          instructions: ${{ inputs.instructions }}
           opencode-command: ""
           opencode-plugins: ${{ inputs.opencode-plugins }}
           opencode-model: ${{ inputs.opencode-model || vars.OPENCODE_MODEL }}
@@ -492,18 +434,15 @@ jobs:
 
       - name: Record fix round
         if: ${{ always() && (steps.fix.outcome == 'success' || steps.fix.outcome == 'failure') }}
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PR_NUMBER: ${{ needs.gate.outputs.pr_number }}
-          ROUND: ${{ needs.gate.outputs.round }}
-          MAX_ROUNDS: ${{ inputs.max-rounds }}
-          START_SHA: ${{ steps.git.outputs.start_sha }}
-          OUTCOME: ${{ steps.fix.outcome }}
-        run: |
-          set -euo pipefail
-          body="<!-- pr-fix round=${ROUND} head=${START_SHA} -->
-          Automatic fix round ${ROUND} of ${MAX_ROUNDS} on ${START_SHA}: ${OUTCOME}."
-          gh api --silent "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f "body=${body}"
+        uses: fbrissi/github-actions/actions/pr-gate@v1
+        with:
+          command: fix-record
+          github-token: ${{ steps.app-token.outputs.token }}
+          pr-number: ${{ needs.gate.outputs.pr_number }}
+          round: ${{ needs.gate.outputs.round }}
+          max-rounds: ${{ inputs.max-rounds }}
+          start-sha: ${{ steps.git.outputs.start_sha }}
+          outcome: ${{ steps.fix.outcome }}
 
       - name: Verify no force-push
         if: ${{ always() && (steps.fix.outcome == 'success' || steps.fix.outcome == 'failure') }}
@@ -526,26 +465,10 @@ jobs:
     permissions:
       checks: write
     steps:
-      - uses: actions/github-script@v9
-        env:
-          FIX_RESULT: ${{ needs.fix.result }}
-          CHECK_RUN_ID: ${{ needs.gate.outputs.check_run_id }}
-          CHECK_NAME: ${{ inputs.check-name }}
+      - name: Complete check run
+        uses: fbrissi/github-actions/actions/pr-gate@v1
         with:
-          script: |
-            const conclusion = process.env.FIX_RESULT === 'success' ? 'success' : 'failure';
-            const checkName = process.env.CHECK_NAME;
-            await github.rest.checks.update({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              check_run_id: Number(process.env.CHECK_RUN_ID),
-              status: 'completed',
-              conclusion,
-              completed_at: new Date().toISOString(),
-              output: {
-                title: conclusion === 'success' ? `${checkName} completed` : `${checkName} failed`,
-                summary: conclusion === 'success'
-                  ? 'The AI harness completed one fix pass.'
-                  : 'The AI harness failed before completing the fix pass.',
-              },
-            });
+          command: fix-finish
+          result: ${{ needs.fix.result }}
+          check-run-id: ${{ needs.gate.outputs.check_run_id }}
+          check-name: ${{ inputs.check-name }}

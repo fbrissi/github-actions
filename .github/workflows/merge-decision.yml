@@ -17,18 +17,33 @@ on:
         required: false
         type: number
         default: 1
+      human-approval-exempt-base-prefixes:
+        description: Whitespace-separated base branch prefixes whose pull requests need no human approval when `human-approval-exempt-authors` also matches, for example the release branches (`release/`) task pull requests target. Other pull requests need `required-human-approvals`.
+        required: false
+        type: string
+        default: ""
+      human-approval-exempt-authors:
+        description: Whitespace-separated pull request authors (for example the agent App bot, `my-agent[bot]`) that may skip human approval into a `human-approval-exempt-base-prefixes` base. Empty means any GitHub App bot; pull requests by people always need `required-human-approvals`.
+        required: false
+        type: string
+        default: ""
+      request-human-review:
+        description: When a pull request waits for human approval, request a review from the person who started the flow (the milestone's `requested-by` marker) and mention them once.
+        required: false
+        type: boolean
+        default: true
       hold-labels:
         description: Whitespace-separated labels that block any decision.
         required: false
         type: string
         default: do-not-merge hold
       branch-prefixes:
-        description: Whitespace-separated head branch prefixes a pull request must match to be decided on. Empty decides on every pull request.
+        description: Whitespace-separated head branch prefixes a pull request must match to be decided on, for example `feature/ release/ hotfix/ bugfix/`. Empty decides on every pull request.
         required: false
         type: string
         default: ""
       harness:
-        description: AI harness, `opencode` or `claude`. Empty uses the `AI_HARNESS` variable, then `opencode`.
+        description: AI harness, `opencode` or `claude`. Empty uses the `AI_HARNESS` variable, then `claude`.
         required: false
         type: string
         default: ""
@@ -37,8 +52,13 @@ on:
         required: false
         type: string
         default: ""
+      instructions:
+        description: Per-run instructions appended to the prompt as "Additional instructions for this run".
+        required: false
+        type: string
+        default: ""
       prompt-append:
-        description: Extra instructions appended to the prompt.
+        description: Deprecated, use `instructions`. Extra instructions appended to the prompt.
         required: false
         type: string
         default: ""
@@ -48,7 +68,7 @@ on:
         type: string
         default: merge-risk
       agents:
-        description: Whitespace-separated Claude Code agents installed for the harness (claude only).
+        description: Whitespace-separated agents installed for the harness (Claude Code or OpenCode agents of the same name from `fbrissi/ai-skills`).
         required: false
         type: string
         default: ""
@@ -157,109 +177,20 @@ jobs:
       head_sha: ${{ steps.gate.outputs.head_sha }}
       base_ref: ${{ steps.gate.outputs.base_ref }}
       base_sha: ${{ steps.gate.outputs.base_sha }}
+      required_approvals: ${{ steps.gate.outputs.required_approvals }}
+      request_review: ${{ steps.gate.outputs.request_review }}
     steps:
-      - uses: actions/github-script@v9
+      - name: Check gates
         id: gate
-        env:
-          PR_NUMBER: ${{ inputs.pr-number }}
-          REQUIRED_APPROVALS: ${{ inputs.required-human-approvals }}
-          HOLD_LABELS: ${{ inputs.hold-labels }}
-          BRANCH_PREFIXES: ${{ inputs.branch-prefixes }}
+        uses: fbrissi/github-actions/actions/pr-gate@v1
         with:
-          script: |
-            const { owner, repo } = context.repo;
-            core.setOutput('action', 'skip');
-            async function skip(reason) {
-              core.notice(`Merge Decision skipped: ${reason}`);
-              await core.summary.addRaw(`skipped: ${reason}`).write();
-            }
-
-            const prNumber = Number(process.env.PR_NUMBER);
-            if (!Number.isInteger(prNumber) || prNumber <= 0) {
-              core.setFailed(`Invalid pull request number: ${process.env.PR_NUMBER}`);
-              return;
-            }
-
-            let pr;
-            for (let attempt = 1; attempt <= 5; attempt++) {
-              ({ data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber }));
-              if (pr.state !== 'open' || pr.mergeable !== null) break;
-              await new Promise((resolve) => setTimeout(resolve, 3000));
-            }
-            const headSha = pr.head.sha;
-            if (pr.state !== 'open') return skip(`PR #${prNumber} is not open.`);
-            if (pr.draft) return skip(`PR #${prNumber} is a draft.`);
-            const prefixes = process.env.BRANCH_PREFIXES.split(/\s+/).filter(Boolean);
-            if (prefixes.length > 0 && !prefixes.some((prefix) => pr.head.ref.startsWith(prefix))) {
-              return skip(`PR #${prNumber} head branch ${pr.head.ref} matches no branch-prefixes.`);
-            }
-            const holdLabels = process.env.HOLD_LABELS.split(/\s+/).filter(Boolean);
-            const heldBy = pr.labels.map((label) => label.name).filter((name) => holdLabels.includes(name));
-            if (heldBy.length > 0) return skip(`PR #${prNumber} has the ${heldBy.join(', ')} label.`);
-            if (pr.mergeable === null) return skip(`GitHub has not computed whether PR #${prNumber} is mergeable.`);
-            if (pr.mergeable === false || pr.mergeable_state === 'dirty') return skip(`PR #${prNumber} has merge conflicts.`);
-
-            // Runs started by review or check events (such as the feedback dispatcher) are not CI; ignore their checks.
-            const dispatcherEvents = new Set(['pull_request_review', 'pull_request_review_comment', 'check_run', 'workflow_run']);
-            const runs = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, { owner, repo, head_sha: headSha, per_page: 100 });
-            const ignoredSuites = new Set(runs.filter((run) => dispatcherEvents.has(run.event)).map((run) => run.check_suite_id));
-            const checkRuns = (await github.paginate(github.rest.checks.listForRef, { owner, repo, ref: headSha, filter: 'latest', per_page: 100 }))
-              .filter((check) => !ignoredSuites.has(check.check_suite?.id));
-            const pending = checkRuns.filter((check) => check.status !== 'completed').map((check) => check.name);
-            if (pending.length > 0) return skip(`checks still running on ${headSha}: ${pending.join(', ')}.`);
-            const failed = checkRuns
-              .filter((check) => !['success', 'neutral', 'skipped'].includes(check.conclusion))
-              .map((check) => `${check.name} (${check.conclusion})`);
-            if (failed.length > 0) return skip(`checks not successful on ${headSha}: ${failed.join(', ')}.`);
-            const { data: status } = await github.rest.repos.getCombinedStatusForRef({ owner, repo, ref: headSha });
-            if (status.total_count > 0 && status.state !== 'success') return skip(`commit statuses are ${status.state} on ${headSha}.`);
-
-            const reviews = await github.paginate(github.rest.pulls.listReviews, { owner, repo, pull_number: prNumber, per_page: 100 });
-            const latest = new Map();
-            for (const review of reviews) {
-              if (!review.user || !['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(review.state)) continue;
-              latest.set(review.user.login, review);
-            }
-            const changesRequested = [...latest.values()].filter((review) => review.state === 'CHANGES_REQUESTED').map((review) => review.user.login);
-            if (changesRequested.length > 0) return skip(`changes requested by ${changesRequested.join(', ')}.`);
-            const approvals = [...latest.values()].filter((review) => review.state === 'APPROVED'
-              && review.commit_id === headSha
-              && review.user.type === 'User'
-              && !review.user.login.endsWith('[bot]')).length;
-            const required = Number(process.env.REQUIRED_APPROVALS);
-            if (approvals < required) return skip(`${approvals} of ${required} human approvals on ${headSha}.`);
-
-            let unresolved = 0;
-            let cursor = null;
-            do {
-              const result = await github.graphql(`
-                query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
-                  repository(owner: $owner, name: $repo) {
-                    pullRequest(number: $number) {
-                      reviewThreads(first: 100, after: $cursor) {
-                        nodes { isResolved }
-                        pageInfo { hasNextPage endCursor }
-                      }
-                    }
-                  }
-                }`, { owner, repo, number: prNumber, cursor });
-              const threads = result.repository.pullRequest.reviewThreads;
-              unresolved += threads.nodes.filter((thread) => !thread.isResolved).length;
-              cursor = threads.pageInfo.hasNextPage ? threads.pageInfo.endCursor : null;
-            } while (cursor);
-            if (unresolved > 0) return skip(`${unresolved} unresolved review thread(s).`);
-
-            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: prNumber, per_page: 100 });
-            const marker = `<!-- merge-decision head=${headSha} -->`;
-            if (comments.some((comment) => comment.user?.type === 'Bot' && comment.body?.includes(marker))) {
-              return skip(`a merge decision was already made for ${headSha}.`);
-            }
-
-            core.setOutput('pr_number', pr.number);
-            core.setOutput('head_sha', headSha);
-            core.setOutput('base_ref', pr.base.ref);
-            core.setOutput('base_sha', pr.base.sha);
-            core.setOutput('action', 'decide');
+          command: merge-gate
+          pr-number: ${{ inputs.pr-number }}
+          required-human-approvals: ${{ inputs.required-human-approvals }}
+          human-approval-exempt-base-prefixes: ${{ inputs.human-approval-exempt-base-prefixes }}
+          human-approval-exempt-authors: ${{ inputs.human-approval-exempt-authors }}
+          hold-labels: ${{ inputs.hold-labels }}
+          branch-prefixes: ${{ inputs.branch-prefixes }}
 
   decide:
     name: Run Merge Decision
@@ -285,12 +216,13 @@ jobs:
           PR_NUMBER: ${{ needs.gate.outputs.pr_number }}
           HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
           AUTO_MERGE: ${{ inputs.auto-merge }}
-          REQUIRED_APPROVALS: ${{ inputs.required-human-approvals }}
+          REQUIRED_APPROVALS: ${{ needs.gate.outputs.required_approvals }}
+          BASE_REF: ${{ needs.gate.outputs.base_ref }}
           HOLD_LABELS: ${{ inputs.hold-labels }}
           HAS_APP_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY != '' }}
         run: |
           set -euo pipefail
-          harness="${HARNESS:-opencode}"
+          harness="${HARNESS:-claude}"
           case "$harness" in
             opencode | claude) ;;
             *)
@@ -325,7 +257,7 @@ jobs:
           if [ -n "$PROMPT" ]; then
             prompt="$PROMPT"
           else
-            prompt="Use the merge-risk skill in decide mode on pull request #${PR_NUMBER} in ${GITHUB_REPOSITORY}. Auto-merge: ${auto_merge}. Required human approvals: ${REQUIRED_APPROVALS}. Hold labels: ${HOLD_LABELS}. Merge only if every gate passes and the rating is within the profile limit, with --match-head-commit ${HEAD_SHA}; otherwise hold and comment why. The checkout is the base branch: read the profile from it and never check out, edit, or push the pull request."
+            prompt="Use the merge-risk skill in decide mode on pull request #${PR_NUMBER} in ${GITHUB_REPOSITORY}. Base branch: ${BASE_REF}; use it for the profile's base-branch rules and limits. Auto-merge: ${auto_merge}. Required human approvals: ${REQUIRED_APPROVALS} (already checked on the head commit by the workflow). Approval gate: when the required human approvals are 0, an empty reviewDecision passes and only CHANGES_REQUESTED (or REVIEW_REQUIRED from branch protection) fails it; otherwise count the human approvals on the head commit from the reviews and never trust reviewDecision alone. Hold labels: ${HOLD_LABELS}. Merge only if every gate passes and the rating is within the profile limit, with --match-head-commit ${HEAD_SHA}; otherwise hold and comment why. The checkout is the base branch: read the profile from it and never check out, edit, or push the pull request."
           fi
           if [ -n "$PROMPT_APPEND" ]; then
             prompt="${prompt}"$'\n\n'"${PROMPT_APPEND}"
@@ -392,6 +324,7 @@ jobs:
         with:
           harness: ${{ steps.settings.outputs.harness }}
           prompt: ${{ steps.settings.outputs.prompt }}
+          instructions: ${{ inputs.instructions }}
           opencode-command: ""
           opencode-plugins: ${{ inputs.opencode-plugins }}
           opencode-model: ${{ inputs.opencode-model || vars.OPENCODE_MODEL }}
@@ -409,12 +342,37 @@ jobs:
           github-token: ${{ steps.app-token.outputs.token }}
 
       - name: Record decision
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PR_NUMBER: ${{ needs.gate.outputs.pr_number }}
-          HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
-        run: |
-          set -euo pipefail
-          body="<!-- merge-decision head=${HEAD_SHA} -->
-          Merge decision recorded for ${HEAD_SHA}; a new commit triggers a new decision."
-          gh api --silent "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f "body=${body}"
+        uses: fbrissi/github-actions/actions/pr-gate@v1
+        with:
+          command: merge-record
+          github-token: ${{ steps.app-token.outputs.token }}
+          pr-number: ${{ needs.gate.outputs.pr_number }}
+          head-sha: ${{ needs.gate.outputs.head_sha }}
+
+  request-review:
+    name: Request Human Review
+    needs: gate
+    if: ${{ inputs.request-human-review && needs.gate.outputs.request_review == 'true' }}
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions: {}
+    timeout-minutes: 5
+    environment:
+      name: ${{ inputs.environment }}
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+          permission-issues: read
+          permission-pull-requests: write
+
+      # Asks the person who started the flow once per pull request; their approval dispatches the decision again.
+      - name: Request review from the requester
+        uses: fbrissi/github-actions/actions/ai-delivery@v1
+        with:
+          command: request-review
+          github-token: ${{ steps.app-token.outputs.token }}
+          pr: ${{ needs.gate.outputs.pr_number }}
+          required-approvals: ${{ needs.gate.outputs.required_approvals }}

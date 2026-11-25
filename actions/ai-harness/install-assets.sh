@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Installs agent skills and Claude Code agents for the resolved harness from local directories or a pinned
-# repository archive.
+# Installs agent skills and agents for the resolved harness from local directories or a pinned repository archive.
 set -euo pipefail
 
 # shellcheck source=checkout-agent.sh disable=SC1091
@@ -11,19 +10,25 @@ skills="${SKILLS:-}"
 agents="${AGENTS:-}"
 
 case "$AI_HARNESS" in
-  opencode) skills_target_dir="$HOME/.config/opencode/skills" ;;
-  claude) skills_target_dir="$HOME/.claude/skills" ;;
+  opencode)
+    skills_target_dir="$HOME/.config/opencode/skills"
+    agents_target_dir="$HOME/.config/opencode/agents"
+    agents_local_dir="${OPENCODE_AGENTS_LOCAL_DIR:-}"
+    agents_path="${OPENCODE_AGENTS_PATH:-plugins/ai-skills/opencode/agent}"
+    agents_path_input='opencode-agents-path'
+    ;;
+  claude)
+    skills_target_dir="$HOME/.claude/skills"
+    agents_target_dir="$HOME/.claude/agents"
+    agents_local_dir="${AGENTS_LOCAL_DIR:-}"
+    agents_path="${AGENTS_PATH:-plugins/ai-skills/agents}"
+    agents_path_input='agents-path'
+    ;;
   *)
     echo "::error::Unsupported AI harness '${AI_HARNESS}'."
     exit 1
     ;;
 esac
-agents_target_dir="$HOME/.claude/agents"
-
-if [ -n "$agents" ] && [ "$AI_HARNESS" != 'claude' ]; then
-  echo "::error::agents are supported only by the claude harness, got '${AI_HARNESS}'."
-  exit 1
-fi
 
 check_relative_path() {
   local name="$1" value="$2"
@@ -92,12 +97,11 @@ if [ -n "$skills" ]; then
 fi
 
 if [ -n "$agents" ]; then
-  if [ -n "${AGENTS_LOCAL_DIR:-}" ]; then
-    source_dir="$AGENTS_LOCAL_DIR"
-    source_label="$AGENTS_LOCAL_DIR"
+  if [ -n "$agents_local_dir" ]; then
+    source_dir="$agents_local_dir"
+    source_label="$agents_local_dir"
   else
-    agents_path="${AGENTS_PATH:-plugins/ai-skills/agents}"
-    check_relative_path agents-path "$agents_path"
+    check_relative_path "$agents_path_input" "$agents_path"
     download_archive
     source_dir="$archive_dir/${agents_path%/}"
     source_label="${SKILLS_REPOSITORY}@${SKILLS_REF}:${agents_path}"
@@ -106,7 +110,12 @@ if [ -n "$agents" ]; then
   mkdir -p "$agents_target_dir"
   for agent in $agents; do
     check_name agent "$agent"
-    if override="$(checkout_agent_override "${GITHUB_WORKSPACE:-$PWD}" "$agent")"; then
+    if [ "$AI_HARNESS" = 'opencode' ]; then
+      override_check=checkout_opencode_agent_override
+    else
+      override_check=checkout_agent_override
+    fi
+    if override="$("$override_check" "${GITHUB_WORKSPACE:-$PWD}" "$agent")"; then
       echo "::error::The checkout defines ${override}, which would override the installed agent '${agent}'."
       exit 1
     fi
