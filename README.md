@@ -15,7 +15,7 @@ deploys, credential rotation) stays in each project.
 | [`pr-feedback-dispatch.yml`](#pr-feedback-dispatch) | Reusable workflow | Turns review and check events into fix and merge-decision dispatches on the default branch. |
 | [`pr-fix.yml`](#pr-fix) | Reusable workflow | One AI pass that fixes review feedback and failing CI on an opted-in pull request. |
 | [`merge-decision.yml`](#merge-decision) | Reusable workflow | Deterministic merge gates, then an AI risk rating that holds or (opt-in) merges. |
-| [`ai-task.yml`](#ai-task) | Reusable workflow | Runs one AI task delivery task (refinement, readiness, orchestration, implementation) with its agent, then chains the next stage or hands off to a human. |
+| [`ai-task.yml`](#ai-task) | Reusable workflow | Runs one AI task delivery task (refinement, readiness, orchestration, implementation) or issue task (intake, resolve) with its agent, then chains the next stage or hands off to a human. |
 | [`ai-resume.yml`](#resume) | Reusable workflow | Resumes a stopped delivery stage when someone with write permission replies `/ai-resume [stage] [instructions]`. |
 | [`release-note.yml`](#release-note) | Reusable workflow | Requires each pull request to add one changelog release. |
 | [`release.yml`](#release) | Reusable workflow | Tags and publishes the changelog release, then optionally deploys it. |
@@ -451,6 +451,7 @@ next stage or hands off to a human (see [How stages chain](#how-stages-chain)).
 | `readiness-review` | `readiness-reviewer` | `milestone` or `issue` | Marks each issue ready or sends it back to refinement. |
 | `orchestrate` | `delivery-orchestrator` | `milestone` | Creates the milestone and task branches and dispatches `implement` for each ready issue whose dependencies are done; opens the milestone PR when every issue is done. Never codes. |
 | `implement` | `task-implementer` | `issue`, `branch`, `base-branch` | Implements the issue, runs the review and QA cycle, and opens a PR into the milestone branch. |
+| `issue-intake`, `issue-resolve` | `issue-resolver` | –, `issue` | See [Issue intake and resolve](#issue-intake-and-resolve). |
 
 Runs never wait for input: blocked tasks leave their questions on the ticket or issue and stop. Inputs left empty
 are not sent, so the repository profile (`docs/ai/delivery.md`) and then the skill defaults apply.
@@ -641,7 +642,8 @@ agent is scoped per task:
 |---|---|
 | `business-refinement`, `technical-refinement`, `readiness-review` | `contents: read`, `issues: write`, `pull-requests: read` |
 | `orchestrate` | `contents: write`, `issues: write`, `pull-requests: write`, `actions: write` |
-| `implement` | `contents: write`, `issues: write`, `pull-requests: write` |
+| `implement`, `issue-resolve` | `contents: write`, `issues: write`, `pull-requests: write` |
+| `issue-intake` | `contents: read`, `issues: write`, `pull-requests: read` |
 | any, with `project` | adds `organization-projects: write` |
 | follow-up job | `actions: write`, `issues: write`, `pull-requests: read` |
 
@@ -667,6 +669,8 @@ job only needs `contents: read`; everything the agent does goes through the App 
 | `orchestrate` | `ai-orchestrate.yml` | `milestone`, `requested_by` |
 | `implement` | `ai-implement.yml` | `issue`, `branch`, `base_branch`, `requested_by` |
 | `pr-fix` | `pr-fix.yml` | `pr_number` |
+| `issue-intake` | `ai-issue-intake.yml` | `requested_by` |
+| `issue-resolve` | `ai-issue-resolve.yml` | `issue`, `requested_by` |
 
 Declare an optional `instructions` input too and pass it to the reusable workflow (`instructions:
 ${{ inputs.instructions }}`): an `/ai-resume` command sends it, and a person can set it when running the caller by
@@ -937,6 +941,111 @@ Keep the [PR Feedback Dispatch](#pr-feedback-dispatch) caller and the Code Revie
 milestone PR waits for its approval, Merge Decision requests a review from the requester and mentions them once;
 their approval dispatches the decision again. When PR Fix escalates, its handoff offers a `pr-fix` resume.
 
+### Issue intake and resolve
+
+Two more tasks run the `issue-resolver` agent of fbrissi/ai-skills, which resolves issues that come from a source
+skill (by default `sentry-issues`). They are `ai-task.yml` tasks rather than a separate workflow, so they get the
+same App token, checkout, dependency setup, harness, requester, `instructions`, and failure handoff:
+
+| Task | Mode | Input | What it does |
+|---|---|---|---|
+| `issue-intake` | `intake` | – | Reads the source (for example unresolved Sentry issues filtered by the profile), deduplicates against existing GitHub issues, creates or updates one GitHub issue per source issue with a severity decision and the `ai:resolve` label, and stops. Never changes code. |
+| `issue-resolve` | `resolve` | `issue` | Fixes one issue: branch (`hotfix/*` into the default branch when critical, else `bugfix/*` into the open `release/*`, per the profile), change, quality cycle, pull request, then stops. |
+
+Neither waits for anything: the pull request it opens goes through the [PR Feedback Loop](#pr-feedback-loop)
+(`pr-fix.yml` and `merge-decision.yml`, triggered by review and check events). A failed or timed-out run hands off on
+the issue (or a tracking issue for the intake) with an `issue-intake` or `issue-resolve` resume. Sentry credentials
+are optional: the `SENTRY_AUTH_TOKEN` secret, plus `SENTRY_ORG` and `SENTRY_BASE_URL` (variables or the
+`sentry-org` and `sentry-base-url` inputs). Create the `ai:resolve` label once:
+`gh label create ai:resolve --force`.
+
+A weekly intake caller:
+
+```yaml
+# .github/workflows/ai-issue-intake.yml
+name: AI Issue Intake
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      requested_by:
+        description: Person to mention when the flow needs a human
+        required: false
+        type: string
+      instructions:
+        description: Extra instructions for this run only
+        required: false
+        type: string
+
+permissions: {}
+
+jobs:
+  intake:
+    uses: fbrissi/github-actions/.github/workflows/ai-task.yml@v1
+    permissions:
+      contents: read
+    with:
+      task: issue-intake
+      requested-by: ${{ inputs.requested_by }}
+      instructions: ${{ inputs.instructions }}
+    secrets:
+      AGENT_APP_PRIVATE_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+```
+
+A resolve caller that runs when an issue gets the `ai:resolve` label (from the intake, whose App token does trigger
+workflows, or from a person with triage access), and on dispatch for resumes:
+
+```yaml
+# .github/workflows/ai-issue-resolve.yml
+name: AI Issue Resolve
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Issue number
+        required: true
+        type: string
+      requested_by:
+        description: Person to mention when the flow needs a human
+        required: false
+        type: string
+      instructions:
+        description: Extra instructions for this run only
+        required: false
+        type: string
+
+permissions: {}
+
+jobs:
+  resolve:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.label.name == 'ai:resolve' }}
+    uses: fbrissi/github-actions/.github/workflows/ai-task.yml@v1
+    permissions:
+      contents: read
+    with:
+      task: issue-resolve
+      issue: ${{ inputs.issue || github.event.issue.number }}
+      requested-by: ${{ inputs.requested_by }}
+      instructions: ${{ inputs.instructions }}
+      node-version: "24"
+      install-command: npm ci
+    secrets:
+      AGENT_APP_PRIVATE_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+```
+
+Keep `timeout-minutes` at `50` or less (the default): the App token expires after one hour.
+
 ### Inputs
 
 Task parameters are the [`ai-task` action inputs](actions/ai-task/README.md#inputs) under the same names: `task`,
@@ -948,11 +1057,12 @@ Task parameters are the [`ai-task` action inputs](actions/ai-task/README.md#inpu
 |---|---|---|
 | `requested-by` | `github.triggering_actor` | Person mentioned when the flow needs a human, stored in the milestone and passed on to every chained stage. Bots fall back to the milestone marker. |
 | `chain` | `true` | Dispatch the next stage after the run. When false the follow-up only hands off. |
-| `stage-workflows` | `""` | Multiline `stage=file` overrides of the stage callers. Defaults: `business-refinement=ai-business-refinement.yml`, `technical-refinement=ai-technical-refinement.yml`, `readiness-review=ai-readiness-review.yml`, `orchestrate=ai-orchestrate.yml`, `implement=ai-implement.yml`, `pr-fix=pr-fix.yml`. |
+| `stage-workflows` | `""` | Multiline `stage=file` overrides of the stage callers. Defaults: `business-refinement=ai-business-refinement.yml`, `technical-refinement=ai-technical-refinement.yml`, `readiness-review=ai-readiness-review.yml`, `orchestrate=ai-orchestrate.yml`, `implement=ai-implement.yml`, `pr-fix=pr-fix.yml`, `issue-intake=ai-issue-intake.yml`, `issue-resolve=ai-issue-resolve.yml`. |
 | `max-auto-dispatches` | `3` | Automatic dispatches of one stage per milestone before the follow-up hands off instead. |
 | `setup-command` | `""` | Runs after `install-command` and before the agent, for example to install browsers and start the test environment. |
 | `harness`, `opencode-model`, `opencode-variant`, `claude-model`, `claude-effort` | see [Variables](#variables) | Harness and model, like every AI workflow. |
 | `jira-base-url` | `JIRA_BASE_URL` | Jira base URL; Jira is used only with the `JIRA_EMAIL` and `JIRA_API_TOKEN` secrets. |
+| `sentry-org`, `sentry-base-url` | `SENTRY_ORG`, `SENTRY_BASE_URL` | Sentry organization and base URL (self-hosted), exported to the agent. |
 | `agent-client-id` | `AGENT_APP_CLIENT_ID` | Client ID of the GitHub App the agent acts as. |
 | `environment` | `""` | Environment of the task and follow-up jobs; empty runs without one. |
 | `runs-on` | `CI_RUNNER`, then `ubuntu-latest` | Runner label. |
@@ -975,6 +1085,7 @@ Task parameters are the [`ai-task` action inputs](actions/ai-task/README.md#inpu
 | `ANTHROPIC_API_KEY` | `claude`: this or the next | Anthropic API key. |
 | `CLAUDE_CODE_OAUTH_TOKEN` | `claude`: this or the previous | Claude Code OAuth token, used when `ANTHROPIC_API_KEY` is empty. |
 | `JIRA_EMAIL`, `JIRA_API_TOKEN` | Jira sources | Jira credentials, masked and exported to the agent as `JIRA_EMAIL` and `JIRA_API_TOKEN`. |
+| `SENTRY_AUTH_TOKEN` | Sentry sources | Sentry auth token, masked and exported to the agent as `SENTRY_AUTH_TOKEN` (with `SENTRY_ORG` and `SENTRY_BASE_URL`). |
 
 With `opencode`, the task's agents are the OpenCode agents of the same names from `fbrissi/ai-skills`
 (`plugins/ai-skills/opencode/agent`). Outputs: `agent`, the agent that ran the task, and `milestone`, the milestone the agent reported it created or
@@ -1129,6 +1240,7 @@ then the variable below, then the default (`claude` for the harness). Agents run
 | `CLAUDE_MODEL`, `CLAUDE_EFFORT` | AI workflows | Claude Code model and effort. |
 | `AGENT_APP_CLIENT_ID` | AI workflows, `ai-resume.yml` | Client ID of the GitHub App the workflow acts as (set it per `environment` to use one App per role). |
 | `JIRA_BASE_URL` | `ai-task.yml` | Jira base URL. |
+| `SENTRY_ORG`, `SENTRY_BASE_URL` | `ai-task.yml` | Sentry organization and base URL for the issue tasks. |
 | `AGENT_APP_ID` | `code-review.yml` | Deprecated fallback for `AGENT_APP_CLIENT_ID`. |
 
 ## Permissions

@@ -139,7 +139,9 @@ describe('resolveAssets', () => {
       'technical-refinement': 'tech-lead',
       'readiness-review': 'readiness-reviewer',
       orchestrate: 'delivery-orchestrator',
-      implement: 'task-implementer'
+      implement: 'task-implementer',
+      'issue-intake': 'issue-resolver',
+      'issue-resolve': 'issue-resolver'
     });
   });
 
@@ -178,6 +180,35 @@ describe('buildPrompt', () => {
     assert.match(prompt, /dispatching the implement workflow/);
     assert.match(prompt, /- profile: docs\/delivery\.md/);
     assert.match(prompt, /repository profile \(`docs\/delivery\.md`\)/);
+  });
+});
+
+describe('issue tasks', () => {
+  it('requires the issue to resolve, nothing to run the intake', () => {
+    assert.deepEqual(validate(inputsFor({ task: 'issue-intake' }), CREDENTIALS), []);
+    assert.deepEqual(validate(inputsFor({ task: 'issue-resolve' }), CREDENTIALS), ["The issue-resolve task requires 'issue'."]);
+  });
+
+  it('runs the issue-resolver in its mode with the quality-cycle workers', () => {
+    const assets = resolveAssets(inputsFor({ task: 'issue-resolve', issue: '9' }));
+    assert.deepEqual(assets.agents, ['issue-resolver', 'developer', 'code-reviewer', 'qa-tester']);
+    assert.ok(assets.skills.includes('sentry-issues'));
+    const prompt = buildPrompt(inputsFor({ task: 'issue-resolve', issue: '#9' }), { hasSentry: true, resultFile: true });
+    assert.match(prompt, /Work in `resolve` mode \(available skills: sentry-issues, /);
+    assert.match(prompt, /override the repository profiles,/);
+    assert.match(prompt, /Resolve only issue #9: .* then stop\. Never wait for CI/);
+    assert.match(prompt, /SENTRY_AUTH_TOKEN/);
+    assert.doesNotMatch(prompt, /AI_TASK_RESULT_FILE|delivery\.md/);
+    const intake = buildPrompt(inputsFor({ task: 'issue-intake' }));
+    assert.match(intake, /Work in `intake` mode/);
+    assert.match(intake, /Intake only: .* Never change code/);
+    assert.doesNotMatch(intake, /SENTRY_AUTH_TOKEN/);
+  });
+
+  it('enables Sentry only with its token', () => {
+    const result = resolveTask(envFor({ task: 'issue-intake' }, { HAS_SENTRY_AUTH_TOKEN: 'true' }));
+    assert.match(result.prompt, /SENTRY_AUTH_TOKEN/);
+    assert.doesNotMatch(resolveTask(envFor({ task: 'issue-intake' })).prompt, /SENTRY_AUTH_TOKEN/);
   });
 });
 

@@ -1,12 +1,13 @@
 name: AI Task
 description: >-
   Run one AI task delivery task (business-refinement, technical-refinement, readiness-review, orchestrate, or
-  implement) with its fbrissi/ai-skills agent, skills, and an explicit non-interactive prompt.
+  implement) or issue task (issue-intake or issue-resolve) with its fbrissi/ai-skills agent, skills, and an explicit
+  non-interactive prompt.
 author: Filipe Bojikian Rissi
 
 inputs:
   task:
-    description: Task to run, `business-refinement`, `technical-refinement`, `readiness-review`, `orchestrate`, or `implement`.
+    description: Task to run, `business-refinement`, `technical-refinement`, `readiness-review`, `orchestrate`, `implement`, `issue-intake`, or `issue-resolve`.
     required: true
   source:
     description: Source ticket (Jira key or URL, GitHub issue, or GitHub milestone). Required by `business-refinement`.
@@ -25,7 +26,7 @@ inputs:
     required: false
     default: ""
   issue:
-    description: GitHub issue number. Required by `implement`; `technical-refinement` and `readiness-review` need it or `milestone`.
+    description: GitHub issue number. Required by `implement` and `issue-resolve`; `technical-refinement` and `readiness-review` need it or `milestone`.
     required: false
     default: ""
   branch:
@@ -151,6 +152,18 @@ inputs:
     description: Jira API token. Exported as `JIRA_API_TOKEN` and masked.
     required: false
     default: ""
+  sentry-auth-token:
+    description: Sentry auth token for the `sentry-issues` skill. Exported as `SENTRY_AUTH_TOKEN` and masked.
+    required: false
+    default: ""
+  sentry-org:
+    description: Sentry organization slug. Exported as `SENTRY_ORG`. Empty leaves it to the profile.
+    required: false
+    default: ""
+  sentry-base-url:
+    description: Sentry base URL for self-hosted Sentry. Exported as `SENTRY_BASE_URL`. Empty uses sentry.io.
+    required: false
+    default: ""
 
 outputs:
   harness:
@@ -181,9 +194,10 @@ runs:
       env:
         JIRA_EMAIL: ${{ inputs.jira-email }}
         JIRA_API_TOKEN: ${{ inputs.jira-api-token }}
+        SENTRY_AUTH_TOKEN: ${{ inputs.sentry-auth-token }}
       run: |
         set -euo pipefail
-        for name in JIRA_EMAIL JIRA_API_TOKEN; do
+        for name in JIRA_EMAIL JIRA_API_TOKEN SENTRY_AUTH_TOKEN; do
           if [ -n "${!name}" ]; then
             echo "::add-mask::${!name}"
           fi
@@ -240,6 +254,7 @@ runs:
         HAS_CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude-code-oauth-token != '' }}
         HAS_JIRA_EMAIL: ${{ inputs.jira-email != '' }}
         HAS_JIRA_API_TOKEN: ${{ inputs.jira-api-token != '' }}
+        HAS_SENTRY_AUTH_TOKEN: ${{ inputs.sentry-auth-token != '' }}
       run: node "$GITHUB_ACTION_PATH/resolve-task.mjs"
 
     # A composite action cannot reference a sibling action by a relative path, so it pins this repository's
@@ -251,6 +266,9 @@ runs:
         JIRA_BASE_URL: ${{ inputs.jira-base-url }}
         JIRA_EMAIL: ${{ inputs.jira-email }}
         JIRA_API_TOKEN: ${{ inputs.jira-api-token }}
+        SENTRY_AUTH_TOKEN: ${{ inputs.sentry-auth-token }}
+        SENTRY_ORG: ${{ inputs.sentry-org }}
+        SENTRY_BASE_URL: ${{ inputs.sentry-base-url }}
         AI_TASK_RESULT_FILE: ${{ steps.prepare.outputs.result-file }}
       with:
         harness: ${{ steps.resolve.outputs.harness }}

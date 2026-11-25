@@ -61,6 +61,13 @@ merging a pull request that adds one tags the release and moves the major tag.
   into `~/.config/opencode/agents`, and the prompt runs with `opencode run --agent <agent>`. The action fails when the
   agent is missing, has `mode: subagent`, or is overridden by the checkout's `.opencode/agent(s)/`, because OpenCode
   would silently fall back to its default agent.
+- Issue tasks on `ai-task.yml` and the `ai-task` action, run by the `issue-resolver` agent of fbrissi/ai-skills:
+  `issue-intake` (reads a source such as Sentry with the `sentry-issues` skill and creates or updates GitHub issues
+  labeled `ai:resolve`) and `issue-resolve` (`issue` required: branch, change, quality cycle, pull request, then
+  stop; the PR Feedback Loop follows up). New optional `SENTRY_AUTH_TOKEN` secret and `sentry-org` and
+  `sentry-base-url` inputs (variables `SENTRY_ORG` and `SENTRY_BASE_URL`); `issue-resolve` gets `contents` and
+  `pull-requests` write. A failed run hands off with an `issue-intake` or `issue-resolve` resume (default callers
+  `ai-issue-intake.yml` and `ai-issue-resolve.yml`).
 - `instructions` input for per-run instructions, appended to the prompt as `Additional instructions for this run:`
   on `ai-task.yml` and the `ai-task` action (`context` stays as a deprecated alias), `pr-fix.yml` and
   `merge-decision.yml` (`prompt-append` stays as a deprecated alias), `code-review.yml` (both harnesses, including

@@ -13,6 +13,8 @@ Claude Code, the agent as the main agent). With `opencode` the agents are the Op
 | `readiness-review` | `readiness-reviewer` | `readiness-review` | `milestone` or `issue` |
 | `orchestrate` | `delivery-orchestrator` | `delivery-orchestration`, `pr-create` | `milestone` |
 | `implement` | `task-implementer` (+ `developer`, `code-reviewer`, `qa-tester`) | `dev`, `quality-cycle`, `pr-create`, `review-changes`, `qa-e2e`, `bdd-scenarios`, `ticket-plan` | `issue`, `branch` |
+| `issue-intake` | `issue-resolver` (`intake` mode) | `sentry-issues`, `ticket-create` | – |
+| `issue-resolve` | `issue-resolver` (`resolve` mode, + `developer`, `code-reviewer`, `qa-tester`) | `sentry-issues`, `observability-triage`, `dev`, `quality-cycle`, `pr-create`, `review-changes`, `qa-e2e`, `bdd-scenarios`, `ticket-plan` | `issue` |
 
 `skills` and `agents` add to these defaults. Runs never wait for input: when a task is blocked, the agent writes its
 questions on the ticket or issue, sets the blocked status, and stops.
@@ -25,7 +27,7 @@ skill defaults apply. Set an input only to override the profile.
 The action does not check out, authenticate, or install anything for the project. Before it, the job must:
 
 - Create a GitHub App token and pass it as `github-token`. The agent uses it for `gh` and `git push`. Every task
-  needs `issues` write; `orchestrate` and `implement` also need `contents` and `pull-requests` write (the others only
+  needs `issues` write; `orchestrate`, `implement`, and `issue-resolve` also need `contents` and `pull-requests` write (the others only
   read); `orchestrate` needs `actions` write (it dispatches the implement workflow); and any task needs
   `organization-projects` write when `project` is set.
 - Check out the repository with full history (`fetch-depth: 0`) and push credentials (the App token, with
@@ -61,7 +63,7 @@ Task parameters (see the [task table](#ai-task) for which are required):
 
 | Input | Empty means | Description |
 |---|---|---|
-| `task` | – (required) | `business-refinement`, `technical-refinement`, `readiness-review`, `orchestrate`, or `implement`. |
+| `task` | – (required) | `business-refinement`, `technical-refinement`, `readiness-review`, `orchestrate`, `implement`, `issue-intake`, or `issue-resolve`. |
 | `source` | – | Source ticket: Jira key or URL, GitHub issue, or GitHub milestone. |
 | `source-tracker` | profile, then `github` | `github` or `jira`. |
 | `source-language` | profile, then `auto` | Language of comments on the source ticket; `auto` uses the source's language. |
@@ -103,6 +105,8 @@ Run settings and credentials:
 | `jira-base-url` | `""` | Jira base URL, exported as `JIRA_BASE_URL`. |
 | `jira-email` | `""` | Exported as `JIRA_EMAIL`; masked. |
 | `jira-api-token` | `""` | Exported as `JIRA_API_TOKEN`; masked. |
+| `sentry-auth-token` | `""` | Exported as `SENTRY_AUTH_TOKEN`; masked. The prompt mentions Sentry only when it is set. |
+| `sentry-org`, `sentry-base-url` | `""` | Exported as `SENTRY_ORG` and `SENTRY_BASE_URL`. |
 
 Jira is enabled only when the URL, e-mail, and token are all set; an e-mail or token without the others fails, and
 so does `business-refinement` with `source-tracker: jira` without them. The credentials are masked, only exported to

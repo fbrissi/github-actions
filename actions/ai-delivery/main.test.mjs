@@ -143,6 +143,17 @@ describe('followUp', () => {
     assert.match(posts(api, /issues\/11\/comments$/)[0].body.body, /was cancelled or timed out/);
   });
 
+  it('only hands off a failed issue-resolve run, without touching its milestone', async () => {
+    const api = milestoneRepo({ issues: [{ number: 9, milestone: { title: 'JIRA:DEV-1' }, labels: [] }] });
+    assert.match((await followUp(ctxFor({ task: 'issue-resolve', issue: '9', 'requested-by': 'alice' }), api, silent)).join('\n'), /Nothing to do/);
+    await followUp(ctxFor({ task: 'issue-resolve', result: 'failure', issue: '9', 'requested-by': 'alice' }), api, silent);
+    assert.equal(api.calls.filter((call) => call.method === 'PATCH').length, 0);
+    assert.equal(posts(api, /dispatches$/).length, 0);
+    const [comment] = posts(api, /issues\/9\/comments$/);
+    assert.match(comment.body.body, /stopped at \*\*issue-resolve\*\*/);
+    assert.match(comment.body.body, /gh workflow run ai-tech\.yml -f issue=9 -f requested_by=alice/);
+  });
+
   it('does not dispatch with chaining off', async () => {
     const api = milestoneRepo({ issues: [{ number: 4, labels: [label('status:ready')] }] });
     const summary = await followUp(ctxFor({ task: 'readiness-review', milestone: 'JIRA:DEV-1', chain: 'false' }), api, silent);

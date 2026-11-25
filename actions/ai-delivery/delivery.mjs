@@ -1,6 +1,6 @@
 // Pure helpers of the AI delivery flow: stages, markers, handoff comments, and the chaining decision.
 
-export const STAGES = ['business-refinement', 'technical-refinement', 'readiness-review', 'orchestrate', 'implement', 'pr-fix'];
+export const STAGES = ['business-refinement', 'technical-refinement', 'readiness-review', 'orchestrate', 'implement', 'pr-fix', 'issue-intake', 'issue-resolve'];
 
 export const DEFAULT_STAGE_WORKFLOWS = {
   'business-refinement': 'ai-business-refinement.yml',
@@ -8,7 +8,9 @@ export const DEFAULT_STAGE_WORKFLOWS = {
   'readiness-review': 'ai-readiness-review.yml',
   orchestrate: 'ai-orchestrate.yml',
   implement: 'ai-implement.yml',
-  'pr-fix': 'pr-fix.yml'
+  'pr-fix': 'pr-fix.yml',
+  'issue-intake': 'ai-issue-intake.yml',
+  'issue-resolve': 'ai-issue-resolve.yml'
 };
 
 // What the flow does on its own once the stage is resumed.
@@ -18,7 +20,9 @@ export const NEXT_STEP = {
   'readiness-review': 'orchestrate',
   orchestrate: 'implement',
   implement: 'pull request review and merge decision',
-  'pr-fix': 'merge decision'
+  'pr-fix': 'merge decision',
+  'issue-intake': 'issue-resolve for each issue it labels',
+  'issue-resolve': 'pull request review and merge decision'
 };
 
 // workflow_dispatch inputs each stage caller declares. Only these are sent.
@@ -29,7 +33,9 @@ export const STAGE_INPUTS = {
   'readiness-review': ['milestone', 'issue', 'requested_by', 'instructions'],
   orchestrate: ['milestone', 'requested_by', 'instructions'],
   implement: ['issue', 'branch', 'base_branch', 'requested_by', 'instructions'],
-  'pr-fix': ['pr_number', 'instructions']
+  'pr-fix': ['pr_number', 'instructions'],
+  'issue-intake': ['requested_by', 'instructions'],
+  'issue-resolve': ['issue', 'requested_by', 'instructions']
 };
 
 export const STATES = [

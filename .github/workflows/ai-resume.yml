@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       stage-workflows:
-        description: Multiline `stage=workflow file` overrides of the stage callers, used when a handoff does not name its workflow (defaults `ai-business-refinement.yml`, `ai-technical-refinement.yml`, `ai-readiness-review.yml`, `ai-orchestrate.yml`, `ai-implement.yml`, `pr-fix.yml`).
+        description: Multiline `stage=workflow file` overrides of the stage callers, used when a handoff does not name its workflow (defaults `ai-business-refinement.yml`, `ai-technical-refinement.yml`, `ai-readiness-review.yml`, `ai-orchestrate.yml`, `ai-implement.yml`, `pr-fix.yml`, `ai-issue-intake.yml`, `ai-issue-resolve.yml`).
         required: false
         type: string
         default: ""

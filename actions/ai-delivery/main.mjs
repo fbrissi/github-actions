@@ -35,7 +35,9 @@ import {
 } from './delivery.mjs';
 import { createClient } from './github.mjs';
 
-const TASKS = ['business-refinement', 'technical-refinement', 'readiness-review', 'orchestrate', 'implement'];
+const TASKS = ['business-refinement', 'technical-refinement', 'readiness-review', 'orchestrate', 'implement', 'issue-intake', 'issue-resolve'];
+// Issue tasks are not part of a milestone's delivery: their follow-up only hands off a failed run.
+const ISSUE_TASKS = ['issue-intake', 'issue-resolve'];
 const NAMES = [
   'command', 'task', 'result', 'milestone', 'result-milestone', 'issue', 'pr', 'branch', 'base-branch', 'source',
   'milestone-template', 'requested-by', 'blocker', 'marker', 'status-labels', 'stage-workflows', 'max-auto-dispatches',
@@ -190,7 +192,7 @@ export async function followUp(ctx, api, log) {
 
   const given = humanLogin(ctx['requested-by']);
   const requestedBy = given || parseRequestedBy(milestone?.description);
-  if (milestone && given) {
+  if (milestone && given && !ISSUE_TASKS.includes(ctx.task)) {
     await setMilestoneDescription(api, repo, milestone, upsertRequestedBy(milestone.description, given));
   }
 
@@ -369,7 +371,9 @@ const REQUIRED = {
   'readiness-review': [['milestone', 'issue']],
   orchestrate: [['milestone']],
   implement: [['issue'], ['branch']],
-  'pr-fix': [['pr']]
+  'pr-fix': [['pr']],
+  'issue-intake': [],
+  'issue-resolve': [['issue']]
 };
 
 // Decides from the issue_comment event alone whether it is an `/ai-resume` command written by a person.

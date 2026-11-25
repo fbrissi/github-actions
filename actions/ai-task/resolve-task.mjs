@@ -36,6 +36,22 @@ export const TASKS = {
     agents: IMPLEMENT_WORKERS,
     skills: ['dev', 'quality-cycle', 'pr-create', 'review-changes', 'qa-e2e', 'bdd-scenarios', 'ticket-plan'],
     requires: [['issue'], ['branch']]
+  },
+  // The issue-resolver agent: `intake` turns a source (such as Sentry) into GitHub issues; `resolve` fixes one issue
+  // up to its pull request and stops, leaving the rest to the PR follow-up workflows.
+  'issue-intake': {
+    agent: 'issue-resolver',
+    mode: 'intake',
+    agents: [],
+    skills: ['sentry-issues', 'ticket-create'],
+    requires: []
+  },
+  'issue-resolve': {
+    agent: 'issue-resolver',
+    mode: 'resolve',
+    agents: IMPLEMENT_WORKERS,
+    skills: ['sentry-issues', 'observability-triage', 'dev', 'quality-cycle', 'pr-create', 'review-changes', 'qa-e2e', 'bdd-scenarios', 'ticket-plan'],
+    requires: [['issue']]
   }
 };
 
@@ -229,10 +245,10 @@ function parameterLines(inputs) {
   return output;
 }
 
-export function buildPrompt(inputs, { repository = '', runUrl = '', hasJira = false, resultFile = false } = {}) {
+export function buildPrompt(inputs, { repository = '', runUrl = '', hasJira = false, hasSentry = false, resultFile = false } = {}) {
   const { agent, skills } = resolveAssets(inputs);
-  const primarySkill = TASKS[inputs.task].skills[0];
-  const profile = inputs.profile || 'docs/ai/delivery.md';
+  const { mode, skills: [primarySkill] } = TASKS[inputs.task];
+  const profile = inputs.profile || (mode ? '' : 'docs/ai/delivery.md');
   const where = repository ? ` in the GitHub repository ${repository}` : '';
   const run = runUrl ? ` (run: ${runUrl})` : '';
 
@@ -243,23 +259,32 @@ export function buildPrompt(inputs, { repository = '', runUrl = '', hasJira = fa
   if (hasJira) {
     rules.push('- Jira REST credentials are in the environment variables JIRA_BASE_URL, JIRA_EMAIL, and JIRA_API_TOKEN. Read them from the environment in your commands; never print or log their values.');
   }
+  if (hasSentry) {
+    rules.push('- Sentry credentials are in the environment variable SENTRY_AUTH_TOKEN, with SENTRY_ORG and SENTRY_BASE_URL when set. Read them from the environment in your commands; never print or log their values.');
+  }
   rules.push(inputs['requested-by']
     ? `- @${inputs['requested-by']} started this flow: mention them when you ask a question or stop for a human, and store \`<!-- ai-delivery requested-by=${inputs['requested-by']} -->\` in the description of a milestone you create. Never mention bots.`
     : '- When you ask a question or stop for a human, mention the login in the `<!-- ai-delivery requested-by=<login> -->` marker of the milestone description, if there is one. Never mention bots.');
   if (inputs.task === 'orchestrate') {
     rules.push('- This run is in GitHub Actions: start each ready issue by dispatching the implement workflow, never by implementing it here.');
   }
+  if (inputs.task === 'issue-intake') {
+    rules.push('- Intake only: read the source, deduplicate against the existing GitHub issues, create or update the GitHub issues, and stop. Never change code, push branches, or open pull requests.');
+  }
+  if (inputs.task === 'issue-resolve') {
+    rules.push(`- Resolve only issue #${inputs.issue.replace(/^#/, '')}: branch, change, quality cycle, and pull request, then stop. Never wait for CI, reviews, approvals, or the merge: the pull request follow-up workflows take it from there.`);
+  }
   if (inputs.task === 'implement') {
     rules.push("- Browser QA: when the profile's test environment is reachable (the caller may have started it before this run), run the BDD scenarios in a real browser. When no test environment is reachable, run QA in tests-only mode: rely on the automated tests that run as pull request checks (do not re-run them needlessly), report \"browser QA skipped: no CI environment\", and never escalate or block for that reason.");
   }
-  if (resultFile && !inputs.milestone) {
+  if (resultFile && !inputs.milestone && !mode) {
     rules.push('- Before you stop, write one line `milestone=<title>` with the GitHub milestone you created or worked on to the file named by the AI_TASK_RESULT_FILE environment variable, so the flow can continue from it.');
   }
 
   const sections = [
     `You are the ${agent} agent running the \`${inputs.task}\` task of the AI task delivery flow${where}, non-interactively in GitHub Actions${run}.`,
     '',
-    `Follow the \`${primarySkill}\` skill (available skills: ${skills.join(', ')}). The parameters below were set explicitly by the caller and override the repository profile (\`${profile}\`), which overrides the skill defaults. Any parameter not listed is unset: take it from the profile, then from the skill defaults.`,
+    `${mode ? `Work in \`${mode}\` mode` : `Follow the \`${primarySkill}\` skill`} (available skills: ${skills.join(', ')}). The parameters below were set explicitly by the caller and override the repository ${profile ? `profile (\`${profile}\`)` : 'profiles'}, which override the skill defaults. Any parameter not listed is unset: take it from the profile, then from the skill defaults.`,
     '',
     'Parameters:',
     ...parameterLines(inputs),
@@ -284,7 +309,8 @@ export function resolveTask(env = process.env) {
     'github-token': env.HAS_GITHUB_TOKEN === 'true',
     'anthropic-api-key': env.HAS_ANTHROPIC_API_KEY === 'true',
     'openai-api-key': env.HAS_OPENAI_API_KEY === 'true',
-    'claude-code-oauth-token': env.HAS_CLAUDE_CODE_OAUTH_TOKEN === 'true'
+    'claude-code-oauth-token': env.HAS_CLAUDE_CODE_OAUTH_TOKEN === 'true',
+    'sentry-auth-token': env.HAS_SENTRY_AUTH_TOKEN === 'true'
   };
   const errors = validate(inputs, credentials);
   if (errors.length > 0) return { errors };
@@ -302,6 +328,7 @@ export function resolveTask(env = process.env) {
       repository: env.GITHUB_REPOSITORY ?? '',
       runUrl,
       hasJira,
+      hasSentry: credentials['sentry-auth-token'],
       resultFile: Boolean(env.AI_TASK_RESULT_FILE)
     })
   };
