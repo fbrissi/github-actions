@@ -133,7 +133,7 @@ on:
         type: string
         default: ""
       harness:
-        description: AI harness, `opencode` or `claude`. Empty uses the `AI_HARNESS` variable, then `opencode`.
+        description: AI harness, `opencode` or `claude`. Empty uses the `AI_HARNESS` variable, then `claude`.
         required: false
         type: string
         default: ""
@@ -375,7 +375,7 @@ jobs:
           requested-by: ${{ inputs.requested-by || github.triggering_actor }}
           skills: ${{ inputs.skills }}
           agents: ${{ inputs.agents }}
-          harness: ${{ inputs.harness || vars.AI_HARNESS || 'opencode' }}
+          harness: ${{ inputs.harness || vars.AI_HARNESS || 'claude' }}
           opencode-model: ${{ inputs.opencode-model || vars.OPENCODE_MODEL }}
           opencode-variant: ${{ inputs.opencode-variant || vars.OPENCODE_VARIANT }}
           claude-model: ${{ inputs.claude-model || vars.CLAUDE_MODEL }}

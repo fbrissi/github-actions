@@ -120,7 +120,7 @@ already cancels an older review of the same pull request.
 | `pr-number` | – (required) | Pull request to review. |
 | `agent-client-id` | `AGENT_APP_CLIENT_ID`, then `agent-app-id` | Client ID of the GitHub App that publishes the review. |
 | `agent-app-id` | `AGENT_APP_ID` | Deprecated: App ID, used only when no client ID is set. |
-| `harness` | `AI_HARNESS`, then `opencode` | `opencode` or `claude`. |
+| `harness` | `AI_HARNESS`, then `claude` | `opencode` or `claude`. |
 | `opencode-command` | `pr/review` | OpenCode command that reviews the PR (Kompass). Empty uses the review-changes skill prompt. |
 | `opencode-plugins` | `@kompassdev/opencode` | OpenCode plugins. Set `""` when `opencode-command` is empty. |
 | `opencode-model` | `OPENCODE_MODEL` | Required by the `opencode` harness. |
@@ -462,8 +462,8 @@ Do these once per repository, in this order:
 3. **Secrets** (repository, organization, or the `environment`): `AGENT_APP_PRIVATE_KEY`, the harness credential
    (`OPEN_AI_TOKEN` for OpenCode with an `openai/` model; `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` for Claude
    Code), and `JIRA_EMAIL` plus `JIRA_API_TOKEN` for Jira sources.
-4. **Variables:** `AGENT_APP_CLIENT_ID`, the harness (`AI_HARNESS`, default `opencode`, with `OPENCODE_MODEL` and
-   optional `OPENCODE_VARIANT`, or `claude` with optional `CLAUDE_MODEL` and `CLAUDE_EFFORT`), and optional
+4. **Variables:** `AGENT_APP_CLIENT_ID`, the harness (`AI_HARNESS`: `claude` by default, with optional `CLAUDE_MODEL` and `CLAUDE_EFFORT`, or `opencode` with `OPENCODE_MODEL` and
+   optional `OPENCODE_VARIANT`), and optional
    `CI_RUNNER` and `JIRA_BASE_URL`. Every AI workflow reads the same ones; see [Variables](#variables).
 5. **Labels** the flow sets but never creates:
 
@@ -1064,7 +1064,7 @@ organization, or, for the review job, its `environment`) are used whenever the m
 
 The AI workflows (`code-review.yml`, `pr-fix.yml`, `merge-decision.yml`, and `ai-task.yml`) all take the inputs
 `harness`, `opencode-model`, `opencode-variant`, `claude-model`, and `claude-effort`, and resolve each one as the input,
-then the variable below, then the default (`opencode` for the harness). Agents run with both harnesses. The
+then the variable below, then the default (`claude` for the harness). Agents run with both harnesses. The
 `ai-harness` and `ai-task` actions take the same values as inputs only. Credentials: `opencode` needs
 `OPENCODE_MODEL` (and `OPEN_AI_TOKEN` for an `openai/` model); `claude` needs `ANTHROPIC_API_KEY` or
 `CLAUDE_CODE_OAUTH_TOKEN`.
@@ -1072,7 +1072,7 @@ then the variable below, then the default (`opencode` for the harness). Agents r
 | Variable | Used by | Purpose |
 |---|---|---|
 | `CI_RUNNER` | all | Runner label; defaults to `ubuntu-latest`. |
-| `AI_HARNESS` | AI workflows | `opencode` (default) or `claude`. |
+| `AI_HARNESS` | AI workflows | `claude` (default) or `opencode`. |
 | `OPENCODE_MODEL` | AI workflows | OpenCode model in `provider/model` form; required with `opencode`. |
 | `OPENCODE_VARIANT` | AI workflows | OpenCode model variant (provider-specific reasoning effort). |
 | `CLAUDE_MODEL`, `CLAUDE_EFFORT` | AI workflows | Claude Code model and effort. |

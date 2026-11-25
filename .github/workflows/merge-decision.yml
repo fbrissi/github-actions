@@ -38,7 +38,7 @@ on:
         type: string
         default: ""
       harness:
-        description: AI harness, `opencode` or `claude`. Empty uses the `AI_HARNESS` variable, then `opencode`.
+        description: AI harness, `opencode` or `claude`. Empty uses the `AI_HARNESS` variable, then `claude`.
         required: false
         type: string
         default: ""
@@ -210,7 +210,7 @@ jobs:
           HAS_APP_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY != '' }}
         run: |
           set -euo pipefail
-          harness="${HARNESS:-opencode}"
+          harness="${HARNESS:-claude}"
           case "$harness" in
             opencode | claude) ;;
             *)

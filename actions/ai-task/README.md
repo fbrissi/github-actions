@@ -88,7 +88,7 @@ Run settings and credentials:
 |---|---|---|
 | `skills` | `""` | Extra whitespace-separated skills. |
 | `agents` | `""` | Extra whitespace-separated agents. |
-| `harness` | `opencode` | `opencode` or `claude`; pass the caller's `AI_HARNESS` variable. Empty uses `opencode`. |
+| `harness` | `claude` | `opencode` or `claude`; pass the caller's `AI_HARNESS` variable. Empty uses `claude`. |
 | `opencode-model` | `""` | OpenCode model in `provider/model` form. Required by `opencode`. |
 | `opencode-variant` | `""` | OpenCode model variant. |
 | `claude-model` | `""` | Claude Code model. |

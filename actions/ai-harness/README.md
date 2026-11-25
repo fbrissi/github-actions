@@ -5,8 +5,8 @@ non-interactive prompt in the current checkout.
 
 | Harness | What is installed |
 |---|---|
-| `opencode` (default) | OpenCode 1.19.5 (linux-x64, SHA-256 verified) plus `opencode-plugins` (default `@kompassdev/opencode`). The OpenCode session is exported to the log after the run. |
-| `claude` | Claude Code 2.1.319 from npm (Node.js 24 is installed only when `npm` is missing). Runs with `--strict-mcp-config`, so project MCP servers from `.mcp.json` never start. |
+| `opencode` | OpenCode 1.19.5 (linux-x64, SHA-256 verified) plus `opencode-plugins` (default `@kompassdev/opencode`). The OpenCode session is exported to the log after the run. |
+| `claude` (default) | Claude Code 2.1.319 from npm (Node.js 24 is installed only when `npm` is missing). Runs with `--strict-mcp-config`, so project MCP servers from `.mcp.json` never start. |
 
 Both harnesses run with permission prompts disabled, so only run them on trusted runners and give them the
 narrowest tokens that work.
@@ -36,7 +36,7 @@ narrowest tokens that work.
 
 | Input | Default | Description |
 |---|---|---|
-| `harness` | `opencode` | `opencode` or `claude`. Empty falls back to `opencode`. |
+| `harness` | `claude` | `opencode` or `claude`. Empty falls back to `claude`. |
 | `prompt` | – (required) | Prompt sent to the harness. With `opencode-command`, it is passed as the command arguments. |
 | `opencode-command` | `""` | OpenCode command, for example `pr/review`. Ignored by Claude Code. |
 | `opencode-model` | `""` | OpenCode model in `provider/model` form. |

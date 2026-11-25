@@ -76,7 +76,7 @@ export const PARAMETERS = [
 ];
 
 export const HARNESSES = ['opencode', 'claude'];
-export const DEFAULT_HARNESS = 'opencode';
+export const DEFAULT_HARNESS = 'claude';
 
 const MULTILINE = new Set(['status-labels', 'project-status-options', 'research-sources']);
 const NAME = /^[A-Za-z0-9_.-]+$/;

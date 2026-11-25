@@ -93,9 +93,9 @@ inputs:
     required: false
     default: ""
   harness:
-    description: AI harness, `opencode` or `claude`, usually from the caller's `AI_HARNESS` variable. Empty uses `opencode`.
+    description: AI harness, `opencode` or `claude`, usually from the caller's `AI_HARNESS` variable. Empty uses `claude`.
     required: false
-    default: opencode
+    default: claude
   opencode-model:
     description: OpenCode model in `provider/model` form. Required by the `opencode` harness.
     required: false

@@ -6,9 +6,9 @@ author: Filipe Bojikian Rissi
 
 inputs:
   harness:
-    description: Harness to run, `opencode` or `claude`. Empty falls back to `opencode`.
+    description: Harness to run, `opencode` or `claude`. Empty falls back to `claude`.
     required: false
-    default: opencode
+    default: claude
   prompt:
     description: Prompt sent to the harness. With `opencode-command`, it is passed as the command arguments.
     required: true
@@ -129,7 +129,7 @@ runs:
         OUTPUT_FILE: ${{ inputs.output-file }}
       run: |
         set -euo pipefail
-        harness="${HARNESS:-opencode}"
+        harness="${HARNESS:-claude}"
         case "$harness" in
           opencode | claude) ;;
           *)

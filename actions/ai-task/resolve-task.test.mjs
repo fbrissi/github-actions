@@ -99,8 +99,8 @@ describe('validate', () => {
     assert.deepEqual(validate(inputsFor({ task: 'orchestrate', milestone: 'M1' }), { 'github-token': true, 'claude-code-oauth-token': true }), []);
   });
 
-  it('defaults to the opencode harness and rejects unknown harnesses', () => {
-    assert.equal(readInputs({ [envName('task')]: 'orchestrate' }).harness, 'opencode');
+  it('defaults to the claude harness and rejects unknown harnesses', () => {
+    assert.equal(readInputs({ [envName('task')]: 'orchestrate' }).harness, 'claude');
     assert.deepEqual(validate(inputsFor({ task: 'orchestrate', milestone: 'M1', harness: 'codex' }), CREDENTIALS), [
       "Unsupported harness 'codex'. Use 'opencode' or 'claude'."
     ]);
