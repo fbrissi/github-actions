@@ -61,6 +61,10 @@ merging a pull request that adds one tags the release and moves the major tag.
   into `~/.config/opencode/agents`, and the prompt runs with `opencode run --agent <agent>`. The action fails when the
   agent is missing, has `mode: subagent`, or is overridden by the checkout's `.opencode/agent(s)/`, because OpenCode
   would silently fall back to its default agent.
+- `branch-sync.yml` reusable workflow: fast-forwards `target` (default `develop`) to `source` (default `main`), with an
+  optional GitHub App so the update triggers the target's workflows. It never force-pushes: when the target has
+  commits the source does not, it opens or comments on one issue that mentions the pusher and `mention`, and closes it
+  after the next successful sync.
 - Issue tasks on `ai-task.yml` and the `ai-task` action, run by the `issue-resolver` agent of fbrissi/ai-skills:
   `issue-intake` (reads a source such as Sentry with the `sentry-issues` skill and creates or updates GitHub issues
   labeled `ai:resolve`) and `issue-resolve` (`issue` required: branch, change, quality cycle, pull request, then

@@ -17,6 +17,7 @@ deploys, credential rotation) stays in each project.
 | [`merge-decision.yml`](#merge-decision) | Reusable workflow | Deterministic merge gates, then an AI risk rating that holds or (opt-in) merges. |
 | [`ai-task.yml`](#ai-task) | Reusable workflow | Runs one AI task delivery task (refinement, readiness, orchestration, implementation) or issue task (intake, resolve) with its agent, then chains the next stage or hands off to a human. |
 | [`ai-resume.yml`](#resume) | Reusable workflow | Resumes a stopped delivery stage when someone with write permission replies `/ai-resume [stage] [instructions]`. |
+| [`branch-sync.yml`](#branch-sync) | Reusable workflow | Fast-forwards a branch (`develop`) to another (`main`) on every push; opens one issue when it cannot. |
 | [`release-note.yml`](#release-note) | Reusable workflow | Requires each pull request to add one changelog release. |
 | [`release.yml`](#release) | Reusable workflow | Tags and publishes the changelog release, then optionally deploys it. |
 | [`terraform-permissions.yml`](#terraform-permissions) | Reusable workflow | Fails before merge when the Cloudflare Terraform token lacks a permission. |
@@ -1091,6 +1092,53 @@ With `opencode`, the task's agents are the OpenCode agents of the same names fro
 (`plugins/ai-skills/opencode/agent`). Outputs: `agent`, the agent that ran the task, and `milestone`, the milestone the agent reported it created or
 worked on.
 
+## Branch Sync
+
+`.github/workflows/branch-sync.yml` keeps a branch as a fast-forward copy of another, for example `develop` as a
+backup of `main` that keeps driving sandbox deploys. On each run it fast-forwards `target` to the head of `source`
+(creating `target` when it does not exist) and never force-pushes. When `target` has commits that `source` does not,
+it opens one issue (`Branch sync: <target> cannot fast-forward to <source>`, found again by a
+`<!-- branch-sync source=... target=... -->` marker) that mentions the person who pushed and `mention`, or comments on
+it when it is already open; the next successful sync closes it.
+
+```yaml
+# .github/workflows/branch-sync.yml
+name: Branch Sync
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  sync:
+    uses: fbrissi/github-actions/.github/workflows/branch-sync.yml@v1
+    permissions:
+      contents: write
+      issues: write
+    with:
+      source: main
+      target: develop
+    secrets:
+      AGENT_APP_PRIVATE_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+```
+
+With a GitHub App (`AGENT_APP_CLIENT_ID` and `AGENT_APP_PRIVATE_KEY`, with `Contents` and `Issues` read and write and
+allowed to push to `target`), the update triggers the workflows of `target`, such as its deploy; without one it
+falls back to `GITHUB_TOKEN`, whose pushes trigger no workflows.
+
+| Input | Default | Description |
+|---|---|---|
+| `source` | `main` | Branch the target follows. |
+| `target` | `develop` | Branch fast-forwarded to `source`. |
+| `mention` | `""` | Logins also mentioned on divergence (bots are never mentioned). |
+| `agent-client-id` | `AGENT_APP_CLIENT_ID` | Client ID of the App that updates the target. |
+| `runs-on` | `CI_RUNNER`, then `ubuntu-latest` | Runner label. |
+
+Secret: `AGENT_APP_PRIVATE_KEY` (optional). Output: `result` (`updated`, `created`, `up-to-date`, or `diverged`).
+Runs are serialized per target branch.
+
 ## Release Note
 
 `.github/workflows/release-note.yml` runs on `pull_request` and fails unless the pull request adds exactly one
@@ -1256,6 +1304,7 @@ and grant per job:
 | `merge-decision.yml` | `actions: read`, `checks: read`, `contents: read`, `issues: read`, `pull-requests: read`, `statuses: read` |
 | `ai-task.yml` | `contents: read` |
 | `ai-resume.yml` | none (`{}`); it acts through the App token |
+| `branch-sync.yml` | `contents: write`, `issues: write` |
 | `release-note.yml` | `contents: read` |
 | `release.yml` | `actions: write`, `contents: write` |
 | `terraform-permissions.yml` | `contents: read` |
