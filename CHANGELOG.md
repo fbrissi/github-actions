@@ -79,6 +79,16 @@ merging a pull request that adds one tags the release and moves the major tag.
   on `ai-task.yml` and the `ai-task` action (`context` stays as a deprecated alias), `pr-fix.yml` and
   `merge-decision.yml` (`prompt-append` stays as a deprecated alias), `code-review.yml` (both harnesses, including
   the OpenCode command form), and the `ai-harness` action. Chained dispatches never pass it on.
+- `pr-feedback-dispatch.yml` reusable workflow: on `pull_request_review` and `check_run` events, dispatches the fix
+  workflow for `changes_requested` or commented reviews (except from `ignore-authors`) and the merge decision workflow
+  for approvals or a successful `merge-check-name` check run, always on the default branch and never for forks.
+- `pr-fix.yml` reusable workflow: one AI pass of the `pr-fix` skill on an opted-in (`opt-in-label` or
+  `branch-prefixes`) same-repository pull request, pushed with a GitHub App token so CI runs again. Deterministic
+  gates skip drafts, forks, and repeated passes on the same head without new feedback; after `max-rounds` it adds
+  `escalation-label` and stops. Reports a `PR Fix` check run.
+- `merge-decision.yml` reusable workflow: deterministic merge gates (state, `branch-prefixes`, hold labels, conflicts, checks, human
+  approvals on the head commit, unresolved threads, one decision per head commit), then the `merge-risk` skill in
+  decide mode on the base branch checkout. Holds unless `auto-merge` is on; merges with the App token.
 
 ### Changed
 
@@ -102,21 +112,6 @@ merging a pull request that adds one tags the release and moves the major tag.
   field values only need `issues: write`.
 - Documentation: Mermaid diagrams of how the workflows and actions fit together, the PR feedback loop, merge
   decision gates, stage chaining and the follow-up job, resume, issue intake and resolve, and branch sync.
-
-## v1.7.0
-
-### Added
-
-- `pr-feedback-dispatch.yml` reusable workflow: on `pull_request_review` and `check_run` events, dispatches the fix
-  workflow for `changes_requested` or commented reviews (except from `ignore-authors`) and the merge decision workflow
-  for approvals or a successful `merge-check-name` check run, always on the default branch and never for forks.
-- `pr-fix.yml` reusable workflow: one AI pass of the `pr-fix` skill on an opted-in (`opt-in-label` or
-  `branch-prefixes`) same-repository pull request, pushed with a GitHub App token so CI runs again. Deterministic
-  gates skip drafts, forks, and repeated passes on the same head without new feedback; after `max-rounds` it adds
-  `escalation-label` and stops. Reports a `PR Fix` check run.
-- `merge-decision.yml` reusable workflow: deterministic merge gates (state, `branch-prefixes`, hold labels, conflicts, checks, human
-  approvals on the head commit, unresolved threads, one decision per head commit), then the `merge-risk` skill in
-  decide mode on the base branch checkout. Holds unless `auto-merge` is on; merges with the App token.
 
 ## v1.6.1
 
