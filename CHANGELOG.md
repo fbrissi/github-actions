@@ -100,6 +100,8 @@ merging a pull request that adds one tags the release and moves the major tag.
 - README: setup from zero (App permissions, secrets, variables, labels, project status options, release order), how
   stages chain, resume, QA in CI, stage callers with their dispatch inputs, and PR follow-up for task branches. Issue
   field values only need `issues: write`.
+- Documentation: Mermaid diagrams of how the workflows and actions fit together, the PR feedback loop, merge
+  decision gates, stage chaining and the follow-up job, resume, issue intake and resolve, and branch sync.
 
 ## v1.7.0
 

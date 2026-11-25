@@ -28,6 +28,29 @@ deploys, credential rotation) stays in each project.
 | [`terraform-cloud-wait`](actions/terraform-cloud-wait/README.md) | Composite action | Waits for the HCP Terraform apply of a commit. |
 | [`terraform-permissions`](actions/terraform-permissions/README.md) | Composite action | Checks a Cloudflare permission manifest and the real token. |
 
+How the pieces fit: each caller in your repository calls one reusable workflow, which runs the composite actions. Dashed arrows are `workflow_dispatch` events that start the next run.
+
+```mermaid
+flowchart LR
+  C1["Stage callers<br/>ai-*.yml"] --> W1["ai-task.yml"]
+  C2["ai-resume.yml caller"] --> W2["ai-resume.yml"]
+  C3["pr-feedback.yml caller"] --> W3["pr-feedback-dispatch.yml"]
+  C4["pr-fix.yml and<br/>merge-decision.yml callers"] --> W4["pr-fix.yml<br/>merge-decision.yml"]
+  C5["code-review.yml caller"] --> W6["code-review.yml"]
+  C6["branch-sync.yml caller"] --> W7["branch-sync.yml"]
+  W1 --> A1["ai-task action"]
+  W1 --> A2["ai-delivery action"]
+  W2 --> A2
+  W4 --> A2
+  W4 --> A3["pr-gate action"]
+  W4 --> A4["ai-harness action"]
+  W6 --> A4
+  A1 --> A4
+  A4 --> H["OpenCode or Claude Code<br/>with fbrissi/ai-skills<br/>agents and skills"]
+  W3 -. "dispatch pr_number" .-> C4
+  A2 -. "dispatch next<br/>or resumed stage" .-> C1
+```
+
 ## Versioning
 
 Releases follow [Semantic Versioning](https://semver.org/) and are cut from [CHANGELOG.md](CHANGELOG.md): every
@@ -185,6 +208,27 @@ Three workflows follow a pull request up event by event instead of one agent tha
    pushes trigger CI, so the code review runs again and its review closes the loop.
 3. [`merge-decision.yml`](#merge-decision) checks the merge gates without AI and, when they pass, rates the risk
    with the `merge-risk` skill. It holds by default and merges only with `auto-merge: true`.
+
+```mermaid
+flowchart TD
+  push["Push to the PR branch"] --> cr["Code Review<br/>AI review by the review App"]
+  push --> ci["CI checks"]
+  cr --> disp{"pr-feedback-dispatch.yml<br/>review state"}
+  disp -- "changes_requested<br/>or commented" --> fix["pr-fix.yml"]
+  disp -- "approved" --> merge["merge-decision.yml"]
+  fix --> fgate{"pr-gate<br/>fix gate"}
+  fgate -- "skip" --> idle["No pass"]
+  fgate -- "fix" --> pass["One pr-fix pass<br/>push with the fix App token"]
+  pass --> push
+  fgate -- "escalate<br/>after max-rounds" --> esc["Label ai:needs-human<br/>handoff to the requester"]
+  esc -. "/ai-resume pr-fix<br/>or label removed" .-> fix
+  merge --> mgate{"pr-gate<br/>merge gate"}
+  mgate -- "approval missing" --> ask["Request review<br/>from the requester"]
+  ask -. "their approval" .-> disp
+  mgate -- "decide" --> risk["merge-risk rating"]
+  risk -- "auto-merge and low risk" --> merged["Merged by the merge App"]
+  risk -- "otherwise" --> hold["Hold with the rating"]
+```
 
 Both targets are dispatched on the default branch, so a pull request can never change its own fixer or merger. Use
 separate GitHub Apps (one `environment` each, with its own `AGENT_APP_CLIENT_ID` and `AGENT_APP_PRIVATE_KEY`) for
@@ -369,6 +413,26 @@ The fixer GitHub App needs `Contents: Read and write`, `Pull requests: Read and 
    `<!-- merge-decision head=<sha> -->` comment, so each head commit is decided once. Push a commit (or delete that
    comment) to decide again.
 
+```mermaid
+flowchart TD
+  start["merge-decision.yml<br/>pr_number"] --> g1{"Open, not a draft,<br/>branch-prefixes match,<br/>no hold label, no conflicts?"}
+  g1 -- "no" --> skip["Skip with the reason"]
+  g1 -- "yes" --> g2{"Every check green,<br/>no changes requested,<br/>no unresolved thread?"}
+  g2 -- "no" --> skip
+  g2 -- "yes" --> ex{"Base matches exempt base prefixes<br/>AND author is an exempt author?"}
+  ex -- "yes" --> g4{"Head commit<br/>already decided?"}
+  ex -- "no" --> appr{"Enough human approvals<br/>on the head commit?"}
+  appr -- "no" --> req["Request Human Review<br/>review request and one mention<br/>for the requested-by login"]
+  req -. "approval dispatches again" .-> start
+  appr -- "yes" --> g4
+  g4 -- "yes" --> skip
+  g4 -- "no" --> risk["Run merge-risk on a<br/>checkout of the base commit"]
+  risk -- "auto-merge true<br/>and rating allows" --> merged["Merge with the App token"]
+  risk -- "otherwise" --> hold["Hold"]
+  merged --> rec["Record the head decision marker"]
+  hold --> rec
+```
+
 The App token only gets `contents: write` with `auto-merge: true`, so with the default the harness cannot merge. A
 merge made with the App token, unlike one made with `GITHUB_TOKEN`, triggers the release workflows of the merged
 commit.
@@ -524,6 +588,36 @@ After every run, the `follow-up` job takes a fresh App token (the task's token m
 | `orchestrate` | – | nothing: it dispatches `implement` itself, and the orchestrate-on-merge caller re-runs it |
 | `implement` | the issue is blocked, its PR or issue has `ai:needs-human`, or the run ended without a PR | nothing: the [PR follow-up](#pr-follow-up-for-task-branches) takes the PR from here |
 
+The stages and the labels that move a milestone between them:
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  BR: business-refinement
+  TR: technical-refinement
+  RR: readiness-review
+  OR: orchestrate
+  IM: implement
+  PF: PR follow-up
+  HO: Handoff to the requester
+  [*] --> BR: source ticket
+  BR --> TR: needs-technical-refinement
+  TR --> BR: needs-business-refinement
+  TR --> RR: needs-review
+  RR --> BR: needs-business-refinement
+  RR --> TR: needs-technical-refinement
+  RR --> OR: ready
+  OR --> IM: one run per ready issue
+  IM --> PF: task PR opened
+  PF --> OR: task PR merged, orchestrate-on-merge
+  OR --> [*]: every issue done, milestone PR ready
+  BR --> HO: business-blocked
+  TR --> HO: technical-blocked
+  RR --> HO: an issue is blocked
+  IM --> HO: blocked, escalated, or no PR
+  HO --> [*]: wait for /ai-resume
+```
+
 - **Failed, timed-out, or cancelled runs** hand off with `run failed: <run URL>` and resume the same stage
   (`pr-fix` when the implement PR already exists). An `implement` issue left in `status:in-progress` without a PR
   moves back to `status:ready`, so it does not hold an orchestration slot.
@@ -539,6 +633,25 @@ After every run, the `follow-up` job takes a fresh App token (the task's token m
   App (whose triggering actor is the bot) use the marker instead, and bots are never mentioned. PR Fix and Merge
   Decision read the same marker from the PR's milestone, or the milestone of the issues it closes.
 - `chain: false` keeps the handoffs and only stops the dispatches.
+
+What the `follow-up` job decides after each run:
+
+```mermaid
+flowchart TD
+  task["task job<br/>ai-task action runs the agent"] --> fu["follow-up job, always runs<br/>fresh App token, ai-delivery follow-up"]
+  fu --> res{"Task result"}
+  res -- "failed, timed out,<br/>or cancelled" --> fail["Handoff with the run URL<br/>implement issue without PR<br/>back to status:ready"]
+  res -- "success" --> labels["Read the status labels of the<br/>milestone issues or the scoped issue"]
+  labels --> blocked{"Blocked issue, escalated PR,<br/>or implement without PR?"}
+  blocked -- "yes" --> hand["One handoff per blocked issue<br/>mentions requested-by"]
+  blocked -- "no" --> next{"Next stage<br/>to dispatch?"}
+  next -- "none" --> stop["Done"]
+  next -- "yes" --> chain{"chain true?"}
+  chain -- "no" --> stop
+  chain -- "yes" --> guard{"Stage dispatched more than<br/>max-auto-dispatches times?"}
+  guard -- "yes" --> hand
+  guard -- "no" --> disp["Count it in the milestone<br/>dispatch the stage caller<br/>on the default branch"]
+```
 
 Each handoff is one comment per blocked issue (or a tracking issue `<milestone or source> - <stage>` when there is
 none). It mentions the requester, gives the blocker in up to three lines, links the questions (the last comment on
@@ -585,6 +698,29 @@ maintain, or admin permission. It then:
    `milestone`, `issue`, `jira_key`, `branch`, `base_branch`, or `pr_number`, `requested_by`, and `instructions`,
 6. links the run in the handoff (`Resumed by @<login> -> <run link>`), reacts with `rocket`, and replies with the
    run link.
+
+```mermaid
+sequenceDiagram
+  actor U as Person with write access
+  participant GH as Issue or PR
+  participant R as ai-resume.yml
+  participant D as ai-delivery resume
+  participant S as Stage caller
+  U->>GH: Comment /ai-resume [stage] [instructions]
+  GH->>R: issue_comment created
+  R->>R: Prefilter on /ai-resume, not a bot,<br/>OWNER, MEMBER, or COLLABORATOR
+  R->>D: Run with the App token
+  D->>GH: Check write, maintain, or admin permission
+  D->>GH: React eyes
+  D->>GH: Pick the named stage or the newest open handoff
+  D->>GH: Mark the handoff state=resumed
+  D->>GH: Remove ai:needs-human for pr-fix, reset dispatch counters
+  D->>S: workflow_dispatch on the default branch with instructions
+  D->>GH: Link the run, react rocket, reply with the run link
+  alt Rejected or dispatch failed
+    D->>GH: Reply with the reason, reopen the handoff on a failed dispatch
+  end
+```
 
 A rejection (no permission, no open handoff, invalid values) is a reply with the reason. If the dispatch fails, the
 handoff is reopened, the reply says so, and the job fails. Handoffs posted with the earlier checkbox resume the same
@@ -979,6 +1115,22 @@ same App token, checkout, dependency setup, harness, requester, `instructions`, 
 | `issue-intake` | `intake` | – | Reads the source (for example unresolved Sentry issues filtered by the profile), deduplicates against existing GitHub issues, creates or updates one GitHub issue per source issue with a severity decision and the `ai:resolve` label, and stops. Never changes code. |
 | `issue-resolve` | `resolve` | `issue` | Fixes one issue: branch (`hotfix/*` into the default branch when critical, else `bugfix/*` into the open `release/*`, per the profile), change, quality cycle, pull request, then stops. |
 
+```mermaid
+flowchart LR
+  cron["Weekly schedule<br/>or manual run"] --> intake["ai-issue-intake.yml<br/>task issue-intake"]
+  intake --> src["Read the source<br/>for example Sentry<br/>dedupe against issues"]
+  src --> gi["Create or update one issue<br/>with severity and ai:resolve"]
+  gi -- "issues labeled" --> resolve["ai-issue-resolve.yml<br/>task issue-resolve"]
+  person["Person adds ai:resolve"] --> resolve
+  resolve --> crit{"Critical?"}
+  crit -- "yes" --> hf["hotfix/* PR<br/>into the default branch"]
+  crit -- "no" --> bf["bugfix/* PR<br/>into the open release/*"]
+  hf --> loop["PR Feedback Loop"]
+  bf --> loop
+  intake -. "failed run" .-> ho["Handoff with a resume"]
+  resolve -. "failed run" .-> ho
+```
+
 Neither waits for anything: the pull request it opens goes through the [PR Feedback Loop](#pr-feedback-loop)
 (`pr-fix.yml` and `merge-decision.yml`, triggered by review and check events). A failed or timed-out run hands off on
 the issue (or a tracking issue for the intake) with an `issue-intake` or `issue-resolve` resume. Sentry credentials
@@ -1126,6 +1278,23 @@ backup of `main` that keeps driving sandbox deploys. On each run it fast-forward
 it opens one issue (`Branch sync: <target> cannot fast-forward to <source>`, found again by a
 `<!-- branch-sync source=... target=... -->` marker) that mentions the person who pushed and `mention`, or comments on
 it when it is already open; the next successful sync closes it.
+
+```mermaid
+flowchart TD
+  push["Push to source<br/>for example main"] --> sync["branch-sync.yml"]
+  sync --> exists{"Target exists?"}
+  exists -- "no" --> create["Create target at the source head<br/>created"]
+  exists -- "yes" --> ff{"Can target<br/>fast-forward?"}
+  ff -- "already at source" --> up["up-to-date"]
+  ff -- "yes" --> upd["Fast-forward with the App token<br/>updated"]
+  ff -- "no, target has<br/>its own commits" --> div["diverged"]
+  upd -- "update refused" --> blk["blocked"]
+  div --> issue["Open or comment on one issue<br/>mention the pusher and mention"]
+  blk --> issue
+  create --> close["Close the open<br/>sync issue, if any"]
+  up --> close
+  upd --> close
+```
 
 ```yaml
 # .github/workflows/branch-sync.yml
