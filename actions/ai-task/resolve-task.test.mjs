@@ -99,6 +99,14 @@ describe('validate', () => {
     assert.deepEqual(validate(inputsFor({ task: 'orchestrate', milestone: 'M1' }), { 'github-token': true, 'claude-code-oauth-token': true }), []);
   });
 
+  it('checks requested-by and drops bots', () => {
+    assert.deepEqual(validate(inputsFor({ task: 'orchestrate', milestone: 'M1', 'requested-by': 'bad login' }), CREDENTIALS), [
+      "'requested-by' must be a GitHub login, got 'bad login'."
+    ]);
+    assert.equal(inputsFor({ task: 'orchestrate', 'requested-by': 'agent[bot]' })['requested-by'], '');
+    assert.equal(inputsFor({ task: 'orchestrate', 'requested-by': 'alice' })['requested-by'], 'alice');
+  });
+
   it('rejects invalid extra skill and agent names', () => {
     assert.deepEqual(validate(inputsFor({ task: 'orchestrate', milestone: 'M1', skills: 'ok ../x', agents: 'a;b' }), CREDENTIALS), [
       "Invalid name '../x' in 'skills'.",
@@ -153,6 +161,26 @@ describe('buildPrompt', () => {
     assert.match(prompt, /dispatching the implement workflow/);
     assert.match(prompt, /- profile: docs\/delivery\.md/);
     assert.match(prompt, /repository profile \(`docs\/delivery\.md`\)/);
+  });
+});
+
+describe('flow rules', () => {
+  it('mentions the requester, or the milestone marker without one', () => {
+    const prompt = buildPrompt(inputsFor({ task: 'technical-refinement', milestone: 'M1', 'requested-by': 'alice' }));
+    assert.match(prompt, /- requested-by: alice\n/);
+    assert.match(prompt, /@alice started this flow: mention them .*<!-- ai-delivery requested-by=alice -->.* Never mention bots\./);
+    assert.match(buildPrompt(inputsFor({ task: 'technical-refinement', milestone: 'M1' })), /mention the login in the `<!-- ai-delivery requested-by=<login> -->` marker/);
+  });
+
+  it('tells implement about tests-only QA and only implement', () => {
+    assert.match(buildPrompt(inputsFor({ task: 'implement', issue: '1', branch: 'b' })), /tests-only mode: .*"browser QA skipped: no CI environment", and never escalate/);
+    assert.doesNotMatch(buildPrompt(inputsFor({ task: 'orchestrate', milestone: 'M1' })), /tests-only/);
+  });
+
+  it('asks for the milestone in the result file only when it is not given', () => {
+    assert.match(buildPrompt(inputsFor({ task: 'business-refinement', source: 'DEV-1' }), { resultFile: true }), /`milestone=<title>` .* AI_TASK_RESULT_FILE/);
+    assert.doesNotMatch(buildPrompt(inputsFor({ task: 'orchestrate', milestone: 'M1' }), { resultFile: true }), /AI_TASK_RESULT_FILE/);
+    assert.doesNotMatch(buildPrompt(inputsFor({ task: 'business-refinement', source: 'DEV-1' })), /AI_TASK_RESULT_FILE/);
   });
 });
 

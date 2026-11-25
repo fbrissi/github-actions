@@ -80,6 +80,10 @@ inputs:
     description: Maximum implement runs `orchestrate` keeps in progress. Empty uses the profile, then `3`.
     required: false
     default: ""
+  requested-by:
+    description: Login of the person who started the flow; the agent mentions them when it stops for a human. Bots are ignored. Defaults to the triggering actor.
+    required: false
+    default: ${{ github.triggering_actor }}
   skills:
     description: Extra whitespace-separated skills to install on top of the task's default skills.
     required: false
@@ -157,6 +161,9 @@ outputs:
   output-file:
     description: File that holds the harness output.
     value: ${{ steps.harness.outputs.output-file }}
+  milestone:
+    description: Milestone the agent reported it created or worked on (empty when `milestone` was given or nothing was reported).
+    value: ${{ steps.result.outputs.milestone }}
 
 runs:
   using: composite
@@ -179,6 +186,9 @@ runs:
         else
           echo 'setup-node=true' >> "$GITHUB_OUTPUT"
         fi
+        result_file="${RUNNER_TEMP}/ai-task-result.env"
+        rm -f "$result_file"
+        echo "result-file=${result_file}" >> "$GITHUB_OUTPUT"
 
     - name: Setup Node
       if: ${{ steps.prepare.outputs.setup-node == 'true' }}
@@ -209,6 +219,8 @@ runs:
         AI_TASK_PROFILE: ${{ inputs.profile }}
         AI_TASK_IMPLEMENT_WORKFLOW: ${{ inputs.implement-workflow }}
         AI_TASK_MAX_PARALLEL: ${{ inputs.max-parallel }}
+        AI_TASK_REQUESTED_BY: ${{ inputs.requested-by }}
+        AI_TASK_RESULT_FILE: ${{ steps.prepare.outputs.result-file }}
         AI_TASK_JIRA_BASE_URL: ${{ inputs.jira-base-url }}
         AI_TASK_SKILLS: ${{ inputs.skills }}
         AI_TASK_AGENTS: ${{ inputs.agents }}
@@ -229,6 +241,7 @@ runs:
         JIRA_BASE_URL: ${{ inputs.jira-base-url }}
         JIRA_EMAIL: ${{ inputs.jira-email }}
         JIRA_API_TOKEN: ${{ inputs.jira-api-token }}
+        AI_TASK_RESULT_FILE: ${{ steps.prepare.outputs.result-file }}
       with:
         harness: claude
         agent: ${{ steps.resolve.outputs.agent }}
@@ -246,6 +259,23 @@ runs:
         anthropic-api-key: ${{ inputs.anthropic-api-key }}
         claude-code-oauth-token: ${{ inputs.claude-code-oauth-token }}
         github-token: ${{ inputs.github-token }}
+
+    - name: Read task result
+      id: result
+      if: ${{ always() && steps.prepare.outputs.result-file != '' }}
+      shell: bash
+      env:
+        RESULT_FILE: ${{ steps.prepare.outputs.result-file }}
+      run: |
+        set -euo pipefail
+        if [ ! -f "$RESULT_FILE" ]; then
+          exit 0
+        fi
+        milestone="$(grep -m1 '^milestone=' "$RESULT_FILE" | cut -d= -f2- | tr -d '\r' | cut -c1-255 || true)"
+        if [ -n "$milestone" ]; then
+          echo "Reported milestone: $milestone"
+          echo "milestone=${milestone}" >> "$GITHUB_OUTPUT"
+        fi
 
 branding:
   icon: git-pull-request

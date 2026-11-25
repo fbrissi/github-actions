@@ -74,6 +74,7 @@ Task parameters (see the [task table](#ai-task) for which are required):
 | `profile` | `docs/ai/delivery.md` | Repository profile path. |
 | `implement-workflow` | profile, then `ai-implement.yml` | Workflow file `orchestrate` dispatches per issue. |
 | `max-parallel` | profile, then `3` | Implement runs `orchestrate` keeps in progress. |
+| `requested-by` | `github.triggering_actor` | Person who started the flow. The agent mentions them when it asks a question or stops for a human, and stores `<!-- ai-delivery requested-by=<login> -->` in a milestone it creates. Bots are dropped; the agent then uses that marker. |
 
 Run settings and credentials:
 
@@ -107,6 +108,14 @@ the harness step, and never written into the prompt.
 | `agents` | Installed agents. |
 | `skills` | Installed skills. |
 | `output-file` | File that holds the harness output. |
+| `milestone` | Milestone the agent reported it created or worked on, when `milestone` was empty. The agent writes it as `milestone=<title>` to the file in `AI_TASK_RESULT_FILE`. |
+
+## Browser QA
+
+The `implement` prompt tells the agent to run browser QA when the profile's test environment is reachable (start it
+before this action, for example with the `setup-command` input of [`ai-task.yml`](../../README.md#qa-in-ci)). When
+none is reachable, QA runs in tests-only mode: it relies on the automated tests that run as pull request checks,
+reports `browser QA skipped: no CI environment`, and never escalates for that reason.
 
 ## Notes
 

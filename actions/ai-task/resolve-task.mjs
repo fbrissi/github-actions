@@ -71,6 +71,7 @@ export const PARAMETERS = [
   'profile',
   'implement-workflow',
   'max-parallel',
+  'requested-by',
   'jira-base-url'
 ];
 
@@ -79,11 +80,15 @@ const NAME = /^[A-Za-z0-9_.-]+$/;
 
 export const envName = (input) => `AI_TASK_${input.toUpperCase().replaceAll('-', '_')}`;
 
+// Bots never stand for the person who started the flow; the milestone marker names them instead.
+export const isBotLogin = (login) => /\[bot\]$/i.test(login) || login.toLowerCase() === 'github-actions';
+
 export function readInputs(env = process.env) {
   const inputs = {};
   for (const name of [...PARAMETERS, 'context', 'skills', 'agents', 'harness']) {
     inputs[name] = (env[envName(name)] ?? '').trim();
   }
+  if (isBotLogin(inputs['requested-by'])) inputs['requested-by'] = '';
   return inputs;
 }
 
@@ -139,6 +144,9 @@ export function validate(inputs, credentials = {}) {
   }
   if (inputs.profile && (inputs.profile.startsWith('/') || inputs.profile.split('/').includes('..'))) {
     errors.push(`'profile' must be a relative path inside the repository, got '${inputs.profile}'.`);
+  }
+  if (inputs['requested-by'] && !/^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/.test(inputs['requested-by'])) {
+    errors.push(`'requested-by' must be a GitHub login, got '${inputs['requested-by']}'.`);
   }
   if (inputs['jira-base-url'] && !/^https:\/\/[^\s/]+(\/\S*)?$/.test(inputs['jira-base-url'])) {
     errors.push(`'jira-base-url' must be an https URL, got '${inputs['jira-base-url']}'.`);
@@ -201,7 +209,7 @@ function parameterLines(inputs) {
   return output;
 }
 
-export function buildPrompt(inputs, { repository = '', runUrl = '', hasJira = false } = {}) {
+export function buildPrompt(inputs, { repository = '', runUrl = '', hasJira = false, resultFile = false } = {}) {
   const { agent, skills } = resolveAssets(inputs);
   const primarySkill = TASKS[inputs.task].skills[0];
   const profile = inputs.profile || 'docs/ai/delivery.md';
@@ -215,8 +223,17 @@ export function buildPrompt(inputs, { repository = '', runUrl = '', hasJira = fa
   if (hasJira) {
     rules.push('- Jira REST credentials are in the environment variables JIRA_BASE_URL, JIRA_EMAIL, and JIRA_API_TOKEN. Read them from the environment in your commands; never print or log their values.');
   }
+  rules.push(inputs['requested-by']
+    ? `- @${inputs['requested-by']} started this flow: mention them when you ask a question or stop for a human, and store \`<!-- ai-delivery requested-by=${inputs['requested-by']} -->\` in the description of a milestone you create. Never mention bots.`
+    : '- When you ask a question or stop for a human, mention the login in the `<!-- ai-delivery requested-by=<login> -->` marker of the milestone description, if there is one. Never mention bots.');
   if (inputs.task === 'orchestrate') {
     rules.push('- This run is in GitHub Actions: start each ready issue by dispatching the implement workflow, never by implementing it here.');
+  }
+  if (inputs.task === 'implement') {
+    rules.push("- Browser QA: when the profile's test environment is reachable (the caller may have started it before this run), run the BDD scenarios in a real browser. When no test environment is reachable, run QA in tests-only mode: rely on the automated tests that run as pull request checks (do not re-run them needlessly), report \"browser QA skipped: no CI environment\", and never escalate or block for that reason.");
+  }
+  if (resultFile && !inputs.milestone) {
+    rules.push('- Before you stop, write one line `milestone=<title>` with the GitHub milestone you created or worked on to the file named by the AI_TASK_RESULT_FILE environment variable, so the flow can continue from it.');
   }
 
   const sections = [
@@ -259,7 +276,8 @@ export function resolveTask(env = process.env) {
     prompt: buildPrompt(inputs, {
       repository: env.GITHUB_REPOSITORY ?? '',
       runUrl,
-      hasJira
+      hasJira,
+      resultFile: Boolean(env.AI_TASK_RESULT_FILE)
     })
   };
 }
