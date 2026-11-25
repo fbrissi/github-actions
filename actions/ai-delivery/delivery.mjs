@@ -193,7 +193,21 @@ export function setHandoffState(body, state, line) {
   return line ? next.replace(RESUME_LINE, line) : next;
 }
 
-// `/ai-resume [stage] [instructions]` on the first line; the following lines are more instructions.
+// Skill and agent names a blocker comment may use as its stage, mapped to the stage they resume.
+export const STAGE_ALIASES = {
+  'business-analyst': 'business-refinement',
+  'tech-lead': 'technical-refinement',
+  'readiness-reviewer': 'readiness-review',
+  'delivery-orchestration': 'orchestrate',
+  'delivery-orchestrator': 'orchestrate',
+  dev: 'implement',
+  'quality-cycle': 'implement',
+  'task-implementer': 'implement',
+  'issue-resolver': 'issue-resolve'
+};
+
+// `/ai-resume [stage] [instructions]` on the first line; the following lines are more instructions. A first word that
+// looks like a stage (lowercase, with a hyphen) but is none is reported in `unknownStage`.
 export function parseResumeCommand(body = '') {
   const [first = '', ...rest] = (body ?? '').replace(/^\s+/, '').split(/\r?\n/);
   const match = /^\/ai-resume(?:\s+(.*))?$/.exec(first.trim());
@@ -201,12 +215,15 @@ export function parseResumeCommand(body = '') {
   let tail = (match[1] ?? '').trim();
   let stage = '';
   const [word] = words(tail);
-  if (word && STAGES.includes(word)) {
-    stage = word;
+  let unknownStage = '';
+  if (word && (STAGES.includes(word) || STAGE_ALIASES[word])) {
+    stage = STAGE_ALIASES[word] ?? word;
     tail = tail.slice(word.length).trim();
+  } else if (word && /^[a-z]+(?:-[a-z]+)+$/.test(word)) {
+    unknownStage = word;
   }
   const instructions = [tail, ...rest].join('\n').trim();
-  return { stage, instructions };
+  return { stage, instructions, ...(unknownStage ? { unknownStage } : {}) };
 }
 
 // The milestone title -> Jira key, from a template such as `JIRA:{key}`.

@@ -32,7 +32,8 @@ merging a pull request that adds one tags the release and moves the major tag.
   ``Reply `/ai-resume` (optionally with instructions on the next lines) to continue: <stage> -> <next stage>.``, a
   `<!-- ai-resume ... state=open -->` marker, and a `gh workflow run` fallback.
 - `ai-resume.yml` reusable workflow: on `issue_comment` `created`, a comment whose first line is
-  `/ai-resume [stage] [instructions]` (by an `OWNER`, `MEMBER`, or `COLLABORATOR` with write, maintain, or admin
+  `/ai-resume [stage] [instructions]` (the stage may also be a skill or agent alias such as `quality-cycle` or
+  `issue-resolver`; by an `OWNER`, `MEMBER`, or `COLLABORATOR` with write, maintain, or admin
   permission; bots are ignored) resumes the named stage, else the newest open handoff of the agent App (or
   `trusted-bots`) on that issue or pull request. It reacts with `eyes`, marks the handoff `state=resumed` before
   dispatching (so a second command cannot run it twice; runs are serialized per issue or pull request), removes

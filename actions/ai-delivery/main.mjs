@@ -453,6 +453,7 @@ export async function resume(ctx, api, log, event) {
   };
 
   await react('eyes');
+  if (parsed.unknownStage) return reject(`\`${parsed.unknownStage}\` is not a stage. Use one of ${STAGE_LIST}.`);
   const { data: permission } = await api.request('GET', `/repos/${repo}/collaborators/${encodeURIComponent(sender)}/permission`);
   const role = permission?.role_name ?? permission?.permission ?? 'none';
   if (!['admin', 'maintain', 'write'].includes(role) && !['admin', 'write'].includes(permission?.permission)) {

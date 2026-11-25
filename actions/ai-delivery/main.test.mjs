@@ -296,6 +296,14 @@ describe('resume', () => {
     assert.doesNotMatch(edited, /\[ \] Resume/);
   });
 
+  it('rejects an unknown stage with the list of stages', async () => {
+    const api = fakeApi(routes());
+    const summary = await resume(ctx(), api, silent, eventFor('/ai-resume deploy-prod'));
+    assert.match(summary[0], /`deploy-prod` is not a stage/);
+    assert.equal(posts(api, /dispatches$/).length, 0);
+    assert.match(posts(api, /issues\/7\/comments$/)[0].body.body, /`issue-resolve`/);
+  });
+
   it('refuses people without write permission with a reply', async () => {
     const api = fakeApi(routes([handoff], [['GET', /permission$/, { permission: 'read', role_name: 'triage' }]]));
     const summary = await resume(ctx(), api, silent, eventFor());

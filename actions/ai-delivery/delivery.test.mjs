@@ -168,6 +168,10 @@ describe('parseResumeCommand', () => {
     assert.deepEqual(parseResumeCommand('/ai-resume'), { stage: '', instructions: '' });
     assert.deepEqual(parseResumeCommand('  /ai-resume implement use the v2 API\r\nand keep it small'), { stage: 'implement', instructions: 'use the v2 API\nand keep it small' });
     assert.deepEqual(parseResumeCommand('/ai-resume deploy now'), { stage: '', instructions: 'deploy now' });
+    assert.deepEqual(parseResumeCommand('/ai-resume quality-cycle'), { stage: 'implement', instructions: '' });
+    assert.equal(parseResumeCommand('/ai-resume delivery-orchestration').stage, 'orchestrate');
+    assert.equal(parseResumeCommand('/ai-resume issue-resolver').stage, 'issue-resolve');
+    assert.deepEqual(parseResumeCommand('/ai-resume deploy-now please'), { stage: '', instructions: 'deploy-now please', unknownStage: 'deploy-now' });
     assert.equal(parseResumeCommand('/ai-resumes'), null);
     assert.equal(parseResumeCommand('Thanks!\n/ai-resume'), null);
   });

@@ -563,7 +563,11 @@ line starts with `/ai-resume`:
 more instructions on the next lines
 ```
 
-The stage is optional; anything after it on the first line, plus the following lines, becomes the `instructions` of
+The stage is optional. It is a stage name (`business-refinement`, `technical-refinement`, `readiness-review`,
+`orchestrate`, `implement`, `pr-fix`, `issue-intake`, `issue-resolve`) or a skill or agent name a blocker comment
+used as its stage (`delivery-orchestration` -> `orchestrate`; `dev`, `quality-cycle`, `task-implementer` ->
+`implement`; `issue-resolver` -> `issue-resolve`; and the other task agents); an unknown stage-like word gets a reply
+with the valid stages. Anything after it on the first line, plus the following lines, becomes the `instructions` of
 the resumed run (appended to its prompt for that run only). `.github/workflows/ai-resume.yml` runs on the
 `issue_comment` `created` event. Its job only starts for comments that begin with `/ai-resume`, are not written by
 a bot, and come from an `OWNER`, `MEMBER`, or `COLLABORATOR`; the script then checks that the author has write,

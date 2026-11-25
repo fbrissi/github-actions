@@ -37,7 +37,8 @@ inputs below, on the default branch; an input the caller does not declare is dro
 | `issue-intake` | `ai-issue-intake.yml` | `requested_by` |
 | `issue-resolve` | `ai-issue-resolve.yml` | `issue`, `requested_by` |
 
-A resume also sends `instructions` (the text after the stage on the command line, plus the following lines) to
+The command's stage may also be a skill or agent alias (`delivery-orchestration`, `dev`, `quality-cycle`,
+`task-implementer`, `issue-resolver`, and the other task agents). A resume also sends `instructions` (the text after the stage on the command line, plus the following lines) to
 every stage; chained dispatches never send it.
 
 A handoff for the stage of the running workflow names that caller's own file (from `GITHUB_WORKFLOW_REF`) unless
