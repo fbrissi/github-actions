@@ -1161,8 +1161,11 @@ falls back to `GITHUB_TOKEN`, whose pushes trigger no workflows.
 | `mention` | `""` | Logins also mentioned on divergence (bots are never mentioned). |
 | `agent-client-id` | `AGENT_APP_CLIENT_ID` | Client ID of the App that updates the target. |
 | `runs-on` | `CI_RUNNER`, then `ubuntu-latest` | Runner label. |
+| `app-token-permission-workflows` | `""` | Set to `write` when the App has `Workflows: Read and write`, so commits that change `.github/workflows/**` are fast-forwarded. Empty does not request it. |
 
-Secret: `AGENT_APP_PRIVATE_KEY` (optional). Output: `result` (`updated`, `created`, `up-to-date`, or `diverged`).
+Secret: `AGENT_APP_PRIVATE_KEY` (optional). Output: `result` (`updated`, `created`, `up-to-date`, `diverged`, or
+`blocked`). `blocked` means GitHub refused the update, usually a commit that changes `.github/workflows/**` without
+the `Workflows` permission, or a branch rule the App cannot bypass; it is reported in the same issue.
 Runs are serialized per target branch.
 
 ## Release Note

@@ -23,6 +23,11 @@ on:
         required: false
         type: string
         default: ""
+      app-token-permission-workflows:
+        description: Set to `write` when the App has the `Workflows` permission, so commits that change `.github/workflows/**` can be fast-forwarded. Empty does not request it; such commits are refused and reported in the sync issue.
+        required: false
+        type: string
+        default: ""
       runs-on:
         description: Runner label. Empty uses the `CI_RUNNER` variable, then `ubuntu-latest`.
         required: false
@@ -34,7 +39,7 @@ on:
         required: false
     outputs:
       result:
-        description: "`updated`, `created`, `up-to-date`, or `diverged`."
+        description: "`updated`, `created`, `up-to-date`, `diverged`, or `blocked` (the update was refused)."
         value: ${{ jobs.sync.outputs.result }}
 
 concurrency:
@@ -77,6 +82,7 @@ jobs:
           private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-issues: write
+          permission-workflows: ${{ inputs.app-token-permission-workflows }}
 
       # Fast-forward only: the ref update is never forced. On divergence, one open issue tracks it and is closed again
       # by the next successful sync.
@@ -116,6 +122,7 @@ jobs:
             }
 
             let result;
+            let blocked = '';
             if (targetSha === null) {
               await github.rest.git.createRef({ owner, repo, ref: `refs/heads/${target}`, sha });
               result = 'created';
@@ -124,8 +131,14 @@ jobs:
             } else {
               const { data: compare } = await github.rest.repos.compareCommitsWithBasehead({ owner, repo, basehead: `${target}...${sha}` });
               if (compare.status === 'ahead') {
-                await github.rest.git.updateRef({ owner, repo, ref: `heads/${target}`, sha, force: false });
-                result = 'updated';
+                try {
+                  await github.rest.git.updateRef({ owner, repo, ref: `heads/${target}`, sha, force: false });
+                  result = 'updated';
+                } catch (error) {
+                  if (![403, 422].includes(error.status)) throw error;
+                  result = 'blocked';
+                  blocked = error.message;
+                }
               } else if (compare.status === 'identical') {
                 result = 'up-to-date';
               } else {
@@ -134,11 +147,14 @@ jobs:
             }
             core.setOutput('result', result);
 
-            if (result === 'diverged') {
-              const text = `${mentions ? `${mentions} ` : ''}\`${target}\` cannot be fast-forwarded to \`${source}\` (${sha.slice(0, 7)}): it has commits that \`${source}\` does not. Nothing was force-pushed. Bring those commits into \`${source}\` (or reset \`${target}\` by hand), and the next push to \`${source}\` syncs it again. Run: ${runUrl}`;
+            if (result === 'diverged' || result === 'blocked') {
+              const why = result === 'blocked'
+                ? `the update was refused (${blocked}). If the new commits change \`.github/workflows/**\`, the App needs the \`Workflows\` permission and \`app-token-permission-workflows: write\`; otherwise check the target's branch rules. Fast-forward \`${target}\` by hand`
+                : `it has commits that \`${source}\` does not. Bring those commits into \`${source}\` (or reset \`${target}\` by hand)`;
+              const text = `${mentions ? `${mentions} ` : ''}\`${target}\` cannot be fast-forwarded to \`${source}\` (${sha.slice(0, 7)}): ${why}, and the next push to \`${source}\` syncs it again. Nothing was force-pushed. Run: ${runUrl}`;
               if (tracking) {
                 await github.rest.issues.createComment({ owner, repo, issue_number: tracking.number, body: text });
-                core.warning(`${target} diverged from ${source}; commented on #${tracking.number}.`);
+                core.warning(`${target} ${result} (from ${source}); commented on #${tracking.number}.`);
               } else {
                 const { data: issue } = await github.rest.issues.create({
                   owner,
@@ -146,7 +162,7 @@ jobs:
                   title: `Branch sync: ${target} cannot fast-forward to ${source}`,
                   body: `${marker}\n${text}\n`,
                 });
-                core.warning(`${target} diverged from ${source}; opened #${issue.number}.`);
+                core.warning(`${target} ${result} (from ${source}); opened #${issue.number}.`);
               }
               return;
             }

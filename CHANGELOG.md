@@ -66,6 +66,8 @@ merging a pull request that adds one tags the release and moves the major tag.
   optional GitHub App so the update triggers the target's workflows. It never force-pushes: when the target has
   commits the source does not, it opens or comments on one issue that mentions the pusher and `mention`, and closes it
   after the next successful sync.
+  Input `app-token-permission-workflows` (default empty) requests `Workflows` for commits that change
+  `.github/workflows/**`; a refused update returns `blocked` and is reported in the sync issue.
 - Issue tasks on `ai-task.yml` and the `ai-task` action, run by the `issue-resolver` agent of fbrissi/ai-skills:
   `issue-intake` (reads a source such as Sentry with the `sentry-issues` skill and creates or updates GitHub issues
   labeled `ai:resolve`) and `issue-resolve` (`issue` required: branch, change, quality cycle, pull request, then
