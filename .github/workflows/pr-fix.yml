@@ -387,13 +387,23 @@ jobs:
           if [ -n "$ESCALATION_LABEL" ]; then
             gh api --silent "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels" -f "labels[]=${ESCALATION_LABEL}"
           fi
-          body="<!-- pr-fix escalated -->
-          Automatic fixes stopped after ${MAX_ROUNDS} rounds; a human needs to take over this pull request."
-          if [ -n "$ESCALATION_LABEL" ]; then
-            body="${body} Remove the \`${ESCALATION_LABEL}\` label to allow ${MAX_ROUNDS} more rounds."
-          fi
-          gh api --silent "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f "body=${body}"
           echo "skipped: escalated after ${MAX_ROUNDS} rounds" >> "$GITHUB_STEP_SUMMARY"
+
+      # Mentions the requester from the milestone marker and offers a resume checkbox (handled by ai-resume.yml).
+      - name: Hand off to a human
+        if: ${{ needs.gate.outputs.action == 'escalate' }}
+        uses: fbrissi/github-actions/actions/ai-delivery@v1
+        with:
+          command: handoff
+          github-token: ${{ steps.app-token.outputs.token }}
+          task: pr-fix
+          pr: ${{ needs.gate.outputs.pr_number }}
+          marker: "<!-- pr-fix escalated -->"
+          escalation-label: ${{ inputs.escalation-label }}
+          blocker: >-
+            Automatic fixes stopped after ${{ inputs.max-rounds }} rounds without a clean pull request; read the open
+            review threads and failing checks, answer or fix what the fixer could not, then resume.
+            ${{ inputs.escalation-label != '' && format('Resuming removes the `{0}` label and allows {1} more rounds.', inputs.escalation-label, inputs.max-rounds) || '' }}
 
       - uses: actions/checkout@v7
         if: ${{ needs.gate.outputs.action == 'fix' }}
