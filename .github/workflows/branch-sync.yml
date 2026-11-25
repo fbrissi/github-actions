@@ -1,0 +1,173 @@
+name: Branch Sync
+
+on:
+  workflow_call:
+    inputs:
+      source:
+        description: Branch the target follows.
+        required: false
+        type: string
+        default: main
+      target:
+        description: Branch fast-forwarded to `source`. Created from `source` when it does not exist.
+        required: false
+        type: string
+        default: develop
+      mention:
+        description: Whitespace-separated logins mentioned when the target cannot fast-forward, besides the person who pushed (bots are never mentioned).
+        required: false
+        type: string
+        default: ""
+      agent-client-id:
+        description: Client ID of a GitHub App that updates the target, so the push triggers the target's workflows (a `GITHUB_TOKEN` update does not). Empty uses the `AGENT_APP_CLIENT_ID` variable, then `GITHUB_TOKEN` when no `AGENT_APP_PRIVATE_KEY` is given.
+        required: false
+        type: string
+        default: ""
+      app-token-permission-workflows:
+        description: Set to `write` when the App has the `Workflows` permission, so commits that change `.github/workflows/**` can be fast-forwarded. Empty does not request it; such commits are refused and reported in the sync issue.
+        required: false
+        type: string
+        default: ""
+      runs-on:
+        description: Runner label. Empty uses the `CI_RUNNER` variable, then `ubuntu-latest`.
+        required: false
+        type: string
+        default: ""
+    secrets:
+      AGENT_APP_PRIVATE_KEY:
+        description: Private key of the GitHub App that updates the target. Optional.
+        required: false
+    outputs:
+      result:
+        description: "`updated`, `created`, `up-to-date`, `diverged`, or `blocked` (the update was refused)."
+        value: ${{ jobs.sync.outputs.result }}
+
+concurrency:
+  group: fbrissi-branch-sync-${{ github.repository }}-${{ inputs.target }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  sync:
+    name: Branch Sync
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: write
+      issues: write
+    timeout-minutes: 5
+    outputs:
+      result: ${{ steps.sync.outputs.result }}
+    steps:
+      - name: Check settings
+        id: settings
+        env:
+          APP_CLIENT_ID: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          HAS_APP_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          if [ -n "$APP_CLIENT_ID" ] && [ "$HAS_APP_KEY" = 'true' ]; then
+            echo 'app=true' >> "$GITHUB_OUTPUT"
+          else
+            echo '::notice::No GitHub App configured; the target is updated with GITHUB_TOKEN, which does not trigger its workflows.'
+            echo 'app=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate GitHub App token
+        id: app-token
+        if: ${{ steps.settings.outputs.app == 'true' }}
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-issues: write
+          permission-workflows: ${{ inputs.app-token-permission-workflows }}
+
+      # Fast-forward only: the ref update is never forced. On divergence, one open issue tracks it and is closed again
+      # by the next successful sync.
+      - name: Fast-forward target
+        id: sync
+        uses: actions/github-script@v9
+        env:
+          SOURCE: ${{ inputs.source }}
+          TARGET: ${{ inputs.target }}
+          MENTION: ${{ inputs.mention }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token || github.token }}
+          script: |
+            const { owner, repo } = context.repo;
+            const source = process.env.SOURCE.trim();
+            const target = process.env.TARGET.trim();
+            const branch = /^[A-Za-z0-9._/-]+$/;
+            if (!branch.test(source) || !branch.test(target) || source === target) {
+              core.setFailed(`Invalid source '${source}' or target '${target}'.`);
+              return;
+            }
+            const marker = `<!-- branch-sync source=${source} target=${target} -->`;
+            const human = (login) => login && !/\[bot\]$/i.test(login) && login !== 'github-actions';
+            const mentions = [...new Set([context.actor, ...process.env.MENTION.split(/\s+/)].filter(human))].map((login) => `@${login}`).join(' ');
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+
+            const issues = await github.paginate(github.rest.issues.listForRepo, { owner, repo, state: 'open', per_page: 100 });
+            const tracking = issues.find((issue) => !issue.pull_request && issue.body?.includes(marker));
+
+            const { data: sourceRef } = await github.rest.git.getRef({ owner, repo, ref: `heads/${source}` });
+            const sha = sourceRef.object.sha;
+            let targetSha = null;
+            try {
+              ({ data: { object: { sha: targetSha } } } = await github.rest.git.getRef({ owner, repo, ref: `heads/${target}` }));
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+
+            let result;
+            let blocked = '';
+            if (targetSha === null) {
+              await github.rest.git.createRef({ owner, repo, ref: `refs/heads/${target}`, sha });
+              result = 'created';
+            } else if (targetSha === sha) {
+              result = 'up-to-date';
+            } else {
+              const { data: compare } = await github.rest.repos.compareCommitsWithBasehead({ owner, repo, basehead: `${target}...${sha}` });
+              if (compare.status === 'ahead') {
+                try {
+                  await github.rest.git.updateRef({ owner, repo, ref: `heads/${target}`, sha, force: false });
+                  result = 'updated';
+                } catch (error) {
+                  if (![403, 422].includes(error.status)) throw error;
+                  result = 'blocked';
+                  blocked = error.message;
+                }
+              } else if (compare.status === 'identical') {
+                result = 'up-to-date';
+              } else {
+                result = 'diverged';
+              }
+            }
+            core.setOutput('result', result);
+
+            if (result === 'diverged' || result === 'blocked') {
+              const why = result === 'blocked'
+                ? `the update was refused (${blocked}). If the new commits change \`.github/workflows/**\`, the App needs the \`Workflows\` permission and \`app-token-permission-workflows: write\`; otherwise check the target's branch rules. Fast-forward \`${target}\` by hand`
+                : `it has commits that \`${source}\` does not. Bring those commits into \`${source}\` (or reset \`${target}\` by hand)`;
+              const text = `${mentions ? `${mentions} ` : ''}\`${target}\` cannot be fast-forwarded to \`${source}\` (${sha.slice(0, 7)}): ${why}, and the next push to \`${source}\` syncs it again. Nothing was force-pushed. Run: ${runUrl}`;
+              if (tracking) {
+                await github.rest.issues.createComment({ owner, repo, issue_number: tracking.number, body: text });
+                core.warning(`${target} ${result} (from ${source}); commented on #${tracking.number}.`);
+              } else {
+                const { data: issue } = await github.rest.issues.create({
+                  owner,
+                  repo,
+                  title: `Branch sync: ${target} cannot fast-forward to ${source}`,
+                  body: `${marker}\n${text}\n`,
+                });
+                core.warning(`${target} ${result} (from ${source}); opened #${issue.number}.`);
+              }
+              return;
+            }
+            if (tracking) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: tracking.number, body: `\`${target}\` is in sync with \`${source}\` again (${result}): ${runUrl}` });
+              await github.rest.issues.update({ owner, repo, issue_number: tracking.number, state: 'closed', state_reason: 'completed' });
+            }
+            core.notice(`${target}: ${result} (${sha.slice(0, 7)}).`);

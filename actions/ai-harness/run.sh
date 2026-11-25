@@ -22,7 +22,17 @@ for name in OPENAI_API_KEY ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN GITHUB_TOKE
   fi
 done
 
+if [ -n "${AI_INSTRUCTIONS:-}" ]; then
+  AI_PROMPT="${AI_PROMPT}"$'\n\n'"Additional instructions for this run:"$'\n'"${AI_INSTRUCTIONS}"
+fi
+
 mkdir -p "$(dirname "$AI_OUTPUT_FILE")"
+
+agent="${AI_AGENT:-}"
+if [ -n "$agent" ] && ! [[ "$agent" =~ ^[A-Za-z0-9_.:-]+$ ]]; then
+  echo "::error::Invalid agent name '${agent}'."
+  exit 1
+fi
 
 case "$AI_HARNESS" in
   opencode)
@@ -35,6 +45,23 @@ case "$AI_HARNESS" in
     fi
     if [ -n "${OPENCODE_COMMAND:-}" ]; then
       command+=("--command=${OPENCODE_COMMAND}")
+    fi
+    if [ -n "$agent" ]; then
+      # OpenCode silently falls back to its default agent when the agent is missing or is a subagent.
+      agent_file="$HOME/.config/opencode/agents/$agent.md"
+      if [ ! -f "$agent_file" ]; then
+        echo "::error::Agent '${agent}' is not installed in ~/.config/opencode/agents; add it to the agents input."
+        exit 1
+      fi
+      if [ "$(agent_mode "$agent_file")" = 'subagent' ]; then
+        echo "::error::Agent '${agent}' has mode 'subagent'; OpenCode can run only a primary agent as the main agent."
+        exit 1
+      fi
+      if override="$(checkout_opencode_agent_override "$PWD" "$agent")"; then
+        echo "::error::The checkout defines ${override}, which would override the installed agent '${agent}'."
+        exit 1
+      fi
+      command+=("--agent=${agent}")
     fi
     command+=("$AI_PROMPT")
     timeout --foreground --kill-after=30s "${timeout_minutes}m" "${command[@]}" 2>&1 | tee "$AI_OUTPUT_FILE"
@@ -52,22 +79,18 @@ case "$AI_HARNESS" in
     if [ -n "${CLAUDE_EFFORT:-}" ]; then
       command+=(--effort "$CLAUDE_EFFORT")
     fi
-    if [ -n "${CLAUDE_AGENT:-}" ]; then
-      if ! [[ "$CLAUDE_AGENT" =~ ^[A-Za-z0-9_.:-]+$ ]]; then
-        echo "::error::Invalid agent name '${CLAUDE_AGENT}'."
-        exit 1
-      fi
-      if [[ "$CLAUDE_AGENT" != *:* ]]; then
-        if [ ! -f "$HOME/.claude/agents/$CLAUDE_AGENT.md" ]; then
-          echo "::error::Agent '${CLAUDE_AGENT}' is not installed in ~/.claude/agents; add it to the agents input."
+    if [ -n "$agent" ]; then
+      if [[ "$agent" != *:* ]]; then
+        if [ ! -f "$HOME/.claude/agents/$agent.md" ]; then
+          echo "::error::Agent '${agent}' is not installed in ~/.claude/agents; add it to the agents input."
           exit 1
         fi
-        if override="$(checkout_agent_override "$PWD" "$CLAUDE_AGENT")"; then
-          echo "::error::The checkout defines ${override}, which would override the installed agent '${CLAUDE_AGENT}'."
+        if override="$(checkout_agent_override "$PWD" "$agent")"; then
+          echo "::error::The checkout defines ${override}, which would override the installed agent '${agent}'."
           exit 1
         fi
       fi
-      command+=(--agent "$CLAUDE_AGENT")
+      command+=(--agent "$agent")
     fi
     printf '%s' "$AI_PROMPT" |
       timeout --foreground --kill-after=30s "${timeout_minutes}m" "${command[@]}" 2>&1 |

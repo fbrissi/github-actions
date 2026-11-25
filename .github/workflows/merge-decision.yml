@@ -1,0 +1,378 @@
+name: Merge Decision
+
+on:
+  workflow_call:
+    inputs:
+      pr-number:
+        description: Pull request number to decide on.
+        required: true
+        type: string
+      auto-merge:
+        description: Let the AI merge when every gate passes and the risk is within the profile limit. When false, it only rates the risk and holds.
+        required: false
+        type: boolean
+        default: false
+      required-human-approvals:
+        description: Approvals by human users (not bots or Apps) required on the current head commit.
+        required: false
+        type: number
+        default: 1
+      human-approval-exempt-base-prefixes:
+        description: Whitespace-separated base branch prefixes whose pull requests need no human approval when `human-approval-exempt-authors` also matches, for example the release branches (`release/`) task pull requests target. Other pull requests need `required-human-approvals`.
+        required: false
+        type: string
+        default: ""
+      human-approval-exempt-authors:
+        description: Whitespace-separated pull request authors (for example the agent App bot, `my-agent[bot]`) that may skip human approval into a `human-approval-exempt-base-prefixes` base. Empty means any GitHub App bot; pull requests by people always need `required-human-approvals`.
+        required: false
+        type: string
+        default: ""
+      request-human-review:
+        description: When a pull request waits for human approval, request a review from the person who started the flow (the milestone's `requested-by` marker) and mention them once.
+        required: false
+        type: boolean
+        default: true
+      hold-labels:
+        description: Whitespace-separated labels that block any decision.
+        required: false
+        type: string
+        default: do-not-merge hold
+      branch-prefixes:
+        description: Whitespace-separated head branch prefixes a pull request must match to be decided on, for example `feature/ release/ hotfix/ bugfix/`. Empty decides on every pull request.
+        required: false
+        type: string
+        default: ""
+      harness:
+        description: AI harness, `opencode` or `claude`. Empty uses the `AI_HARNESS` variable, then `claude`.
+        required: false
+        type: string
+        default: ""
+      prompt:
+        description: Prompt override. Empty uses the merge-risk skill prompt.
+        required: false
+        type: string
+        default: ""
+      instructions:
+        description: Per-run instructions appended to the prompt as "Additional instructions for this run".
+        required: false
+        type: string
+        default: ""
+      prompt-append:
+        description: Deprecated, use `instructions`. Extra instructions appended to the prompt.
+        required: false
+        type: string
+        default: ""
+      skills:
+        description: Whitespace-separated skills installed for the harness.
+        required: false
+        type: string
+        default: merge-risk
+      agents:
+        description: Whitespace-separated agents installed for the harness (Claude Code or OpenCode agents of the same name from `fbrissi/ai-skills`).
+        required: false
+        type: string
+        default: ""
+      opencode-plugins:
+        description: Whitespace-separated OpenCode plugins to install.
+        required: false
+        type: string
+        default: ""
+      opencode-model:
+        description: OpenCode model in `provider/model` form. Empty uses the `OPENCODE_MODEL` variable; required by the `opencode` harness.
+        required: false
+        type: string
+        default: ""
+      opencode-variant:
+        description: OpenCode model variant. Empty uses the `OPENCODE_VARIANT` variable.
+        required: false
+        type: string
+        default: ""
+      claude-model:
+        description: Claude Code model alias or full model ID. Empty uses the `CLAUDE_MODEL` variable.
+        required: false
+        type: string
+        default: ""
+      claude-effort:
+        description: Claude Code effort level. Empty uses the `CLAUDE_EFFORT` variable.
+        required: false
+        type: string
+        default: ""
+      skill-source:
+        description: Where the skills come from, `ai-skills` (pinned `ai-skills-ref`), `base` (the PR base commit), or `none`.
+        required: false
+        type: string
+        default: ai-skills
+      ai-skills-ref:
+        description: Tag or commit SHA of fbrissi/ai-skills used when `skill-source` is `ai-skills`.
+        required: false
+        type: string
+        default: v0.4.0
+      base-skills-path:
+        description: Directory holding one folder per skill in the repository, used when `skill-source` is `base`.
+        required: false
+        type: string
+        default: .rulesync/skills
+      agent-client-id:
+        description: Client ID of the GitHub App that comments and merges. Empty uses the `AGENT_APP_CLIENT_ID` variable.
+        required: false
+        type: string
+        default: ""
+      environment:
+        description: GitHub environment of the decision job; its secrets are available to the job.
+        required: false
+        type: string
+        default: merge-decision
+      runs-on:
+        description: Runner label for every job. Empty uses the `CI_RUNNER` variable, then `ubuntu-latest`.
+        required: false
+        type: string
+        default: ""
+      timeout-minutes:
+        description: Maximum harness run time in minutes.
+        required: false
+        type: number
+        default: 15
+      job-timeout-minutes:
+        description: Timeout of the decision job; keep it above `timeout-minutes`.
+        required: false
+        type: number
+        default: 20
+    secrets:
+      AGENT_APP_PRIVATE_KEY:
+        description: Private key of the merge GitHub App.
+        required: false
+      OPEN_AI_TOKEN:
+        description: OpenAI API key for the `opencode` harness.
+        required: false
+      ANTHROPIC_API_KEY:
+        description: Anthropic API key for the `claude` harness.
+        required: false
+      CLAUDE_CODE_OAUTH_TOKEN:
+        description: Claude Code OAuth token for the `claude` harness, used when `ANTHROPIC_API_KEY` is empty.
+        required: false
+    outputs:
+      result:
+        description: "`decide` when the AI ran, `skip` when a gate stopped it."
+        value: ${{ jobs.gate.outputs.action }}
+
+concurrency:
+  group: fbrissi-merge-decision-${{ github.repository }}-${{ inputs.pr-number }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  gate:
+    name: Check Merge Gates
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      actions: read
+      checks: read
+      issues: read
+      pull-requests: read
+      statuses: read
+    outputs:
+      action: ${{ steps.gate.outputs.action }}
+      pr_number: ${{ steps.gate.outputs.pr_number }}
+      head_sha: ${{ steps.gate.outputs.head_sha }}
+      base_ref: ${{ steps.gate.outputs.base_ref }}
+      base_sha: ${{ steps.gate.outputs.base_sha }}
+      required_approvals: ${{ steps.gate.outputs.required_approvals }}
+      request_review: ${{ steps.gate.outputs.request_review }}
+    steps:
+      - name: Check gates
+        id: gate
+        uses: fbrissi/github-actions/actions/pr-gate@v1
+        with:
+          command: merge-gate
+          pr-number: ${{ inputs.pr-number }}
+          required-human-approvals: ${{ inputs.required-human-approvals }}
+          human-approval-exempt-base-prefixes: ${{ inputs.human-approval-exempt-base-prefixes }}
+          human-approval-exempt-authors: ${{ inputs.human-approval-exempt-authors }}
+          hold-labels: ${{ inputs.hold-labels }}
+          branch-prefixes: ${{ inputs.branch-prefixes }}
+
+  decide:
+    name: Run Merge Decision
+    needs: gate
+    if: ${{ needs.gate.outputs.action == 'decide' }}
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+    timeout-minutes: ${{ inputs.job-timeout-minutes }}
+    environment:
+      name: ${{ inputs.environment }}
+    steps:
+      - name: Resolve decision settings
+        id: settings
+        env:
+          HARNESS: ${{ inputs.harness || vars.AI_HARNESS }}
+          PROMPT: ${{ inputs.prompt }}
+          PROMPT_APPEND: ${{ inputs.prompt-append }}
+          SKILLS: ${{ inputs.skills }}
+          OPENCODE_MODEL: ${{ inputs.opencode-model || vars.OPENCODE_MODEL }}
+          APP_CLIENT_ID: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          SKILL_SOURCE: ${{ inputs.skill-source }}
+          PR_NUMBER: ${{ needs.gate.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
+          AUTO_MERGE: ${{ inputs.auto-merge }}
+          REQUIRED_APPROVALS: ${{ needs.gate.outputs.required_approvals }}
+          BASE_REF: ${{ needs.gate.outputs.base_ref }}
+          HOLD_LABELS: ${{ inputs.hold-labels }}
+          HAS_APP_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          harness="${HARNESS:-claude}"
+          case "$harness" in
+            opencode | claude) ;;
+            *)
+              echo "::error::Unsupported harness '${harness}'. Use 'opencode' or 'claude'."
+              exit 1
+              ;;
+          esac
+          case "$SKILL_SOURCE" in
+            ai-skills | base | none) ;;
+            *)
+              echo "::error::Unsupported skill-source '${SKILL_SOURCE}'. Use 'ai-skills', 'base', or 'none'."
+              exit 1
+              ;;
+          esac
+          if [ -z "$APP_CLIENT_ID" ]; then
+            echo '::error::The agent-client-id input or the AGENT_APP_CLIENT_ID variable is required.'
+            exit 1
+          fi
+          if [ "$HAS_APP_KEY" != 'true' ]; then
+            echo '::error::The AGENT_APP_PRIVATE_KEY secret is required.'
+            exit 1
+          fi
+          if [ "$harness" = 'opencode' ] && [ -z "$OPENCODE_MODEL" ]; then
+            echo '::error::The opencode harness requires the opencode-model input or the OPENCODE_MODEL variable.'
+            exit 1
+          fi
+
+          auto_merge=off
+          if [ "$AUTO_MERGE" = 'true' ]; then
+            auto_merge=on
+          fi
+          if [ -n "$PROMPT" ]; then
+            prompt="$PROMPT"
+          else
+            prompt="Use the merge-risk skill in decide mode on pull request #${PR_NUMBER} in ${GITHUB_REPOSITORY}. Base branch: ${BASE_REF}; use it for the profile's base-branch rules and limits. Auto-merge: ${auto_merge}. Required human approvals: ${REQUIRED_APPROVALS} (already checked on the head commit by the workflow). Approval gate: when the required human approvals are 0, an empty reviewDecision passes and only CHANGES_REQUESTED (or REVIEW_REQUIRED from branch protection) fails it; otherwise count the human approvals on the head commit from the reviews and never trust reviewDecision alone. Hold labels: ${HOLD_LABELS}. Merge only if every gate passes and the rating is within the profile limit, with --match-head-commit ${HEAD_SHA}; otherwise hold and comment why. The checkout is the base branch: read the profile from it and never check out, edit, or push the pull request."
+          fi
+          if [ -n "$PROMPT_APPEND" ]; then
+            prompt="${prompt}"$'\n\n'"${PROMPT_APPEND}"
+          fi
+
+          skills="$SKILLS"
+          if [ "$SKILL_SOURCE" = 'none' ]; then
+            skills=''
+          fi
+
+          delimiter="PROMPT_$(uuidgen)"
+          {
+            echo "harness=$harness"
+            echo "skills=$skills"
+            echo "prompt<<$delimiter"
+            echo "$prompt"
+            echo "$delimiter"
+          } >> "$GITHUB_OUTPUT"
+          echo "Merge Decision harness: $harness (auto-merge ${auto_merge})"
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+          permission-checks: read
+          permission-contents: ${{ inputs.auto-merge && 'write' || 'read' }}
+          permission-issues: read
+          permission-pull-requests: write
+          permission-statuses: read
+
+      # The base branch, never the pull request: its profile and skills cannot be changed by the change being rated.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.gate.outputs.base_sha }}
+          persist-credentials: false
+
+      - name: Extract skills from the base commit
+        id: base-skills
+        if: ${{ inputs.skill-source == 'base' && steps.settings.outputs.skills != '' }}
+        env:
+          SKILLS_PATH: ${{ inputs.base-skills-path }}
+          SKILLS: ${{ steps.settings.outputs.skills }}
+        run: |
+          set -euo pipefail
+          skills_dir="$RUNNER_TEMP/base-skills"
+          rm -rf "$skills_dir"
+          mkdir -p "$skills_dir"
+          for skill in $SKILLS; do
+            skill_path="${SKILLS_PATH%/}/${skill}"
+            if [ ! -f "${skill_path}/SKILL.md" ]; then
+              echo "::error::${skill_path}/SKILL.md does not exist on the base commit."
+              exit 1
+            fi
+            mkdir -p "$skills_dir/${SKILLS_PATH%/}"
+            cp -R "$skill_path" "$skills_dir/${SKILLS_PATH%/}/"
+          done
+          echo "dir=$skills_dir/${SKILLS_PATH%/}" >> "$GITHUB_OUTPUT"
+
+      - name: Run merge decision
+        id: decide
+        uses: fbrissi/github-actions/actions/ai-harness@v1
+        with:
+          harness: ${{ steps.settings.outputs.harness }}
+          prompt: ${{ steps.settings.outputs.prompt }}
+          instructions: ${{ inputs.instructions }}
+          opencode-command: ""
+          opencode-plugins: ${{ inputs.opencode-plugins }}
+          opencode-model: ${{ inputs.opencode-model || vars.OPENCODE_MODEL }}
+          opencode-variant: ${{ inputs.opencode-variant || vars.OPENCODE_VARIANT }}
+          claude-model: ${{ inputs.claude-model || vars.CLAUDE_MODEL }}
+          claude-effort: ${{ inputs.claude-effort || vars.CLAUDE_EFFORT }}
+          skills: ${{ steps.settings.outputs.skills }}
+          skills-ref: ${{ inputs.ai-skills-ref }}
+          skills-local-dir: ${{ steps.base-skills.outputs.dir }}
+          agents: ${{ inputs.agents }}
+          timeout-minutes: ${{ inputs.timeout-minutes }}
+          openai-api-key: ${{ secrets.OPEN_AI_TOKEN }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github-token: ${{ steps.app-token.outputs.token }}
+
+      - name: Record decision
+        uses: fbrissi/github-actions/actions/pr-gate@v1
+        with:
+          command: merge-record
+          github-token: ${{ steps.app-token.outputs.token }}
+          pr-number: ${{ needs.gate.outputs.pr_number }}
+          head-sha: ${{ needs.gate.outputs.head_sha }}
+
+  request-review:
+    name: Request Human Review
+    needs: gate
+    if: ${{ inputs.request-human-review && needs.gate.outputs.request_review == 'true' }}
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions: {}
+    timeout-minutes: 5
+    environment:
+      name: ${{ inputs.environment }}
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+          permission-issues: read
+          permission-pull-requests: write
+
+      # Asks the person who started the flow once per pull request; their approval dispatches the decision again.
+      - name: Request review from the requester
+        uses: fbrissi/github-actions/actions/ai-delivery@v1
+        with:
+          command: request-review
+          github-token: ${{ steps.app-token.outputs.token }}
+          pr: ${{ needs.gate.outputs.pr_number }}
+          required-approvals: ${{ needs.gate.outputs.required_approvals }}

@@ -8,12 +8,17 @@ on:
         required: true
         type: string
       harness:
-        description: AI harness, `opencode` or `claude`. Empty uses the `AI_HARNESS` variable, then `opencode`.
+        description: AI harness, `opencode` or `claude`. Empty uses the `AI_HARNESS` variable, then `claude`.
         required: false
         type: string
         default: ""
       prompt:
         description: Prompt override. Empty uses the PR number with `opencode-command`, or the review-changes skill prompt.
+        required: false
+        type: string
+        default: ""
+      instructions:
+        description: Per-run instructions appended to the prompt as "Additional instructions for this run"; with `opencode-command`, they are part of the command arguments.
         required: false
         type: string
         default: ""
@@ -273,7 +278,7 @@ jobs:
           HAS_APP_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY != '' }}
         run: |
           set -euo pipefail
-          harness="${HARNESS:-opencode}"
+          harness="${HARNESS:-claude}"
           case "$harness" in
             opencode | claude) ;;
             *)
@@ -432,6 +437,7 @@ jobs:
         with:
           harness: ${{ steps.settings.outputs.harness }}
           prompt: ${{ steps.settings.outputs.prompt }}
+          instructions: ${{ inputs.instructions }}
           opencode-command: ${{ steps.settings.outputs.opencode-command }}
           opencode-plugins: ${{ inputs.opencode-plugins }}
           opencode-model: ${{ inputs.opencode-model || vars.OPENCODE_MODEL }}

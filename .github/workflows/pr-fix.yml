@@ -1,0 +1,474 @@
+name: PR Fix
+
+on:
+  workflow_call:
+    inputs:
+      pr-number:
+        description: Pull request number to fix.
+        required: true
+        type: string
+      opt-in-label:
+        description: Label that opts a pull request into automatic fixes. Empty only accepts `branch-prefixes`.
+        required: false
+        type: string
+        default: ai:auto-fix
+      branch-prefixes:
+        description: Whitespace-separated head branch prefixes that also opt a pull request in, for example `ai/ bot/`.
+        required: false
+        type: string
+        default: ""
+      max-rounds:
+        description: Fix passes allowed before the pull request is escalated to a human.
+        required: false
+        type: number
+        default: 3
+      escalation-label:
+        description: Label added when `max-rounds` is reached; while it is present, no fix runs. Remove it to allow `max-rounds` more passes.
+        required: false
+        type: string
+        default: ai:needs-human
+      harness:
+        description: AI harness, `opencode` or `claude`. Empty uses the `AI_HARNESS` variable, then `claude`.
+        required: false
+        type: string
+        default: ""
+      prompt:
+        description: Prompt override. Empty uses the pr-fix skill prompt.
+        required: false
+        type: string
+        default: ""
+      instructions:
+        description: Per-run instructions appended to the prompt as "Additional instructions for this run".
+        required: false
+        type: string
+        default: ""
+      prompt-append:
+        description: Deprecated, use `instructions`. Extra instructions appended to the prompt, for example project priorities.
+        required: false
+        type: string
+        default: ""
+      skills:
+        description: Whitespace-separated skills installed for the harness.
+        required: false
+        type: string
+        default: pr-fix pr-checks
+      agents:
+        description: Whitespace-separated agents installed for the harness (Claude Code or OpenCode agents of the same name from `fbrissi/ai-skills`).
+        required: false
+        type: string
+        default: ""
+      opencode-plugins:
+        description: Whitespace-separated OpenCode plugins to install.
+        required: false
+        type: string
+        default: ""
+      opencode-model:
+        description: OpenCode model in `provider/model` form. Empty uses the `OPENCODE_MODEL` variable; required by the `opencode` harness.
+        required: false
+        type: string
+        default: ""
+      opencode-variant:
+        description: OpenCode model variant. Empty uses the `OPENCODE_VARIANT` variable.
+        required: false
+        type: string
+        default: ""
+      claude-model:
+        description: Claude Code model alias or full model ID. Empty uses the `CLAUDE_MODEL` variable.
+        required: false
+        type: string
+        default: ""
+      claude-effort:
+        description: Claude Code effort level. Empty uses the `CLAUDE_EFFORT` variable.
+        required: false
+        type: string
+        default: ""
+      skill-source:
+        description: Where the skills come from, `ai-skills` (pinned `ai-skills-ref`), `base` (the PR base commit), or `none`.
+        required: false
+        type: string
+        default: ai-skills
+      ai-skills-ref:
+        description: Tag or commit SHA of fbrissi/ai-skills used when `skill-source` is `ai-skills`.
+        required: false
+        type: string
+        default: v0.4.0
+      base-skills-path:
+        description: Directory holding one folder per skill in the repository, used when `skill-source` is `base`.
+        required: false
+        type: string
+        default: .rulesync/skills
+      agent-client-id:
+        description: Client ID of the GitHub App that pushes fixes and replies. Empty uses the `AGENT_APP_CLIENT_ID` variable.
+        required: false
+        type: string
+        default: ""
+      check-name:
+        description: Name of the check run reported on the PR head commit.
+        required: false
+        type: string
+        default: PR Fix
+      environment:
+        description: GitHub environment of the fix job; its secrets are available to the job.
+        required: false
+        type: string
+        default: pr-fix
+      runs-on:
+        description: Runner label for every job. Empty uses the `CI_RUNNER` variable, then `ubuntu-latest`.
+        required: false
+        type: string
+        default: ""
+      timeout-minutes:
+        description: Maximum harness run time in minutes.
+        required: false
+        type: number
+        default: 25
+      job-timeout-minutes:
+        description: Timeout of the fix job; keep it above `timeout-minutes`.
+        required: false
+        type: number
+        default: 30
+      node-version:
+        description: Node.js version installed before `install-command`. Empty skips actions/setup-node.
+        required: false
+        type: string
+        default: ""
+      node-cache:
+        description: Package manager cache for actions/setup-node (`npm`, `yarn`, or `pnpm`). Only used with `save-dependency-cache`. Empty disables it.
+        required: false
+        type: string
+        default: ""
+      install-command:
+        description: Command that installs the project dependencies the fixer may run. Empty skips it.
+        required: false
+        type: string
+        default: ""
+      dependency-cache-path:
+        description: Paths cached around `install-command`, for example `node_modules`. Empty disables the cache.
+        required: false
+        type: string
+        default: ""
+      dependency-cache-prefix:
+        description: Cache key prefix; the key is `<prefix>-<os>-<arch>-<hash of dependency-cache-files>`.
+        required: false
+        type: string
+        default: pr-fix-deps-v1
+      dependency-cache-files:
+        description: Glob whose files are hashed into the dependency cache key.
+        required: false
+        type: string
+        default: "**/{package-lock.json,yarn.lock,pnpm-lock.yaml}"
+      save-dependency-cache:
+        description: Save the dependency cache after installing the pull request's dependencies. Off by default; warm the cache from the default branch instead.
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      AGENT_APP_PRIVATE_KEY:
+        description: Private key of the fixer GitHub App.
+        required: false
+      OPEN_AI_TOKEN:
+        description: OpenAI API key for the `opencode` harness.
+        required: false
+      ANTHROPIC_API_KEY:
+        description: Anthropic API key for the `claude` harness.
+        required: false
+      CLAUDE_CODE_OAUTH_TOKEN:
+        description: Claude Code OAuth token for the `claude` harness, used when `ANTHROPIC_API_KEY` is empty.
+        required: false
+    outputs:
+      result:
+        description: "`fix`, `escalate`, or `skip`."
+        value: ${{ jobs.gate.outputs.action }}
+
+concurrency:
+  group: fbrissi-pr-fix-${{ github.repository }}-${{ inputs.pr-number }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  gate:
+    name: Check PR Fix Gates
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      checks: write
+      issues: read
+      pull-requests: read
+    outputs:
+      action: ${{ steps.gate.outputs.action }}
+      round: ${{ steps.gate.outputs.round }}
+      pr_number: ${{ steps.gate.outputs.pr_number }}
+      head_ref: ${{ steps.gate.outputs.head_ref }}
+      base_sha: ${{ steps.gate.outputs.base_sha }}
+      check_run_id: ${{ steps.gate.outputs.check_run_id }}
+    steps:
+      - name: Check gates
+        id: gate
+        uses: fbrissi/github-actions/actions/pr-gate@v1
+        with:
+          command: fix-gate
+          pr-number: ${{ inputs.pr-number }}
+          opt-in-label: ${{ inputs.opt-in-label }}
+          branch-prefixes: ${{ inputs.branch-prefixes }}
+          max-rounds: ${{ inputs.max-rounds }}
+          escalation-label: ${{ inputs.escalation-label }}
+          check-name: ${{ inputs.check-name }}
+
+  fix:
+    name: Run PR Fix
+    needs: gate
+    if: ${{ needs.gate.outputs.action == 'fix' || needs.gate.outputs.action == 'escalate' }}
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions: {}
+    timeout-minutes: ${{ inputs.job-timeout-minutes }}
+    environment:
+      name: ${{ inputs.environment }}
+    steps:
+      - name: Resolve fix settings
+        id: settings
+        env:
+          ACTION: ${{ needs.gate.outputs.action }}
+          HARNESS: ${{ inputs.harness || vars.AI_HARNESS }}
+          PROMPT: ${{ inputs.prompt }}
+          PROMPT_APPEND: ${{ inputs.prompt-append }}
+          SKILLS: ${{ inputs.skills }}
+          OPENCODE_MODEL: ${{ inputs.opencode-model || vars.OPENCODE_MODEL }}
+          APP_CLIENT_ID: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          SKILL_SOURCE: ${{ inputs.skill-source }}
+          PR_NUMBER: ${{ needs.gate.outputs.pr_number }}
+          HAS_APP_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          if [ -z "$APP_CLIENT_ID" ]; then
+            echo '::error::The agent-client-id input or the AGENT_APP_CLIENT_ID variable is required.'
+            exit 1
+          fi
+          if [ "$HAS_APP_KEY" != 'true' ]; then
+            echo '::error::The AGENT_APP_PRIVATE_KEY secret is required.'
+            exit 1
+          fi
+          if [ "$ACTION" != 'fix' ]; then
+            exit 0
+          fi
+          harness="${HARNESS:-claude}"
+          case "$harness" in
+            opencode | claude) ;;
+            *)
+              echo "::error::Unsupported harness '${harness}'. Use 'opencode' or 'claude'."
+              exit 1
+              ;;
+          esac
+          case "$SKILL_SOURCE" in
+            ai-skills | base | none) ;;
+            *)
+              echo "::error::Unsupported skill-source '${SKILL_SOURCE}'. Use 'ai-skills', 'base', or 'none'."
+              exit 1
+              ;;
+          esac
+          if [ "$harness" = 'opencode' ] && [ -z "$OPENCODE_MODEL" ]; then
+            echo '::error::The opencode harness requires the opencode-model input or the OPENCODE_MODEL variable.'
+            exit 1
+          fi
+
+          if [ -n "$PROMPT" ]; then
+            prompt="$PROMPT"
+          else
+            prompt="Use the pr-fix skill in auto mode on pull request #${PR_NUMBER} in ${GITHUB_REPOSITORY}: one pass; fix what is valid, push, and reply in each thread. Do not watch CI or wait for new comments. Never edit .github/workflows/**, never force-push, never merge."
+          fi
+          if [ -n "$PROMPT_APPEND" ]; then
+            prompt="${prompt}"$'\n\n'"${PROMPT_APPEND}"
+          fi
+
+          skills="$SKILLS"
+          if [ "$SKILL_SOURCE" = 'none' ]; then
+            skills=''
+          fi
+
+          delimiter="PROMPT_$(uuidgen)"
+          {
+            echo "harness=$harness"
+            echo "skills=$skills"
+            echo "prompt<<$delimiter"
+            echo "$prompt"
+            echo "$delimiter"
+          } >> "$GITHUB_OUTPUT"
+          echo "PR Fix harness: $harness"
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+          permission-actions: read
+          permission-checks: read
+          permission-contents: write
+          permission-issues: read
+          permission-pull-requests: write
+
+      - name: Escalate to a human
+        if: ${{ needs.gate.outputs.action == 'escalate' }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ needs.gate.outputs.pr_number }}
+          ESCALATION_LABEL: ${{ inputs.escalation-label }}
+          MAX_ROUNDS: ${{ inputs.max-rounds }}
+        run: |
+          set -euo pipefail
+          if [ -n "$ESCALATION_LABEL" ]; then
+            gh api --silent "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels" -f "labels[]=${ESCALATION_LABEL}"
+          fi
+          echo "skipped: escalated after ${MAX_ROUNDS} rounds" >> "$GITHUB_STEP_SUMMARY"
+
+      # Mentions the requester from the milestone marker and offers the `/ai-resume` command (handled by ai-resume.yml).
+      - name: Hand off to a human
+        if: ${{ needs.gate.outputs.action == 'escalate' }}
+        uses: fbrissi/github-actions/actions/ai-delivery@v1
+        with:
+          command: handoff
+          github-token: ${{ steps.app-token.outputs.token }}
+          task: pr-fix
+          pr: ${{ needs.gate.outputs.pr_number }}
+          marker: "<!-- pr-fix escalated -->"
+          escalation-label: ${{ inputs.escalation-label }}
+          blocker: >-
+            Automatic fixes stopped after ${{ inputs.max-rounds }} rounds without a clean pull request; read the open
+            review threads and failing checks, answer or fix what the fixer could not, then resume.
+            ${{ inputs.escalation-label != '' && format('Resuming removes the `{0}` label and allows {1} more rounds.', inputs.escalation-label, inputs.max-rounds) || '' }}
+
+      - uses: actions/checkout@v7
+        if: ${{ needs.gate.outputs.action == 'fix' }}
+        with:
+          ref: ${{ needs.gate.outputs.head_ref }}
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0
+
+      - name: Configure git identity
+        id: git
+        if: ${{ needs.gate.outputs.action == 'fix' }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          bot="${APP_SLUG}[bot]"
+          bot_id="$(gh api "users/${bot}" --jq .id)"
+          git config user.name "$bot"
+          git config user.email "${bot_id}+${bot}@users.noreply.github.com"
+          echo "start_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Extract skills from the base commit
+        id: base-skills
+        if: ${{ needs.gate.outputs.action == 'fix' && inputs.skill-source == 'base' && steps.settings.outputs.skills != '' }}
+        env:
+          BASE_SHA: ${{ needs.gate.outputs.base_sha }}
+          SKILLS_PATH: ${{ inputs.base-skills-path }}
+          SKILLS: ${{ steps.settings.outputs.skills }}
+        run: |
+          set -euo pipefail
+          # Read the skills from the base commit so a pull request cannot rewrite its own fixer.
+          paths=()
+          for skill in $SKILLS; do
+            skill_path="${SKILLS_PATH%/}/${skill}"
+            if ! git cat-file -e "${BASE_SHA}:${skill_path}/SKILL.md" 2>/dev/null; then
+              echo "::error::${skill_path}/SKILL.md does not exist on the base commit ${BASE_SHA}."
+              exit 1
+            fi
+            paths+=("$skill_path")
+          done
+          skills_dir="$RUNNER_TEMP/base-skills"
+          rm -rf "$skills_dir"
+          mkdir -p "$skills_dir"
+          git archive "$BASE_SHA" "${paths[@]}" | tar -x -C "$skills_dir"
+          echo "dir=$skills_dir/${SKILLS_PATH%/}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache/restore@v6
+        id: dependency-cache
+        if: ${{ needs.gate.outputs.action == 'fix' && inputs.dependency-cache-path != '' }}
+        with:
+          path: ${{ inputs.dependency-cache-path }}
+          key: ${{ inputs.dependency-cache-prefix }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(inputs.dependency-cache-files) }}
+
+      - uses: actions/setup-node@v7
+        if: ${{ needs.gate.outputs.action == 'fix' && inputs.node-version != '' }}
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: ${{ inputs.save-dependency-cache && inputs.node-cache || '' }}
+
+      - name: Install dependencies
+        if: ${{ needs.gate.outputs.action == 'fix' && inputs.install-command != '' && steps.dependency-cache.outputs.cache-hit != 'true' }}
+        env:
+          INSTALL_COMMAND: ${{ inputs.install-command }}
+        run: bash -euo pipefail -c "$INSTALL_COMMAND"
+
+      - name: Save dependency cache
+        if: ${{ needs.gate.outputs.action == 'fix' && inputs.save-dependency-cache && inputs.dependency-cache-path != '' && inputs.install-command != '' && steps.dependency-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ inputs.dependency-cache-path }}
+          key: ${{ steps.dependency-cache.outputs.cache-primary-key }}
+
+      - name: Run AI fix
+        id: fix
+        if: ${{ needs.gate.outputs.action == 'fix' }}
+        uses: fbrissi/github-actions/actions/ai-harness@v1
+        with:
+          harness: ${{ steps.settings.outputs.harness }}
+          prompt: ${{ steps.settings.outputs.prompt }}
+          instructions: ${{ inputs.instructions }}
+          opencode-command: ""
+          opencode-plugins: ${{ inputs.opencode-plugins }}
+          opencode-model: ${{ inputs.opencode-model || vars.OPENCODE_MODEL }}
+          opencode-variant: ${{ inputs.opencode-variant || vars.OPENCODE_VARIANT }}
+          claude-model: ${{ inputs.claude-model || vars.CLAUDE_MODEL }}
+          claude-effort: ${{ inputs.claude-effort || vars.CLAUDE_EFFORT }}
+          skills: ${{ steps.settings.outputs.skills }}
+          skills-ref: ${{ inputs.ai-skills-ref }}
+          skills-local-dir: ${{ steps.base-skills.outputs.dir }}
+          agents: ${{ inputs.agents }}
+          timeout-minutes: ${{ inputs.timeout-minutes }}
+          openai-api-key: ${{ secrets.OPEN_AI_TOKEN }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github-token: ${{ steps.app-token.outputs.token }}
+
+      - name: Record fix round
+        if: ${{ always() && (steps.fix.outcome == 'success' || steps.fix.outcome == 'failure') }}
+        uses: fbrissi/github-actions/actions/pr-gate@v1
+        with:
+          command: fix-record
+          github-token: ${{ steps.app-token.outputs.token }}
+          pr-number: ${{ needs.gate.outputs.pr_number }}
+          round: ${{ needs.gate.outputs.round }}
+          max-rounds: ${{ inputs.max-rounds }}
+          start-sha: ${{ steps.git.outputs.start_sha }}
+          outcome: ${{ steps.fix.outcome }}
+
+      - name: Verify no force-push
+        if: ${{ always() && (steps.fix.outcome == 'success' || steps.fix.outcome == 'failure') }}
+        env:
+          HEAD_REF: ${{ needs.gate.outputs.head_ref }}
+          START_SHA: ${{ steps.git.outputs.start_sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "refs/heads/${HEAD_REF}"
+          if ! git merge-base --is-ancestor "$START_SHA" FETCH_HEAD; then
+            echo "::error::${HEAD_REF} no longer contains ${START_SHA}; the branch was rewritten."
+            exit 1
+          fi
+
+  finish:
+    name: Finish PR Fix
+    needs: [gate, fix]
+    if: ${{ always() && !cancelled() && needs.gate.outputs.action == 'fix' }}
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      checks: write
+    steps:
+      - name: Complete check run
+        uses: fbrissi/github-actions/actions/pr-gate@v1
+        with:
+          command: fix-finish
+          result: ${{ needs.fix.result }}
+          check-run-id: ${{ needs.gate.outputs.check_run_id }}
+          check-name: ${{ inputs.check-name }}
