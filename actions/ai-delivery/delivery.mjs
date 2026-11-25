@@ -22,13 +22,14 @@ export const NEXT_STEP = {
 };
 
 // workflow_dispatch inputs each stage caller declares. Only these are sent.
+// `instructions` is only sent by a resume; chained dispatches never set it.
 export const STAGE_INPUTS = {
-  'business-refinement': ['milestone', 'jira_key', 'requested_by'],
-  'technical-refinement': ['milestone', 'issue', 'requested_by'],
-  'readiness-review': ['milestone', 'issue', 'requested_by'],
-  orchestrate: ['milestone', 'requested_by'],
-  implement: ['issue', 'branch', 'base_branch', 'requested_by'],
-  'pr-fix': ['pr_number']
+  'business-refinement': ['milestone', 'jira_key', 'requested_by', 'instructions'],
+  'technical-refinement': ['milestone', 'issue', 'requested_by', 'instructions'],
+  'readiness-review': ['milestone', 'issue', 'requested_by', 'instructions'],
+  orchestrate: ['milestone', 'requested_by', 'instructions'],
+  implement: ['issue', 'branch', 'base_branch', 'requested_by', 'instructions'],
+  'pr-fix': ['pr_number', 'instructions']
 };
 
 export const STATES = [
@@ -154,7 +155,7 @@ export function upsertDispatchCounts(description = '', counts = {}) {
   return text ? `${text.replace(/\s+$/, '')}\n\n${marker}` : marker;
 }
 
-export const MARKER_FIELDS = ['stage', 'milestone', 'issue', 'pr', 'requested-by', 'branch', 'base', 'jira', 'label', 'workflow'];
+export const MARKER_FIELDS = ['stage', 'milestone', 'issue', 'pr', 'requested-by', 'branch', 'base', 'jira', 'label', 'workflow', 'state'];
 const RESUME_MARKER = /<!-- ai-resume ([^>]*?) -->/;
 
 export function formatResumeMarker(fields) {
@@ -168,8 +169,39 @@ export function parseResumeMarker(body = '') {
   return Object.fromEntries(MARKER_FIELDS.map((name) => [name, (parsed[name] ?? '').trim()]));
 }
 
+// Handoffs posted before the slash command offered a checkbox instead of the reply line; both still resume.
 export const UNCHECKED_BOX = /^[ \t]*[-*] \[ \] Resume:.*$/m;
-export const CHECKED_BOX = /^[ \t]*[-*] \[[xX]\] Resume:.*$/m;
+export const RESUME_LINE = /^(?:Reply `\/ai-resume`.*|[ \t]*[-*] \[[ xX]\] Resume:.*)$/m;
+
+// A handoff is open while its marker says so; legacy markers without a state are open while the box is unchecked.
+export function isOpenHandoff(body = '') {
+  const fields = parseResumeMarker(body);
+  if (!fields) return false;
+  return fields.state ? fields.state === 'open' : UNCHECKED_BOX.test(body ?? '');
+}
+
+export function setHandoffState(body, state, line) {
+  const fields = parseResumeMarker(body);
+  if (!fields) return body;
+  const next = body.replace(RESUME_MARKER, formatResumeMarker({ ...fields, state }));
+  return line ? next.replace(RESUME_LINE, line) : next;
+}
+
+// `/ai-resume [stage] [instructions]` on the first line; the following lines are more instructions.
+export function parseResumeCommand(body = '') {
+  const [first = '', ...rest] = (body ?? '').replace(/^\s+/, '').split(/\r?\n/);
+  const match = /^\/ai-resume(?:\s+(.*))?$/.exec(first.trim());
+  if (!match) return null;
+  let tail = (match[1] ?? '').trim();
+  let stage = '';
+  const [word] = words(tail);
+  if (word && STAGES.includes(word)) {
+    stage = word;
+    tail = tail.slice(word.length).trim();
+  }
+  const instructions = [tail, ...rest].join('\n').trim();
+  return { stage, instructions };
+}
 
 // The milestone title -> Jira key, from a template such as `JIRA:{key}`.
 export function keyFromMilestone(title = '', template = '') {
@@ -206,7 +238,7 @@ export function resumeCommand(workflow, inputs, { removeLabel = '', pr = '' } = 
 }
 
 // Values the marker and the dispatch share, from the handoff fields.
-export function resumeValues(fields, requestedBy = fields['requested-by']) {
+export function resumeValues(fields, requestedBy = fields['requested-by'], instructions = '') {
   return {
     milestone: fields.milestone,
     issue: fields.issue,
@@ -214,7 +246,8 @@ export function resumeValues(fields, requestedBy = fields['requested-by']) {
     branch: fields.branch,
     base_branch: fields.base,
     pr_number: fields.pr,
-    requested_by: requestedBy
+    requested_by: requestedBy,
+    instructions
   };
 }
 
@@ -233,7 +266,7 @@ export function buildHandoff({
   links = [],
   markers = []
 }) {
-  const fields = { stage, milestone, issue: String(issue || ''), pr: String(pr || ''), 'requested-by': humanLogin(requestedBy), branch, base, jira, label, workflow };
+  const fields = { stage, milestone, issue: String(issue || ''), pr: String(pr || ''), 'requested-by': humanLogin(requestedBy), branch, base, jira, label, workflow, state: 'open' };
   const where = [milestone && `milestone \`${milestone}\``, pr ? `pull request #${pr}` : issue && `issue #${issue}`].filter(Boolean).join(', ');
   const mention = fields['requested-by'] ? `@${fields['requested-by']} ` : '';
   const command = resumeCommand(workflow, dispatchInputs(stage, resumeValues(fields)), { removeLabel: stage === 'pr-fix' ? label : '', pr });
@@ -244,9 +277,8 @@ export function buildHandoff({
     ...lines(blocker).slice(0, 3),
     ...(links.length > 0 ? ['', `Questions and details: ${links.join(', ')}`] : []),
     '',
-    'Answer where the questions are, then check the box to resume:',
-    '',
-    `- [ ] Resume: ${stage} -> continues automatically to ${NEXT_STEP[stage]}`,
+    'Answer where the questions are, then resume.',
+    `Reply \`/ai-resume\` (optionally with instructions on the next lines) to continue: ${stage} -> ${NEXT_STEP[stage]}.`,
     formatResumeMarker(fields),
     '',
     '<details>',
@@ -263,7 +295,7 @@ export function buildHandoff({
 
 export function hasOpenHandoff(comments, stage) {
   return comments.some((comment) => comment.user?.type === 'Bot'
-    && UNCHECKED_BOX.test(comment.body ?? '')
+    && isOpenHandoff(comment.body)
     && parseResumeMarker(comment.body)?.stage === stage);
 }
 

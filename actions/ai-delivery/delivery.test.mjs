@@ -17,7 +17,9 @@ import {
   parseResumeMarker,
   parseStageWorkflows,
   parseStatusLabels,
+  parseResumeCommand,
   resumeCommand,
+  setHandoffState,
   upsertDispatchCounts,
   upsertRequestedBy
 } from './delivery.mjs';
@@ -100,11 +102,12 @@ describe('handoff', () => {
     links: ['https://github.com/octo/app/issues/12#issuecomment-1']
   });
 
-  it('mentions the requester, explains the blocker, and offers a checkbox and a command', () => {
+  it('mentions the requester, explains the blocker, and offers the slash command and a command line', () => {
     assert.match(body, /^@alice the AI delivery flow stopped at \*\*technical-refinement\*\* \(milestone `JIRA:DEV-1 phase 2`, issue #12\)/);
     assert.match(body, /Second line\.\nThird\.\n/);
     assert.doesNotMatch(body, /Fourth/);
-    assert.match(body, /- \[ \] Resume: technical-refinement -> continues automatically to readiness-review\n<!-- ai-resume /);
+    assert.match(body, /Reply `\/ai-resume` \(optionally with instructions on the next lines\) to continue: technical-refinement -> readiness-review\.\n<!-- ai-resume .* state=open -->/);
+    assert.doesNotMatch(body, /\[ \]/);
     assert.match(body, /gh workflow run ai-technical-refinement\.yml -f milestone='JIRA:DEV-1 phase 2' -f issue=12 -f requested_by=alice/);
   });
 
@@ -119,7 +122,8 @@ describe('handoff', () => {
       base: '',
       jira: '',
       label: '',
-      workflow: 'ai-technical-refinement.yml'
+      workflow: 'ai-technical-refinement.yml',
+      state: 'open'
     });
   });
 
@@ -133,7 +137,7 @@ describe('handoff', () => {
     const fix = buildHandoff({ stage: 'pr-fix', pr: 7, requestedBy: 'app[bot]', label: 'ai:needs-human', workflow: 'pr-fix.yml', markers: ['<!-- pr-fix escalated -->'] });
     assert.match(fix, /^<!-- pr-fix escalated -->\nthe AI delivery flow stopped at \*\*pr-fix\*\* \(pull request #7\)/);
     assert.match(fix, /gh pr edit 7 --remove-label ai:needs-human && gh workflow run pr-fix\.yml -f pr_number=7/);
-    assert.match(fix, /continues automatically to merge decision/);
+    assert.match(fix, /continue: pr-fix -> merge decision\./);
   });
 
   it('detects an open handoff for the same stage from a bot only', () => {
@@ -141,7 +145,10 @@ describe('handoff', () => {
     assert.equal(hasOpenHandoff([comment], 'technical-refinement'), true);
     assert.equal(hasOpenHandoff([comment], 'readiness-review'), false);
     assert.equal(hasOpenHandoff([{ ...comment, user: { type: 'User' } }], 'technical-refinement'), false);
-    assert.equal(hasOpenHandoff([{ ...comment, body: body.replace('- [ ] Resume', 'Resumed by @bob') }], 'technical-refinement'), false);
+    assert.equal(hasOpenHandoff([{ ...comment, body: setHandoffState(body, 'resumed', 'Resumed by @bob') }], 'technical-refinement'), false);
+    const legacy = body.replace(/Reply `[^\n]*\n/, '- [ ] Resume: technical-refinement\n').replace(' state=open', '');
+    assert.equal(hasOpenHandoff([{ ...comment, body: legacy }], 'technical-refinement'), true);
+    assert.equal(hasOpenHandoff([{ ...comment, body: legacy.replace('- [ ] Resume', '- [x] Resume') }], 'technical-refinement'), false);
   });
 
   it('only sends the inputs a stage caller declares', () => {
@@ -151,7 +158,18 @@ describe('handoff', () => {
     assert.deepEqual(dispatchInputs('orchestrate', values), { milestone: 'M1', requested_by: 'alice' });
     assert.deepEqual(dispatchInputs('implement', values), { issue: '3', branch: 'feat/m1-3', base_branch: 'feat/m1', requested_by: 'alice' });
     assert.deepEqual(dispatchInputs('pr-fix', values), { pr_number: '9' });
+    assert.deepEqual(dispatchInputs('pr-fix', { ...values, instructions: 'Be brief.' }), { pr_number: '9', instructions: 'Be brief.' });
     assert.equal(resumeCommand('ai-orchestrate.yml', { milestone: "it's" }), "gh workflow run ai-orchestrate.yml -f milestone='it'\\''s'");
+  });
+});
+
+describe('parseResumeCommand', () => {
+  it('reads the optional stage and the instructions', () => {
+    assert.deepEqual(parseResumeCommand('/ai-resume'), { stage: '', instructions: '' });
+    assert.deepEqual(parseResumeCommand('  /ai-resume implement use the v2 API\r\nand keep it small'), { stage: 'implement', instructions: 'use the v2 API\nand keep it small' });
+    assert.deepEqual(parseResumeCommand('/ai-resume deploy now'), { stage: '', instructions: 'deploy now' });
+    assert.equal(parseResumeCommand('/ai-resumes'), null);
+    assert.equal(parseResumeCommand('Thanks!\n/ai-resume'), null);
   });
 });
 

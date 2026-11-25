@@ -320,7 +320,7 @@ jobs:
           fi
           echo "skipped: escalated after ${MAX_ROUNDS} rounds" >> "$GITHUB_STEP_SUMMARY"
 
-      # Mentions the requester from the milestone marker and offers a resume checkbox (handled by ai-resume.yml).
+      # Mentions the requester from the milestone marker and offers the `/ai-resume` command (handled by ai-resume.yml).
       - name: Hand off to a human
         if: ${{ needs.gate.outputs.action == 'escalate' }}
         uses: fbrissi/github-actions/actions/ai-delivery@v1

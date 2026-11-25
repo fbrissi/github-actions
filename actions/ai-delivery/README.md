@@ -8,8 +8,8 @@ directly only to build your own variant of them.
 | Command | Used by | What it does |
 |---|---|---|
 | `follow-up` | `ai-task.yml` | After a stage run, reads the `status:*` labels of the milestone's open issues (or of `issue`) and dispatches the next stage, or posts a handoff for each blocked issue. On `failure` or `cancelled` it hands off the same stage with the run link and moves an `implement` issue stuck in `status:in-progress` without a PR back to `status:ready`. Stores the requester in the milestone description and enforces the loop guard. |
-| `handoff` | `pr-fix.yml` | Posts one handoff comment for `task` on `pr` (or `issue`), unless an unchecked one for the same stage is already there. |
-| `resume` | `ai-resume.yml` | On an `issue_comment` `edited` event, resumes the stage of a handoff whose box a person with write permission just checked, then replaces the box with `Resumed by @<login> -> <run link>`. |
+| `handoff` | `pr-fix.yml` | Posts one handoff comment for `task` on `pr` (or `issue`), unless an open one for the same stage is already there. |
+| `resume` | `ai-resume.yml` | On an `issue_comment` `created` event whose first line is `/ai-resume [stage] [instructions]`, written by a person with write permission, resumes the named stage or the newest open handoff: marks it `state=resumed`, dispatches the stage with the instructions, replaces the reply line with `Resumed by @<login> -> <run link>`, reacts, and replies. |
 | `request-review` | `merge-decision.yml` | Requests a review on `pr` from the requester and mentions them once. |
 
 ## Markers
@@ -18,7 +18,7 @@ directly only to build your own variant of them.
 |---|---|---|
 | `<!-- ai-delivery requested-by=<login> -->` | milestone description | Person who started the flow; never a bot. |
 | `<!-- ai-delivery-dispatches <stage>=<n> ... -->` | milestone description | Automatic dispatches per stage (loop guard); a resume removes it. |
-| `<!-- ai-resume stage=... milestone=... issue=... pr=... requested-by=... branch=... base=... jira=... label=... workflow=... -->` | handoff comment, after the `- [ ] Resume:` line | What to dispatch on resume. Values are percent-encoded. |
+| `<!-- ai-resume stage=... milestone=... issue=... pr=... requested-by=... branch=... base=... jira=... label=... workflow=... state=open -->` | handoff comment, after the ``Reply `/ai-resume` ...`` line | What to dispatch on resume; `state` turns `resumed` when a command resumes it. Values are percent-encoded. |
 | `<!-- merge-decision review-requested=<login> -->` | pull request comment | Deduplicates the review request. |
 
 ## Stage callers
@@ -34,6 +34,9 @@ inputs below, on the default branch; an input the caller does not declare is dro
 | `orchestrate` | `ai-orchestrate.yml` | `milestone`, `requested_by` |
 | `implement` | `ai-implement.yml` | `issue`, `branch`, `base_branch`, `requested_by` |
 | `pr-fix` | `pr-fix.yml` | `pr_number` |
+
+A resume also sends `instructions` (the text after the stage on the command line, plus the following lines) to
+every stage; chained dispatches never send it.
 
 A handoff for the stage of the running workflow names that caller's own file (from `GITHUB_WORKFLOW_REF`) unless
 `stage-workflows` overrides it, and the resume dispatches the file named in the marker.

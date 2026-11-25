@@ -28,11 +28,17 @@ merging a pull request that adds one tags the release and moves the major tag.
 - `requested-by` input on `ai-task.yml` and the `ai-task` action (default `github.triggering_actor`, bots ignored):
   the agent and every handoff mention that person, it is stored in the milestone description as
   `<!-- ai-delivery requested-by=<login> -->`, and every chained dispatch passes it on as `requested_by`.
-- Handoff comments: mention the requester, explain the blocker, link the questions, and offer a
-  `- [ ] Resume: <stage>` checkbox plus a `gh workflow run` fallback.
-- `ai-resume.yml` reusable workflow: on `issue_comment` `edited`, resumes the stage of a handoff whose box a person
-  with write permission just checked, removes `ai:needs-human` for `pr-fix`, resets the loop guard, and replaces the
-  box with a link to the dispatched run.
+- Handoff comments: mention the requester, explain the blocker, link the questions, and end with
+  ``Reply `/ai-resume` (optionally with instructions on the next lines) to continue: <stage> -> <next stage>.``, a
+  `<!-- ai-resume ... state=open -->` marker, and a `gh workflow run` fallback.
+- `ai-resume.yml` reusable workflow: on `issue_comment` `created`, a comment whose first line is
+  `/ai-resume [stage] [instructions]` (by an `OWNER`, `MEMBER`, or `COLLABORATOR` with write, maintain, or admin
+  permission; bots are ignored) resumes the named stage, else the newest open handoff of the agent App (or
+  `trusted-bots`) on that issue or pull request. It reacts with `eyes`, marks the handoff `state=resumed` before
+  dispatching (so a second command cannot run it twice; runs are serialized per issue or pull request), removes
+  `ai:needs-human` for `pr-fix`, resets the loop guard, dispatches the stage with the command's `instructions`, then
+  reacts with `rocket` and replies with the run link. Without an open handoff or a stage, or without permission, it
+  replies with the reason and dispatches nothing. Handoffs with the earlier checkbox still resume.
 - `ai-delivery` action: the deterministic `follow-up`, `handoff`, `resume`, and `request-review` steps, with tests.
 - `setup-command` input on `ai-task.yml` to install browsers and start the test environment before the agent; the
   `implement` prompt falls back to tests-only QA (PR checks) when no environment is reachable and never escalates for

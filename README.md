@@ -16,7 +16,7 @@ deploys, credential rotation) stays in each project.
 | [`pr-fix.yml`](#pr-fix) | Reusable workflow | One AI pass that fixes review feedback and failing CI on an opted-in pull request. |
 | [`merge-decision.yml`](#merge-decision) | Reusable workflow | Deterministic merge gates, then an AI risk rating that holds or (opt-in) merges. |
 | [`ai-task.yml`](#ai-task) | Reusable workflow | Runs one AI task delivery task (refinement, readiness, orchestration, implementation) with its agent, then chains the next stage or hands off to a human. |
-| [`ai-resume.yml`](#resume) | Reusable workflow | Resumes a stopped delivery stage when someone checks the box of its handoff comment. |
+| [`ai-resume.yml`](#resume) | Reusable workflow | Resumes a stopped delivery stage when someone with write permission replies `/ai-resume [stage] [instructions]`. |
 | [`release-note.yml`](#release-note) | Reusable workflow | Requires each pull request to add one changelog release. |
 | [`release.yml`](#release) | Reusable workflow | Tags and publishes the changelog release, then optionally deploys it. |
 | [`terraform-permissions.yml`](#terraform-permissions) | Reusable workflow | Fails before merge when the Cloudflare Terraform token lacks a permission. |
@@ -272,7 +272,7 @@ merge workflow from the Code Review caller once the review succeeds:
    exists for the current head and nobody but the fixer has commented or reviewed since. After `max-rounds` passes it
    adds `escalation-label` and posts one [handoff](#how-stages-chain) that mentions the person who started the flow
    (the `requested-by` marker of the PR's milestone, or of the issues it closes), explains the blocker, and offers a
-   `pr-fix` resume checkbox; checking it (with the [resume caller](#resume)) or removing the label allows
+   `pr-fix` resume; replying `/ai-resume` (with the [resume caller](#resume)) or removing the label allows
    `max-rounds` more. Otherwise it creates a `PR Fix` check run on the head commit.
 2. **Run PR Fix** checks out the head branch with the App token, commits as the App bot, installs dependencies, and
    runs the harness. It never watches CI or waits for comments: the next review dispatches the next pass. It then
@@ -290,6 +290,10 @@ on:
         description: Pull request number to fix
         required: true
         type: string
+      instructions:
+        description: Extra instructions for this run only
+        required: false
+        type: string
 
 permissions: {}
 
@@ -304,6 +308,7 @@ jobs:
     with:
       pr-number: ${{ inputs.pr_number }}
       branch-prefixes: ai/
+      instructions: ${{ inputs.instructions }}
       node-version: "24"
       install-command: npm ci
     secrets: inherit
@@ -533,28 +538,46 @@ none). It mentions the requester, gives the blocker in up to three lines, links 
 the issue, and the Jira ticket for business refinement), and ends with:
 
 ```markdown
-- [ ] Resume: technical-refinement -> continues automatically to readiness-review
-<!-- ai-resume stage=technical-refinement milestone=JIRA:DEV-1 issue=12 pr= requested-by=alice ... workflow=ai-technical-refinement.yml -->
+Answer where the questions are, then resume.
+Reply `/ai-resume` (optionally with instructions on the next lines) to continue: technical-refinement -> readiness-review.
+<!-- ai-resume stage=technical-refinement milestone=JIRA:DEV-1 issue=12 pr= requested-by=alice ... workflow=ai-technical-refinement.yml state=open -->
 ```
 
-plus a collapsed `gh workflow run ...` fallback. An open (unchecked) handoff for the same stage is never posted
+plus a collapsed `gh workflow run ...` fallback. An open handoff (`state=open`) for the same stage is never posted
 twice.
 
 ### Resume
 
-Answer the questions where they were asked, then check the box. `.github/workflows/ai-resume.yml` runs on the
-`issue_comment` `edited` event and acts only when the comment was posted by the agent App bot (or one of
-`trusted-bots`), carries the `ai-resume` marker, the edit turned `- [ ]` into `- [x]`, and the person who checked it
-has write, maintain, or admin permission. It then:
+Answer the questions where they were asked, then reply on the issue or pull request with a new comment whose first
+line starts with `/ai-resume`:
 
-1. removes the escalation label (`ai:needs-human`) of the pull request when the stage is `pr-fix`,
-2. resets the milestone's automatic dispatch counters,
-3. dispatches the stage caller (the workflow named in the marker, else `stage-workflows`) on the default branch
-   with `milestone`, `issue`, `jira_key`, `branch`, `base_branch`, or `pr_number`, and `requested_by`,
-4. replaces the box with `Resumed by @<login> -> <run link>`, so it cannot fire twice. If the dispatch fails, it
-   unchecks the box, notes the error, and fails.
+```text
+/ai-resume [stage] [instructions]
+more instructions on the next lines
+```
 
-The resumed stage reads the human's answer and the chain continues on its own. Anything else exits quietly.
+The stage is optional; anything after it on the first line, plus the following lines, becomes the `instructions` of
+the resumed run (appended to its prompt for that run only). `.github/workflows/ai-resume.yml` runs on the
+`issue_comment` `created` event. Its job only starts for comments that begin with `/ai-resume`, are not written by
+a bot, and come from an `OWNER`, `MEMBER`, or `COLLABORATOR`; the script then checks that the author has write,
+maintain, or admin permission. It then:
+
+1. reacts with `eyes` on the command,
+2. picks the target: the named stage (its newest handoff here, or the issue or pull request itself when there is
+   none), else the newest open handoff posted by the agent App bot (or one of `trusted-bots`). With neither, it
+   replies with the list of stages and dispatches nothing,
+3. marks the handoff `state=resumed` (`Resumed by @<login>`) before dispatching, so a second command finds nothing
+   open; runs are serialized per issue or pull request,
+4. removes the escalation label (`ai:needs-human`) of the pull request when the stage is `pr-fix`, and resets the
+   milestone's automatic dispatch counters,
+5. dispatches the stage caller (the workflow named in the marker, else `stage-workflows`) on the default branch with
+   `milestone`, `issue`, `jira_key`, `branch`, `base_branch`, or `pr_number`, `requested_by`, and `instructions`,
+6. links the run in the handoff (`Resumed by @<login> -> <run link>`), reacts with `rocket`, and replies with the
+   run link.
+
+A rejection (no permission, no open handoff, invalid values) is a reply with the reason. If the dispatch fails, the
+handoff is reopened, the reply says so, and the job fails. Handoffs posted with the earlier checkbox resume the same
+way. The resumed stage reads the human's answer and the chain continues on its own.
 
 ```yaml
 # .github/workflows/ai-resume.yml
@@ -562,13 +585,13 @@ name: AI Resume
 
 on:
   issue_comment:
-    types: [edited]
+    types: [created]
 
 permissions: {}
 
 jobs:
   resume:
-    if: ${{ contains(github.event.comment.body, '<!-- ai-resume ') }}
+    if: ${{ startsWith(github.event.comment.body, '/ai-resume') }}
     uses: fbrissi/github-actions/.github/workflows/ai-resume.yml@v1
     with:
       trusted-bots: my-fixer-app[bot] # the PR Fix App, when it is not the agent App
@@ -584,8 +607,9 @@ jobs:
 | `environment` | `""` | Environment of the job. |
 | `runs-on` | `CI_RUNNER`, then `ubuntu-latest` | Runner label. |
 
-Secret: `AGENT_APP_PRIVATE_KEY`. The caller needs no `GITHUB_TOKEN` permissions; the App token gets `actions`,
-`issues`, and `pull-requests` write.
+Secret: `AGENT_APP_PRIVATE_KEY`. The caller needs no `GITHUB_TOKEN` permissions: the App token (`actions`,
+`issues`, and `pull-requests` write) dispatches the stage, edits the handoff, and posts the reactions and replies, so
+the App needs `Actions`, `Issues`, and `Pull requests` read and write.
 
 ### QA in CI
 
@@ -639,6 +663,10 @@ job only needs `contents: read`; everything the agent does goes through the App 
 | `implement` | `ai-implement.yml` | `issue`, `branch`, `base_branch`, `requested_by` |
 | `pr-fix` | `pr-fix.yml` | `pr_number` |
 
+Declare an optional `instructions` input too and pass it to the reusable workflow (`instructions:
+${{ inputs.instructions }}`): an `/ai-resume` command sends it, and a person can set it when running the caller by
+hand. Chained dispatches never send it.
+
 ```yaml
 # .github/workflows/ai-business-refinement.yml
 name: AI Business Refinement
@@ -662,6 +690,10 @@ on:
         description: Person to mention when the flow needs a human
         required: false
         type: string
+      instructions:
+        description: Extra instructions for this run only
+        required: false
+        type: string
 
 permissions: {}
 
@@ -676,6 +708,7 @@ jobs:
       source-tracker: jira
       milestone-template: JIRA:{key}
       requested-by: ${{ inputs.requested_by }}
+      instructions: ${{ inputs.instructions }}
     secrets:
       AGENT_APP_PRIVATE_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -709,6 +742,10 @@ on:
         description: Person to mention when the flow needs a human
         required: false
         type: string
+      instructions:
+        description: Extra instructions for this run only
+        required: false
+        type: string
 
 permissions: {}
 
@@ -723,6 +760,7 @@ jobs:
       issue: ${{ inputs.issue }}
       milestone-template: JIRA:{key}
       requested-by: ${{ inputs.requested_by }}
+      instructions: ${{ inputs.instructions }}
       node-version: "24"
       install-command: npm ci
     secrets:
@@ -757,6 +795,10 @@ on:
         description: Person to mention when the flow needs a human
         required: false
         type: string
+      instructions:
+        description: Extra instructions for this run only
+        required: false
+        type: string
 
 permissions: {}
 
@@ -771,6 +813,7 @@ jobs:
       branch: ${{ inputs.branch }}
       base-branch: ${{ inputs.base_branch }}
       requested-by: ${{ inputs.requested_by }}
+      instructions: ${{ inputs.instructions }}
       node-version: "24"
       install-command: npm ci
       dependency-cache-path: node_modules

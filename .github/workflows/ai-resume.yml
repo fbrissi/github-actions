@@ -9,7 +9,7 @@ on:
         type: string
         default: ""
       trusted-bots:
-        description: Whitespace-separated bot logins, besides the agent App's own bot, whose handoff comments may be resumed, for example the fixer App (`my-fixer[bot]`).
+        description: Whitespace-separated bot logins, besides the agent App's own bot, whose handoff comments `/ai-resume` may resume, for example the fixer App (`my-fixer[bot]`).
         required: false
         type: string
         default: ""
@@ -33,8 +33,9 @@ on:
         description: Private key of the GitHub App that posts handoffs and dispatches the stages.
         required: false
 
+# One resume at a time per issue or pull request: the second command finds the handoff already resumed.
 concurrency:
-  group: fbrissi-ai-resume-${{ github.repository }}-${{ github.event.comment.id }}
+  group: fbrissi-ai-resume-${{ github.repository }}-${{ github.event.issue.number }}
   cancel-in-progress: false
 
 permissions: {}
@@ -42,8 +43,12 @@ permissions: {}
 jobs:
   resume:
     name: AI Resume
-    # Cheap pre-filter; the script checks the author, the box transition, the marker, and the sender's permission.
-    if: ${{ github.event_name == 'issue_comment' && github.event.action == 'edited' && contains(github.event.comment.body, '<!-- ai-resume ') && contains(github.event.comment.body, '- [x] Resume:') }}
+    # Cheap pre-filter; the script parses the command, checks the sender's permission, and finds the handoff.
+    if: >-
+      ${{ github.event_name == 'issue_comment' && github.event.action == 'created'
+      && startsWith(github.event.comment.body, '/ai-resume')
+      && github.event.comment.user.type != 'Bot'
+      && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) }}
     runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
     permissions: {}
     timeout-minutes: 10

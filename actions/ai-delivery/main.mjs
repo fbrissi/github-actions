@@ -4,9 +4,8 @@
 import { appendFileSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import {
-  CHECKED_BOX,
+  NEXT_STEP,
   STAGES,
-  UNCHECKED_BOX,
   blockerText,
   buildHandoff,
   decideFailure,
@@ -16,6 +15,7 @@ import {
   humanLogin,
   isGitBranch,
   isWorkflowFile,
+  isOpenHandoff,
   issueStates,
   jiraKeyOf,
   keyFromMilestone,
@@ -23,10 +23,12 @@ import {
   milestoneFromKey,
   parseDispatchCounts,
   parseRequestedBy,
+  parseResumeCommand,
   parseResumeMarker,
   parseStageWorkflows,
   parseStatusLabels,
   resumeValues,
+  setHandoffState,
   upsertDispatchCounts,
   upsertRequestedBy,
   words
@@ -370,54 +372,119 @@ const REQUIRED = {
   'pr-fix': [['pr']]
 };
 
-// Decides from the issue_comment event alone whether a resume box was just checked on a trusted bot comment.
-export function parseResumeEvent(event, botLogins) {
+// Decides from the issue_comment event alone whether it is an `/ai-resume` command written by a person.
+export function parseResumeEvent(event) {
   const skip = (reason) => ({ skip: reason });
   const comment = event?.comment;
-  if (event?.action !== 'edited' || !comment) return skip('not an edited comment');
-  const author = comment.user?.login?.toLowerCase() ?? '';
-  if (!botLogins.map((login) => login.toLowerCase()).includes(author)) return skip(`comment author ${author || 'unknown'} is not a trusted bot`);
-  const sender = event.sender?.login ?? '';
-  if (!humanLogin(sender)) return skip(`edited by ${sender || 'unknown'}, not a person`);
-  const fields = parseResumeMarker(comment.body);
-  if (!fields) return skip('no ai-resume marker');
-  const from = event.changes?.body?.from;
-  if (typeof from !== 'string' || !UNCHECKED_BOX.test(from) || !CHECKED_BOX.test(comment.body ?? '')) {
-    return skip('the resume box was not just checked');
-  }
+  if (event?.action !== 'created' || !comment) return skip('not a new comment');
+  const command = parseResumeCommand(comment.body);
+  if (!command) return skip('not an /ai-resume command');
+  const sender = comment.user?.login ?? '';
+  if (comment.user?.type === 'Bot' || !humanLogin(sender)) return skip(`written by ${sender || 'unknown'}, not a person`);
+  const number = event.issue?.number;
+  if (!number) return skip('no issue or pull request');
+  return {
+    ...command,
+    sender,
+    commentId: comment.id,
+    number,
+    isPullRequest: Boolean(event.issue.pull_request),
+    milestone: event.issue.milestone?.title ?? '',
+    defaultBranch: event.repository?.default_branch ?? ''
+  };
+}
 
+export function checkFields(fields) {
   const errors = [];
   if (!STAGES.includes(fields.stage)) errors.push(`unknown stage '${fields.stage}'`);
   for (const name of ['issue', 'pr']) if (fields[name] && !number(fields[name])) errors.push(`invalid ${name} '${fields[name]}'`);
   for (const name of ['branch', 'base']) if (fields[name] && !isGitBranch(fields[name])) errors.push(`invalid ${name} '${fields[name]}'`);
   if (fields.workflow && !isWorkflowFile(fields.workflow)) errors.push(`invalid workflow '${fields.workflow}'`);
-  if (fields['requested-by'] && !humanLogin(fields['requested-by'])) fields['requested-by'] = '';
   if (fields.jira && !/^[A-Z][A-Z0-9_]*-[0-9]+$/.test(fields.jira)) errors.push(`invalid jira key '${fields.jira}'`);
   if (fields.label && !/^[^\r\n,]{1,50}$/.test(fields.label)) errors.push(`invalid label '${fields.label}'`);
-  if (/[\r\n]/.test(fields.milestone)) errors.push('invalid milestone');
+  if (/[\r\n]/.test(fields.milestone ?? '')) errors.push('invalid milestone');
   for (const group of REQUIRED[fields.stage] ?? []) {
     if (!group.some((name) => fields[name])) errors.push(`${fields.stage} needs ${group.join(' or ')}`);
   }
-  if (errors.length > 0) return skip(`invalid marker: ${errors.join('; ')}`);
-  return { fields, sender, commentId: comment.id, issueNumber: event.issue?.number, defaultBranch: event.repository?.default_branch ?? '' };
+  return errors;
 }
 
-export function markResumed(body, line) {
-  return body.replace(CHECKED_BOX, line);
+// The handoff a command resumes: the newest open one (of the named stage), else, for a named stage, the newest one
+// of that stage for its values. Only comments of the trusted bots count.
+export function findHandoff(comments, botLogins, stage) {
+  const trusted = new Set(botLogins.map((login) => login.toLowerCase()));
+  const handoffs = comments
+    .filter((comment) => trusted.has(comment.user?.login?.toLowerCase() ?? '') && parseResumeMarker(comment.body))
+    .filter((comment) => !stage || parseResumeMarker(comment.body).stage === stage);
+  const open = handoffs.filter((comment) => isOpenHandoff(comment.body)).at(-1);
+  if (open) return { comment: open, open: true };
+  const last = stage ? handoffs.at(-1) : null;
+  return last ? { comment: last, open: false } : null;
 }
+
+const STAGE_LIST = STAGES.map((stage) => `\`${stage}\``).join(', ');
 
 export async function resume(ctx, api, log, event) {
   const { repo } = ctx;
   const config = settings(ctx);
   const botLogins = [ctx['bot-login'], ...words(ctx['trusted-bots'])].filter(Boolean);
-  const parsed = parseResumeEvent(event, botLogins);
+  const parsed = parseResumeEvent(event);
   if (parsed.skip) return [`Skipped: ${parsed.skip}.`];
-  const { fields, sender, commentId } = parsed;
+  const { sender, commentId, stage: named, instructions } = parsed;
+  const target = parsed.number;
 
+  const react = async (content) => {
+    try {
+      await api.request('POST', `/repos/${repo}/issues/comments/${commentId}/reactions`, { content });
+    } catch (error) {
+      log.warning(`Could not react with ${content}: ${error.message}`);
+    }
+  };
+  const reply = async (text) => {
+    await api.request('POST', `/repos/${repo}/issues/${target}/comments`, { body: `@${sender} ${text}\n` });
+  };
+  const reject = async (text) => {
+    await reply(text);
+    return [`Rejected: ${text}`];
+  };
+
+  await react('eyes');
   const { data: permission } = await api.request('GET', `/repos/${repo}/collaborators/${encodeURIComponent(sender)}/permission`);
   const role = permission?.role_name ?? permission?.permission ?? 'none';
   if (!['admin', 'maintain', 'write'].includes(role) && !['admin', 'write'].includes(permission?.permission)) {
-    return [`Skipped: @${sender} has ${role} permission; resuming needs write, maintain, or admin.`];
+    return reject(`resuming needs write, maintain, or admin permission; you have ${role}.`);
+  }
+
+  const comments = await api.paginate(`/repos/${repo}/issues/${target}/comments`);
+  const found = findHandoff(comments, botLogins, named);
+  if (!found && !named) {
+    return reject(`there is no open handoff to resume here. Name the stage to run it anyway: \`/ai-resume <stage>\` with one of ${STAGE_LIST}.`);
+  }
+  const fields = found
+    ? parseResumeMarker(found.comment.body)
+    : {
+      stage: named,
+      milestone: parsed.milestone,
+      issue: parsed.isPullRequest ? '' : String(target),
+      pr: parsed.isPullRequest ? String(target) : '',
+      'requested-by': '',
+      branch: '',
+      base: '',
+      jira: '',
+      label: named === 'pr-fix' ? ctx['escalation-label'] : '',
+      workflow: ''
+    };
+  if (fields['requested-by'] && !humanLogin(fields['requested-by'])) fields['requested-by'] = '';
+  const errors = checkFields(fields);
+  if (errors.length > 0) return reject(`cannot resume ${fields.stage || 'this stage'}: ${errors.join('; ')}.`);
+
+  // Mark the handoff resumed before dispatching, so a second command finds it closed.
+  const handoff = found?.open ? found.comment : null;
+  const originalBody = handoff?.body ?? '';
+  if (handoff) {
+    await api.request('PATCH', `/repos/${repo}/issues/comments/${handoff.id}`, {
+      body: setHandoffState(originalBody, 'resumed', `Resumed by @${sender}.`)
+    });
   }
 
   const summary = [];
@@ -439,21 +506,24 @@ export async function resume(ctx, api, log, event) {
 
   const ref = parsed.defaultBranch || (await api.request('GET', `/repos/${repo}`)).data.default_branch;
   const workflow = fields.workflow || config.workflows[fields.stage];
-  const inputs = dispatchInputs(fields.stage, resumeValues(fields, fields['requested-by'] || sender));
-  const { data: comment } = await api.request('GET', `/repos/${repo}/issues/comments/${commentId}`);
+  const inputs = dispatchInputs(fields.stage, resumeValues(fields, fields['requested-by'] || sender, instructions));
   try {
     const dispatched = await dispatchWorkflow(api, repo, workflow, ref, inputs, log);
     const link = dispatched.url || `${ctx.serverUrl}/${repo}/actions/workflows/${workflow}`;
-    await api.request('PATCH', `/repos/${repo}/issues/comments/${commentId}`, {
-      body: markResumed(comment.body, `Resumed by @${sender} -> ${link}`)
-    });
+    if (handoff) {
+      await api.request('PATCH', `/repos/${repo}/issues/comments/${handoff.id}`, {
+        body: setHandoffState(originalBody, 'resumed', `Resumed by @${sender} -> ${link}`)
+      });
+    }
+    await react('rocket');
+    await reply(`resumed **${fields.stage}** -> ${link}${NEXT_STEP[fields.stage] ? ` (then ${NEXT_STEP[fields.stage]})` : ''}.`);
     summary.push(`Dispatched ${workflow} (${fields.stage}) with ${JSON.stringify(dispatched.inputs)} for @${sender}.`);
     return summary;
   } catch (error) {
-    const unchecked = comment.body.replace(CHECKED_BOX, (line) => line.replace(/\[[xX]\]/, '[ ]'));
-    await api.request('PATCH', `/repos/${repo}/issues/comments/${commentId}`, {
-      body: `${unchecked.replace(/\s+$/, '')}\n\n> Resume by @${sender} failed: could not dispatch ${workflow} (${error.status ?? 'error'}). Check the box again to retry.\n`
-    });
+    if (handoff) {
+      await api.request('PATCH', `/repos/${repo}/issues/comments/${handoff.id}`, { body: originalBody });
+    }
+    await reply(`could not dispatch ${workflow} (${error.status ?? 'error'}); the handoff is still open. Reply \`/ai-resume\` again to retry.`);
     throw error;
   }
 }

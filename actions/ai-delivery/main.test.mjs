@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { buildHandoff } from './delivery.mjs';
+import { buildHandoff, setHandoffState } from './delivery.mjs';
 import { createClient } from './github.mjs';
-import { dispatchWorkflow, envName, followUp, handoff, parseResumeEvent, readContext, requestReview, resume } from './main.mjs';
+import { dispatchWorkflow, envName, findHandoff, followUp, handoff, parseResumeEvent, readContext, requestReview, resume } from './main.mjs';
 
 const REPO = 'octo/app';
 const silent = { info() {}, notice() {}, warning() {} };
@@ -197,7 +197,7 @@ describe('handoff', () => {
     await handoff(ctx, api, silent);
     const { body } = posts(api, /comments$/)[0].body;
     assert.match(body, /^<!-- pr-fix escalated -->\n@alice the AI delivery flow stopped at \*\*pr-fix\*\* \(milestone `M1`, pull request #7\)/);
-    assert.match(body, /- \[ \] Resume: pr-fix -> continues automatically to merge decision/);
+    assert.match(body, /Reply `\/ai-resume` \(optionally with instructions on the next lines\) to continue: pr-fix -> merge decision\./);
     assert.match(body, /gh pr edit 7 --remove-label ai:needs-human && gh workflow run pr-fix\.yml -f pr_number=7/);
   });
 
@@ -208,65 +208,96 @@ describe('handoff', () => {
 
 describe('resume', () => {
   const handoffBody = buildHandoff({ stage: 'pr-fix', pr: 7, milestone: 'M1', requestedBy: 'alice', label: 'ai:needs-human', workflow: 'pr-fix.yml' });
-  const eventFor = (overrides = {}) => ({
-    action: 'edited',
-    comment: { id: 99, user: { login: 'agent[bot]' }, body: handoffBody.replace('- [ ] Resume', '- [x] Resume') },
-    changes: { body: { from: handoffBody } },
-    sender: { login: 'bob' },
-    issue: { number: 7 },
+  const handoff = { id: 50, user: { login: 'agent[bot]', type: 'Bot' }, body: handoffBody };
+  const eventFor = (body = '/ai-resume', overrides = {}) => ({
+    action: 'created',
+    comment: { id: 99, user: { login: 'bob', type: 'User' }, body },
+    issue: { number: 7, pull_request: {}, milestone: { title: 'M1' } },
     repository: { default_branch: 'main' },
     ...overrides
   });
+  const routes = (comments = [handoff], extra = []) => [
+    ...extra,
+    ['POST', /issues\/comments\/99\/reactions$/, {}],
+    ['GET', /collaborators\/bob\/permission$/, { permission: 'write', role_name: 'write' }],
+    ['GET', /issues\/7\/comments$/, comments],
+    ['POST', /issues\/7\/comments$/, {}],
+    ['PATCH', /issues\/comments\/50$/, {}],
+    ['DELETE', /issues\/7\/labels\/ai%3Aneeds-human$/, []],
+    ['GET', /milestones\?state=all$/, [{ number: 1, title: 'M1', description: 'x\n\n<!-- ai-delivery-dispatches orchestrate=3 -->' }]],
+    ['PATCH', /milestones\/1$/, {}],
+    ['POST', /dispatches$/, { html_url: 'https://github.com/octo/app/actions/runs/5' }]
+  ];
+  const ctx = () => ctxFor({ 'bot-login': 'agent[bot]' });
 
-  it('acts only on a newly checked box of a trusted bot, edited by a person', () => {
-    assert.equal(parseResumeEvent(eventFor(), ['agent[bot]']).fields.stage, 'pr-fix');
-    assert.match(parseResumeEvent(eventFor(), ['other[bot]']).skip, /not a trusted bot/);
-    assert.match(parseResumeEvent(eventFor({ sender: { login: 'agent[bot]' } }), ['agent[bot]']).skip, /not a person/);
-    assert.match(parseResumeEvent(eventFor({ changes: {} }), ['agent[bot]']).skip, /not just checked/);
-    assert.match(parseResumeEvent(eventFor({ changes: { body: { from: handoffBody.replace('- [ ] Resume', '- [x] Resume') } } }), ['agent[bot]']).skip, /not just checked/);
-    const forged = eventFor();
-    forged.comment.body = forged.comment.body.replace('workflow=pr-fix.yml', 'workflow=../evil.yml');
-    assert.match(parseResumeEvent(forged, ['agent[bot]']).skip, /invalid workflow/);
+  it('acts only on a new /ai-resume comment written by a person', () => {
+    assert.deepEqual(parseResumeEvent(eventFor('/ai-resume pr-fix keep the API\nand the tests')).instructions, 'keep the API\nand the tests');
+    assert.equal(parseResumeEvent(eventFor('/ai-resume pr-fix')).stage, 'pr-fix');
+    assert.equal(parseResumeEvent(eventFor('/ai-resume please hurry')).stage, '');
+    assert.match(parseResumeEvent(eventFor('please /ai-resume')).skip, /not an \/ai-resume command/);
+    assert.match(parseResumeEvent(eventFor('/ai-resumed')).skip, /not an \/ai-resume command/);
+    assert.match(parseResumeEvent({ ...eventFor(), action: 'edited' }).skip, /not a new comment/);
+    assert.match(parseResumeEvent(eventFor('/ai-resume', { comment: { id: 1, user: { login: 'agent[bot]', type: 'Bot' }, body: '/ai-resume' } })).skip, /not a person/);
   });
 
-  it('checks the permission, removes the escalation label, dispatches, and rewrites the box', async () => {
-    const api = fakeApi([
-      ['GET', /collaborators\/bob\/permission$/, { permission: 'write', role_name: 'write' }],
-      ['DELETE', /issues\/7\/labels\/ai%3Aneeds-human$/, []],
-      ['GET', /milestones\?state=all$/, [{ number: 1, title: 'M1', description: 'x\n\n<!-- ai-delivery-dispatches orchestrate=3 -->' }]],
-      ['PATCH', /milestones\/1$/, {}],
-      ['GET', /issues\/comments\/99$/, { body: eventFor().comment.body }],
-      ['POST', /pr-fix\.yml\/dispatches$/, { html_url: 'https://github.com/octo/app/actions/runs/5' }],
-      ['PATCH', /issues\/comments\/99$/, {}]
-    ]);
-    await resume(ctxFor({ 'bot-login': 'agent[bot]' }), api, silent, eventFor());
-    assert.deepEqual(api.calls.find((call) => call.path.endsWith('/dispatches')).body.inputs, { pr_number: '7' });
+  it('marks the open handoff resumed, removes the label, dispatches with the instructions, and replies', async () => {
+    const api = fakeApi(routes());
+    await resume(ctx(), api, silent, eventFor('/ai-resume\nOnly fix the lint errors.'));
+    const dispatch = api.calls.find((call) => call.path.endsWith('/dispatches'));
+    assert.equal(dispatch.path, '/repos/octo/app/actions/workflows/pr-fix.yml/dispatches');
+    assert.deepEqual(dispatch.body.inputs, { pr_number: '7', instructions: 'Only fix the lint errors.' });
+    const edits = api.calls.filter((call) => call.method === 'PATCH' && call.path.endsWith('comments/50'));
+    assert.equal(edits.length, 2);
+    // Closed before the dispatch, then linked to the run.
+    assert.ok(api.calls.indexOf(edits[0]) < api.calls.indexOf(dispatch));
+    assert.match(edits[0].body.body, /state=resumed -->/);
+    assert.match(edits[1].body.body, /^Resumed by @bob -> https:\/\/github\.com\/octo\/app\/actions\/runs\/5$/m);
+    assert.doesNotMatch(edits[1].body.body, /Reply `\/ai-resume`/);
+    assert.ok(api.calls.some((call) => call.method === 'DELETE' && /labels\/ai%3Aneeds-human$/.test(call.path)));
     assert.equal(api.calls.find((call) => call.path.endsWith('milestones/1')).body.description, 'x');
-    const edited = api.calls.filter((call) => call.method === 'PATCH').at(-1).body.body;
-    assert.match(edited, /^Resumed by @bob -> https:\/\/github\.com\/octo\/app\/actions\/runs\/5$/m);
-    assert.doesNotMatch(edited, /\[[ xX]\] Resume/);
+    assert.deepEqual(posts(api, /reactions$/).map((call) => call.body.content), ['eyes', 'rocket']);
+    assert.match(posts(api, /issues\/7\/comments$/)[0].body.body, /^@bob resumed \*\*pr-fix\*\* -> https:\/\/github\.com\/octo\/app\/actions\/runs\/5/);
   });
 
-  it('refuses people without write permission', async () => {
-    const api = fakeApi([['GET', /permission$/, { permission: 'read', role_name: 'triage' }]]);
-    const summary = await resume(ctxFor({ 'bot-login': 'agent[bot]' }), api, silent, eventFor());
-    assert.match(summary[0], /has triage permission/);
-    assert.equal(api.calls.length, 1);
+  it('ignores a handoff that was already resumed and lists the stages', async () => {
+    const resumed = { ...handoff, body: setHandoffState(handoffBody, 'resumed', 'Resumed by @carol.') };
+    const api = fakeApi(routes([resumed]));
+    const summary = await resume(ctx(), api, silent, eventFor());
+    assert.match(summary[0], /no open handoff/);
+    assert.equal(posts(api, /dispatches$/).length, 0);
+    assert.match(posts(api, /issues\/7\/comments$/)[0].body.body, /`\/ai-resume <stage>` with one of `business-refinement`/);
   });
 
-  it('unchecks the box and fails when the dispatch fails', async () => {
-    const api = fakeApi([
-      ['GET', /permission$/, { permission: 'admin', role_name: 'admin' }],
-      ['DELETE', /labels/, []],
-      ['GET', /milestones\?state=all$/, []],
-      ['GET', /issues\/comments\/99$/, { body: eventFor().comment.body }],
-      ['POST', /dispatches$/, () => { throw Object.assign(new Error('boom'), { status: 500 }); }],
-      ['PATCH', /issues\/comments\/99$/, {}]
-    ]);
-    await assert.rejects(resume(ctxFor({ 'bot-login': 'agent[bot]' }), api, silent, eventFor()), /boom/);
-    const edited = api.calls.filter((call) => call.method === 'PATCH').at(-1).body.body;
-    assert.match(edited, /- \[ \] Resume: pr-fix/);
-    assert.match(edited, /Resume by @bob failed/);
+  it('runs a named stage without an open handoff from the issue or pull request', async () => {
+    const api = fakeApi(routes([]));
+    await resume(ctx(), api, silent, eventFor('/ai-resume pr-fix'));
+    assert.deepEqual(posts(api, /dispatches$/)[0].body.inputs, { pr_number: '7' });
+  });
+
+  it('ignores handoffs of untrusted authors and resumes legacy checkbox handoffs', async () => {
+    const legacy = { ...handoff, body: handoffBody.replace(/Answer where[^\n]*\nReply[^\n]*\n/, '- [ ] Resume: pr-fix -> continues automatically to merge decision\n').replace(' state=open', '') };
+    assert.equal(findHandoff([{ ...handoff, user: { login: 'mallory' } }], ['agent[bot]'], ''), null);
+    assert.equal(findHandoff([legacy], ['agent[bot]'], '').open, true);
+    const api = fakeApi(routes([legacy]));
+    await resume(ctx(), api, silent, eventFor());
+    const edited = api.calls.filter((call) => call.method === 'PATCH' && call.path.endsWith('comments/50')).at(-1).body.body;
+    assert.match(edited, /^Resumed by @bob -> /m);
+    assert.doesNotMatch(edited, /\[ \] Resume/);
+  });
+
+  it('refuses people without write permission with a reply', async () => {
+    const api = fakeApi(routes([handoff], [['GET', /permission$/, { permission: 'read', role_name: 'triage' }]]));
+    const summary = await resume(ctx(), api, silent, eventFor());
+    assert.match(summary[0], /you have triage/);
+    assert.equal(posts(api, /dispatches$/).length, 0);
+  });
+
+  it('reopens the handoff and fails when the dispatch fails', async () => {
+    const api = fakeApi(routes([handoff], [['POST', /dispatches$/, () => { throw Object.assign(new Error('boom'), { status: 500 }); }]]));
+    await assert.rejects(resume(ctx(), api, silent, eventFor()), /boom/);
+    const edited = api.calls.filter((call) => call.method === 'PATCH' && call.path.endsWith('comments/50')).at(-1).body.body;
+    assert.equal(edited, handoffBody);
+    assert.match(posts(api, /issues\/7\/comments$/).at(-1).body.body, /could not dispatch pr-fix\.yml \(500\)/);
   });
 });
 
