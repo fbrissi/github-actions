@@ -18,6 +18,14 @@ on:
         required: false
         type: string
         default: ""
+      ignore-reply-authors:
+        description: >-
+          Whitespace-separated logins whose reply-only reviews (no body, every inline comment a reply to an existing
+          thread) never dispatch `fix-workflow`. Use it when one App both reviews and fixes: its fix replies are then
+          ignored while its own new reviews still dispatch fixes.
+        required: false
+        type: string
+        default: ""
       merge-check-name:
         description: >-
           Check run name whose successful completion dispatches `merge-workflow` for each of its pull requests. Check runs
@@ -47,6 +55,7 @@ jobs:
           FIX_WORKFLOW: ${{ inputs.fix-workflow }}
           MERGE_WORKFLOW: ${{ inputs.merge-workflow }}
           IGNORE_AUTHORS: ${{ inputs.ignore-authors }}
+          IGNORE_REPLY_AUTHORS: ${{ inputs.ignore-reply-authors }}
           MERGE_CHECK_NAME: ${{ inputs.merge-check-name }}
         with:
           script: |
@@ -56,6 +65,7 @@ jobs:
             const mergeWorkflow = process.env.MERGE_WORKFLOW.trim();
             const mergeCheckName = process.env.MERGE_CHECK_NAME.trim();
             const ignored = new Set(process.env.IGNORE_AUTHORS.split(/\s+/).filter(Boolean).map((login) => login.toLowerCase()));
+            const replyIgnored = new Set(process.env.IGNORE_REPLY_AUTHORS.split(/\s+/).filter(Boolean).map((login) => login.toLowerCase()));
             const summary = [];
 
             // Dispatch on the default branch, so a pull request can never change its own fixer or merger.
@@ -91,20 +101,24 @@ jobs:
                 }
               } else if (state === 'changes_requested' || state === 'commented') {
                 let actionable = state === 'changes_requested' || Boolean(review.body?.trim());
+                let replyOnly = false;
                 if (!actionable) {
-                  const { data: comments } = await github.rest.pulls.listCommentsForReview({
+                  const comments = await github.paginate(github.rest.pulls.listCommentsForReview, {
                     owner,
                     repo,
                     pull_number: pullRequest.number,
                     review_id: review.id,
-                    per_page: 1,
+                    per_page: 100,
                   });
                   actionable = comments.length > 0;
+                  replyOnly = actionable && comments.every((comment) => comment.in_reply_to_id);
                 }
                 if (!fixWorkflow) {
                   summary.push('Skipped: fix-workflow is empty.');
                 } else if (ignored.has(author.toLowerCase())) {
                   summary.push(`Skipped: reviews by ${author} are ignored.`);
+                } else if (replyOnly && replyIgnored.has(author.toLowerCase())) {
+                  summary.push(`Skipped: the review by ${author} only replies to existing threads.`);
                 } else if (!actionable) {
                   summary.push('Skipped: the review has no body and no inline comments.');
                 } else {
