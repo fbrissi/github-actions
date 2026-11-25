@@ -77,8 +77,13 @@ on:
         required: false
         type: string
         default: ""
+      instructions:
+        description: Per-run instructions appended to the prompt as "Additional instructions for this run". Not passed on to chained stages.
+        required: false
+        type: string
+        default: ""
       context:
-        description: Free-text instructions or context appended to the prompt.
+        description: Deprecated, use `instructions`. Free-text context appended to the prompt.
         required: false
         type: string
         default: ""
@@ -369,6 +374,7 @@ jobs:
           project-status-options: ${{ inputs.project-status-options }}
           research-sources: ${{ inputs.research-sources }}
           context: ${{ inputs.context }}
+          instructions: ${{ inputs.instructions }}
           profile: ${{ inputs.profile }}
           implement-workflow: ${{ inputs.implement-workflow }}
           max-parallel: ${{ inputs.max-parallel }}

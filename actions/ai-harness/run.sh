@@ -22,6 +22,10 @@ for name in OPENAI_API_KEY ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN GITHUB_TOKE
   fi
 done
 
+if [ -n "${AI_INSTRUCTIONS:-}" ]; then
+  AI_PROMPT="${AI_PROMPT}"$'\n\n'"Additional instructions for this run:"$'\n'"${AI_INSTRUCTIONS}"
+fi
+
 mkdir -p "$(dirname "$AI_OUTPUT_FILE")"
 
 agent="${AI_AGENT:-}"

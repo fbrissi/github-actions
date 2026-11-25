@@ -50,6 +50,10 @@ merging a pull request that adds one tags the release and moves the major tag.
   into `~/.config/opencode/agents`, and the prompt runs with `opencode run --agent <agent>`. The action fails when the
   agent is missing, has `mode: subagent`, or is overridden by the checkout's `.opencode/agent(s)/`, because OpenCode
   would silently fall back to its default agent.
+- `instructions` input for per-run instructions, appended to the prompt as `Additional instructions for this run:`
+  on `ai-task.yml` and the `ai-task` action (`context` stays as a deprecated alias), `pr-fix.yml` and
+  `merge-decision.yml` (`prompt-append` stays as a deprecated alias), `code-review.yml` (both harnesses, including
+  the OpenCode command form), and the `ai-harness` action. Chained dispatches never pass it on.
 
 ### Changed
 

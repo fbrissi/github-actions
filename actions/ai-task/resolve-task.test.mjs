@@ -160,14 +160,15 @@ describe('buildPrompt', () => {
       'status-labels': 'ready=state:ready\n\n done=state:done ',
       project: 'octo/7',
       'project-status-options': 'needs-review=Technical Refinement\nbusiness-blocked=Blocked',
-      context: 'Keep the public API stable.'
+      context: 'Keep the public API stable.',
+      instructions: 'Skip the BDD scenarios.'
     }), { repository: 'octo/app', runUrl: 'https://github.com/octo/app/actions/runs/42' });
     assert.match(prompt, /^You are the task-implementer agent running the `implement` task .* in the GitHub repository octo\/app/);
     assert.match(prompt, /Follow the `dev` skill/);
     assert.match(prompt, /- issue: 12\n- branch: feat\/m1-12-login\n- base-branch: feat\/m1\n- status-labels:\n {4}ready=state:ready\n {4}done=state:done\n/);
     assert.match(prompt, /- project: octo\/7\n- project-status-options:\n {4}needs-review=Technical Refinement\n {4}business-blocked=Blocked\n/);
     assert.match(prompt, /repository profile \(`docs\/ai\/delivery\.md`\)/);
-    assert.match(prompt, /Additional context from the caller:\nKeep the public API stable\.\n$/);
+    assert.match(prompt, /Additional context from the caller:\nKeep the public API stable\.\n\nAdditional instructions for this run:\nSkip the BDD scenarios\.\n$/);
     assert.doesNotMatch(prompt, /milestone:|source:|JIRA_/);
   });
 

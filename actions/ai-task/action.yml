@@ -64,8 +64,12 @@ inputs:
     description: Multiline URLs or repository paths to consult when details are missing.
     required: false
     default: ""
+  instructions:
+    description: Per-run instructions appended to the prompt as "Additional instructions for this run".
+    required: false
+    default: ""
   context:
-    description: Free-text instructions or context appended to the prompt.
+    description: Deprecated, use `instructions`. Free-text context appended to the prompt.
     required: false
     default: ""
   profile:
@@ -219,6 +223,7 @@ runs:
         AI_TASK_PROJECT_STATUS_OPTIONS: ${{ inputs.project-status-options }}
         AI_TASK_RESEARCH_SOURCES: ${{ inputs.research-sources }}
         AI_TASK_CONTEXT: ${{ inputs.context }}
+        AI_TASK_INSTRUCTIONS: ${{ inputs.instructions }}
         AI_TASK_PROFILE: ${{ inputs.profile }}
         AI_TASK_IMPLEMENT_WORKFLOW: ${{ inputs.implement-workflow }}
         AI_TASK_MAX_PARALLEL: ${{ inputs.max-parallel }}

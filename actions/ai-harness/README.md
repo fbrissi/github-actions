@@ -38,6 +38,7 @@ narrowest tokens that work.
 |---|---|---|
 | `harness` | `claude` | `opencode` or `claude`. Empty falls back to `claude`. |
 | `prompt` | – (required) | Prompt sent to the harness. With `opencode-command`, it is passed as the command arguments. |
+| `instructions` | `""` | Per-run instructions appended to `prompt` under `Additional instructions for this run:`. With `opencode-command`, they become part of the command arguments. |
 | `opencode-command` | `""` | OpenCode command, for example `pr/review`. Ignored by Claude Code. |
 | `opencode-model` | `""` | OpenCode model in `provider/model` form. |
 | `opencode-variant` | `""` | OpenCode model variant. |

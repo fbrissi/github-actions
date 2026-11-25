@@ -37,8 +37,13 @@ on:
         required: false
         type: string
         default: ""
+      instructions:
+        description: Per-run instructions appended to the prompt as "Additional instructions for this run".
+        required: false
+        type: string
+        default: ""
       prompt-append:
-        description: Extra instructions appended to the prompt, for example project priorities.
+        description: Deprecated, use `instructions`. Extra instructions appended to the prompt, for example project priorities.
         required: false
         type: string
         default: ""
@@ -410,6 +415,7 @@ jobs:
         with:
           harness: ${{ steps.settings.outputs.harness }}
           prompt: ${{ steps.settings.outputs.prompt }}
+          instructions: ${{ inputs.instructions }}
           opencode-command: ""
           opencode-plugins: ${{ inputs.opencode-plugins }}
           opencode-model: ${{ inputs.opencode-model || vars.OPENCODE_MODEL }}

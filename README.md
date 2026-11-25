@@ -128,6 +128,7 @@ already cancels an older review of the same pull request.
 | `claude-model` | `CLAUDE_MODEL` | Claude Code model. |
 | `claude-effort` | `CLAUDE_EFFORT` | Claude Code effort level. |
 | `prompt` | `""` | Overrides the generated prompt. |
+| `instructions` | `""` | Per-run instructions appended to the prompt under `Additional instructions for this run:`; with `opencode-command` they are part of the command arguments. |
 | `review-skill-source` | `ai-skills` | `ai-skills` (pinned `ai-skills-ref`), `base` (the PR base commit, for the skills repository itself), or `none`. |
 | `ai-skills-ref` | `v0.2.0` | `fbrissi/ai-skills` tag or SHA used with `ai-skills`. |
 | `base-skills-path` | `.rulesync/skills` | Skills directory read from the base commit with `base`. |
@@ -323,7 +324,8 @@ The fixer GitHub App needs `Contents: Read and write`, `Pull requests: Read and 
 | `skills` | `pr-fix pr-checks` | Skills installed for the harness. |
 | `agents` | `""` | Agents installed for the harness (Claude Code or OpenCode agents of the same name). |
 | `prompt` | `""` | Overrides the generated prompt. |
-| `prompt-append` | `""` | Appended to the prompt. |
+| `instructions` | `""` | Per-run instructions appended to the prompt under `Additional instructions for this run:`. |
+| `prompt-append` | `""` | Deprecated, use `instructions`. Appended to the prompt. |
 | `skill-source` | `ai-skills` | `ai-skills` (pinned `ai-skills-ref`), `base` (the PR base commit), or `none`. |
 | `ai-skills-ref` | `v0.4.0` | `fbrissi/ai-skills` tag or SHA used with `ai-skills`. |
 | `base-skills-path` | `.rulesync/skills` | Skills directory read from the base commit with `base`. |
@@ -409,7 +411,8 @@ The review request uses the same App with `pull-requests: write`.
 | `skills` | `merge-risk` | Skills installed for the harness. |
 | `agents` | `""` | Agents installed for the harness (Claude Code or OpenCode agents of the same name). |
 | `prompt` | `""` | Overrides the generated prompt. |
-| `prompt-append` | `""` | Appended to the prompt. |
+| `instructions` | `""` | Per-run instructions appended to the prompt under `Additional instructions for this run:`. |
+| `prompt-append` | `""` | Deprecated, use `instructions`. Appended to the prompt. |
 | `skill-source` | `ai-skills` | `ai-skills` (pinned `ai-skills-ref`), `base` (the base commit), or `none`. |
 | `ai-skills-ref` | `v0.4.0` | `fbrissi/ai-skills` tag or SHA used with `ai-skills`. |
 | `base-skills-path` | `.rulesync/skills` | Skills directory read from the base commit with `base`. |
@@ -890,7 +893,7 @@ their approval dispatches the decision again. When PR Fix escalates, its handoff
 
 Task parameters are the [`ai-task` action inputs](actions/ai-task/README.md#inputs) under the same names: `task`,
 `source`, `source-tracker`, `source-language`, `milestone`, `issue`, `branch`, `base-branch`, `milestone-template`,
-`output-language`, `status-labels`, `project`, `project-status-field`, `project-status-options`, `research-sources`, `context`, `profile`,
+`output-language`, `status-labels`, `project`, `project-status-field`, `project-status-options`, `research-sources`, `instructions`, `context` (deprecated alias), `profile`,
 `implement-workflow`, `max-parallel`, `skills`, `agents`, and `ai-skills-ref` (default `v0.6.0`). The workflow adds:
 
 | Input | Default | Description |

@@ -12,6 +12,10 @@ inputs:
   prompt:
     description: Prompt sent to the harness. With `opencode-command`, it is passed as the command arguments.
     required: true
+  instructions:
+    description: Per-run instructions appended to `prompt` as "Additional instructions for this run". With `opencode-command`, they are part of the command arguments. Empty appends nothing.
+    required: false
+    default: ""
   opencode-command:
     description: Optional OpenCode command, for example `pr/review`. Ignored by Claude Code.
     required: false
@@ -226,6 +230,7 @@ runs:
       env:
         AI_HARNESS: ${{ steps.resolve.outputs.harness }}
         AI_PROMPT: ${{ inputs.prompt }}
+        AI_INSTRUCTIONS: ${{ inputs.instructions }}
         AI_OUTPUT_FILE: ${{ steps.resolve.outputs.output-file }}
         AI_TIMEOUT_MINUTES: ${{ inputs.timeout-minutes }}
         OPENCODE_COMMAND: ${{ inputs.opencode-command }}

@@ -76,7 +76,8 @@ Task parameters (see the [task table](#ai-task) for which are required):
 | `project-status-field` | profile, then `Status` | Single-select status field of `project`. |
 | `project-status-options` | profile, then Title Case of the state | Multiline `state=Option name` mapping to `project-status-field` options; several states may share one option, for example `needs-review=Technical Refinement`, `business-blocked=Blocked`. |
 | `research-sources` | profile | Multiline URLs or repository paths to consult when details are missing. |
-| `context` | – | Free text appended to the prompt. |
+| `instructions` | – | Per-run instructions appended to the prompt under `Additional instructions for this run:`. |
+| `context` | – | Deprecated, use `instructions`. Free text appended to the prompt. |
 | `profile` | `docs/ai/delivery.md` | Repository profile path. |
 | `implement-workflow` | profile, then `ai-implement.yml` | Workflow file `orchestrate` dispatches per issue. |
 | `max-parallel` | profile, then `3` | Implement runs `orchestrate` keeps in progress. |

@@ -17,6 +17,11 @@ on:
         required: false
         type: string
         default: ""
+      instructions:
+        description: Per-run instructions appended to the prompt as "Additional instructions for this run"; with `opencode-command`, they are part of the command arguments.
+        required: false
+        type: string
+        default: ""
       opencode-command:
         description: OpenCode command that reviews the PR, for example `pr/review` (Kompass). Empty uses the review-changes skill prompt.
         required: false
@@ -432,6 +437,7 @@ jobs:
         with:
           harness: ${{ steps.settings.outputs.harness }}
           prompt: ${{ steps.settings.outputs.prompt }}
+          instructions: ${{ inputs.instructions }}
           opencode-command: ${{ steps.settings.outputs.opencode-command }}
           opencode-plugins: ${{ inputs.opencode-plugins }}
           opencode-model: ${{ inputs.opencode-model || vars.OPENCODE_MODEL }}

@@ -88,7 +88,7 @@ export const isBotLogin = (login) => /\[bot\]$/i.test(login) || login.toLowerCas
 
 export function readInputs(env = process.env) {
   const inputs = {};
-  for (const name of [...PARAMETERS, 'context', 'skills', 'agents', 'harness', 'opencode-model']) {
+  for (const name of [...PARAMETERS, 'context', 'instructions', 'skills', 'agents', 'harness', 'opencode-model']) {
     inputs[name] = (env[envName(name)] ?? '').trim();
   }
   inputs.harness ||= DEFAULT_HARNESS;
@@ -269,6 +269,9 @@ export function buildPrompt(inputs, { repository = '', runUrl = '', hasJira = fa
   ];
   if (inputs.context) {
     sections.push('', 'Additional context from the caller:', inputs.context);
+  }
+  if (inputs.instructions) {
+    sections.push('', 'Additional instructions for this run:', inputs.instructions);
   }
   return `${sections.join('\n')}\n`;
 }

@@ -126,6 +126,12 @@ describe('run.sh', () => {
     assert.match(readFileSync(output(), 'utf8'), /--agent task-implementer/);
   });
 
+  it('appends per-run instructions to the prompt, also with an OpenCode command', () => {
+    const result = run('run.sh', base('opencode', { OPENCODE_COMMAND: 'pr/review', AI_PROMPT: '12', AI_INSTRUCTIONS: 'Focus on security.' }));
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(readFileSync(output(), 'utf8'), /--command=pr\/review 12\n\nAdditional instructions for this run:\nFocus on security\.$/m);
+  });
+
   it('rejects an invalid agent name', () => {
     const result = run('run.sh', base('opencode', { AI_AGENT: '../evil' }));
     assert.equal(result.status, 1);
