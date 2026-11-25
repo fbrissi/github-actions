@@ -17,13 +17,23 @@ on:
         required: false
         type: number
         default: 1
+      human-approval-exempt-base-prefixes:
+        description: Whitespace-separated base branch prefixes whose pull requests need no human approval, for example the milestone branches (`feat/`) task pull requests target. Other pull requests need `required-human-approvals`.
+        required: false
+        type: string
+        default: ""
+      request-human-review:
+        description: When a pull request waits for human approval, request a review from the person who started the flow (the milestone's `requested-by` marker) and mention them once.
+        required: false
+        type: boolean
+        default: true
       hold-labels:
         description: Whitespace-separated labels that block any decision.
         required: false
         type: string
         default: do-not-merge hold
       branch-prefixes:
-        description: Whitespace-separated head branch prefixes a pull request must match to be decided on. Empty decides on every pull request.
+        description: Whitespace-separated head branch prefixes a pull request must match to be decided on, for example `feat/` to cover both task branches and the milestone branch. Empty decides on every pull request.
         required: false
         type: string
         default: ""
@@ -157,12 +167,15 @@ jobs:
       head_sha: ${{ steps.gate.outputs.head_sha }}
       base_ref: ${{ steps.gate.outputs.base_ref }}
       base_sha: ${{ steps.gate.outputs.base_sha }}
+      required_approvals: ${{ steps.gate.outputs.required_approvals }}
+      request_review: ${{ steps.gate.outputs.request_review }}
     steps:
       - uses: actions/github-script@v9
         id: gate
         env:
           PR_NUMBER: ${{ inputs.pr-number }}
           REQUIRED_APPROVALS: ${{ inputs.required-human-approvals }}
+          EXEMPT_BASE_PREFIXES: ${{ inputs.human-approval-exempt-base-prefixes }}
           HOLD_LABELS: ${{ inputs.hold-labels }}
           BRANCH_PREFIXES: ${{ inputs.branch-prefixes }}
         with:
@@ -226,8 +239,14 @@ jobs:
               && review.commit_id === headSha
               && review.user.type === 'User'
               && !review.user.login.endsWith('[bot]')).length;
-            const required = Number(process.env.REQUIRED_APPROVALS);
-            if (approvals < required) return skip(`${approvals} of ${required} human approvals on ${headSha}.`);
+            const exemptPrefixes = process.env.EXEMPT_BASE_PREFIXES.split(/\s+/).filter(Boolean);
+            const required = exemptPrefixes.some((prefix) => pr.base.ref.startsWith(prefix)) ? 0 : Number(process.env.REQUIRED_APPROVALS);
+            core.setOutput('pr_number', pr.number);
+            core.setOutput('required_approvals', required);
+            if (approvals < required) {
+              core.setOutput('request_review', 'true');
+              return skip(`${approvals} of ${required} human approvals on ${headSha}.`);
+            }
 
             let unresolved = 0;
             let cursor = null;
@@ -285,7 +304,7 @@ jobs:
           PR_NUMBER: ${{ needs.gate.outputs.pr_number }}
           HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
           AUTO_MERGE: ${{ inputs.auto-merge }}
-          REQUIRED_APPROVALS: ${{ inputs.required-human-approvals }}
+          REQUIRED_APPROVALS: ${{ needs.gate.outputs.required_approvals }}
           HOLD_LABELS: ${{ inputs.hold-labels }}
           HAS_APP_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY != '' }}
         run: |
@@ -418,3 +437,31 @@ jobs:
           body="<!-- merge-decision head=${HEAD_SHA} -->
           Merge decision recorded for ${HEAD_SHA}; a new commit triggers a new decision."
           gh api --silent "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f "body=${body}"
+
+  request-review:
+    name: Request Human Review
+    needs: gate
+    if: ${{ inputs.request-human-review && needs.gate.outputs.request_review == 'true' }}
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions: {}
+    timeout-minutes: 5
+    environment:
+      name: ${{ inputs.environment }}
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+          permission-issues: read
+          permission-pull-requests: write
+
+      # Asks the person who started the flow once per pull request; their approval dispatches the decision again.
+      - name: Request review from the requester
+        uses: fbrissi/github-actions/actions/ai-delivery@v1
+        with:
+          command: request-review
+          github-token: ${{ steps.app-token.outputs.token }}
+          pr: ${{ needs.gate.outputs.pr_number }}
+          required-approvals: ${{ needs.gate.outputs.required_approvals }}
