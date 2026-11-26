@@ -6,7 +6,7 @@ author: Filipe Bojikian Rissi
 
 inputs:
   command:
-    description: "`feedback-dispatch`, `fix-gate`, `fix-record`, `fix-finish`, `merge-dispatch`, `merge-gate`, or `merge-record`."
+    description: "`feedback-dispatch`, `fix-gate`, `fix-record`, `fix-finish`, `merge-dispatch`, `merge-gate`, `merge-outcome`, or `merge-record`."
     required: true
   github-token:
     description: Token for the GitHub API. `feedback-dispatch` needs `actions` write and `pull-requests` read; `fix-gate` needs `checks` write and `issues` and `pull-requests` read; `fix-finish` needs `checks` write; `merge-dispatch` needs `actions` write; `merge-gate` needs `actions`, `checks`, `issues`, `pull-requests`, and `statuses` read; the record commands need a GitHub App token with `pull-requests` write, because only bot comments count as markers.
@@ -61,7 +61,7 @@ inputs:
     required: false
     default: ""
   outcome:
-    description: "`fix-record`: outcome of the harness step."
+    description: "`fix-record` and `merge-outcome`: outcome of the harness step."
     required: false
     default: ""
   head-sha:
@@ -90,6 +90,10 @@ inputs:
     default: ""
   ignore-reply-authors:
     description: "`feedback-dispatch`: logins whose reply-only reviews never dispatch `fix-workflow`."
+    required: false
+    default: ""
+  output-file:
+    description: "`merge-outcome`: harness output file to read the merge-risk result from. Empty uses the ai-harness default under `RUNNER_TEMP`."
     required: false
     default: ""
   merge-check-name:
@@ -125,6 +129,9 @@ outputs:
   required_approvals:
     description: "`merge-gate`: human approvals the pull request needs."
     value: ${{ steps.run.outputs.required_approvals }}
+  result:
+    description: "`merge-outcome`: `merged`, `held`, or `not-evaluated`."
+    value: ${{ steps.run.outputs.result }}
   request_review:
     description: "`merge-gate`: `true` when human approvals are missing."
     value: ${{ steps.run.outputs.request_review }}
@@ -175,6 +182,7 @@ runs:
         PR_GATE_IGNORE_AUTHORS: ${{ inputs.ignore-authors }}
         PR_GATE_IGNORE_REPLY_AUTHORS: ${{ inputs.ignore-reply-authors }}
         PR_GATE_MERGE_CHECK_NAME: ${{ inputs.merge-check-name }}
+        PR_GATE_OUTPUT_FILE: ${{ inputs.output-file }}
       run: node "$GITHUB_ACTION_PATH/main.mjs"
 
 branding:

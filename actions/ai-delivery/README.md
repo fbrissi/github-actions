@@ -8,7 +8,7 @@ directly only to build your own variant of them.
 | Command | Used by | What it does |
 |---|---|---|
 | `follow-up` | `ai-task.yml` | After an issue or dependency task (`issue-intake`, `issue-resolve`, `dependency-update`) it only hands off a failed run. After a stage run, reads the `status:*` labels of the milestone's open issues (or of `issue`) and dispatches the next stage, or posts a handoff for each blocked issue. On `failure` or `cancelled` it hands off the same stage with the run link and moves an `implement` issue stuck in `status:in-progress` without a PR back to `status:ready`. Stores the requester in the milestone description and enforces the loop guard. |
-| `handoff` | `pr-fix.yml` | Posts one handoff comment for `task` on `pr` (or `issue`), unless an open one for the same stage is already there. |
+| `handoff` | `pr-fix.yml`, `merge-decision.yml` | Posts one handoff comment for `task` on `pr` (or `issue`), unless an open one for the same stage with the same markers is already there; an open one with other markers is superseded. |
 | `resume` | `ai-resume.yml` | On an `issue_comment` `created` event whose first line is `/ai-resume [stage] [instructions]`, written by a person with write permission, resumes the named stage or the newest open handoff: marks it `state=resumed`, dispatches the stage with the instructions, replaces the reply line with `Resumed by @<login> -> <run link>`, reacts, and replies. |
 | `request-review` | `merge-decision.yml` | Requests a review on `pr` from the requester and mentions them once. |
 
@@ -34,6 +34,7 @@ inputs below, on the default branch; an input the caller does not declare is dro
 | `orchestrate` | `ai-orchestrate.yml` | `milestone`, `requested_by` |
 | `implement` | `ai-implement.yml` | `issue`, `branch`, `base_branch`, `requested_by` |
 | `pr-fix` | `pr-fix.yml` | `pr_number` |
+| `merge-decision` | `merge-decision.yml` | `pr_number` (a resume first posts `<!-- merge-decision redecide -->`, so the current head is decided again once) |
 | `issue-intake` | `ai-issue-intake.yml` | `requested_by` |
 | `issue-resolve` | `ai-issue-resolve.yml` | `issue`, `requested_by` |
 | `dependency-update` | `ai-dependency-update.yml` | `requested_by` |

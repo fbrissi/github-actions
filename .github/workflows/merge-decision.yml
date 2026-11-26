@@ -106,7 +106,7 @@ on:
         description: Tag or commit SHA of fbrissi/ai-skills used when `skill-source` is `ai-skills`.
         required: false
         type: string
-        default: v0.4.0
+        default: v0.9.0
       base-skills-path:
         description: Directory holding one folder per skill in the repository, used when `skill-source` is `base`.
         required: false
@@ -341,13 +341,38 @@ jobs:
           claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github-token: ${{ steps.app-token.outputs.token }}
 
+      # merge-risk ends with `merge-risk-result: merged | held | not-evaluated`. Only a real decision marks the head as
+      # decided; a tooling failure (for example a missing CLI) is handed to a person and decided again later.
+      - name: Read decision
+        id: outcome
+        if: ${{ always() && steps.app-token.outcome == 'success' }}
+        uses: fbrissi/github-actions/actions/pr-gate@v1
+        with:
+          command: merge-outcome
+          output-file: ${{ steps.decide.outputs.output-file }}
+          outcome: ${{ steps.decide.outcome }}
+
       - name: Record decision
+        if: ${{ always() && (steps.outcome.outputs.result == 'merged' || steps.outcome.outputs.result == 'held') }}
         uses: fbrissi/github-actions/actions/pr-gate@v1
         with:
           command: merge-record
           github-token: ${{ steps.app-token.outputs.token }}
           pr-number: ${{ needs.gate.outputs.pr_number }}
           head-sha: ${{ needs.gate.outputs.head_sha }}
+
+      - name: Hand off an undecided pull request
+        if: ${{ always() && steps.outcome.outputs.result == 'not-evaluated' }}
+        uses: fbrissi/github-actions/actions/ai-delivery@v1
+        with:
+          command: handoff
+          github-token: ${{ steps.app-token.outputs.token }}
+          task: merge-decision
+          pr: ${{ needs.gate.outputs.pr_number }}
+          marker: "<!-- merge-decision not-evaluated -->"
+          blocker: >-
+            The merge decision could not evaluate this pull request (for example a missing tool or an API error), so
+            nothing was merged or held; read the run linked below, fix its cause, then resume to decide again.
 
   request-review:
     name: Request Human Review

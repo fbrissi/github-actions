@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.12.0
+
+Release order: `fbrissi/ai-skills` `v0.9.0` first (its `merge-risk` prints the `merge-risk-result:` line this release
+reads), then this release.
+
+- **setup-gh:** new composite action that makes `gh` available on any Linux runner. It keeps an installed `gh` (at
+  least `min-version` when set), otherwise downloads the pinned official release (2.103.3) for `linux_amd64` or
+  `linux_arm64` into `RUNNER_TEMP`, checks its SHA-256, and adds it to the `PATH`, without root. `ai-harness` runs it
+  whenever it gets a `github-token`, so agents and skills in `ai-task`, `pr-fix.yml`, `merge-decision.yml`, and
+  `code-review.yml` always have `gh` (before, a self-hosted runner without it made the merge decision hold with
+  `gh: command not found`). `ai-task.yml` and `pr-fix.yml` run it before their own `gh` steps, and `code-review.yml`
+  with `min-version: 2.48.0` for `gh api --slurp`. `release.yml` is unchanged: it would need this release's tag to
+  exist before it runs.
+- **Merge Decision:** a tooling failure is no longer a permanent HOLD. The new `pr-gate` `merge-outcome` command reads
+  the skill's `merge-risk-result: merged | held | not-evaluated` line (older skills: the `PR #<n>: MERGE / HOLD`
+  line). Only `merged` or `held` records the `<!-- merge-decision head=<sha> -->` marker; `not-evaluated`, or a failed
+  harness without a result, posts a `merge-decision` handoff that mentions the requester with the run link and
+  leaves the head undecided. `ai-skills-ref` defaults to `v0.9.0` (was `v0.4.0`).
+- **AI Delivery:** `merge-decision` is a stage: handoffs and `/ai-resume merge-decision` dispatch `merge-decision.yml`
+  with `pr_number`. The resume first posts `<!-- merge-decision redecide -->`; `merge-gate` then allows one new
+  decision on a head that already has a decision marker older than that comment (the new record is newer, so it is
+  bounded; only bot comments count).
+- **AI Task:** `ai-skills-ref` defaults to `v0.9.0` (release notes merge the base branch and pick a version above
+  existing tags; bugfix branches start from their release branch).
+
 ## v1.11.0
 
 Release order: `fbrissi/ai-skills` `v0.8.1` first, then this release.

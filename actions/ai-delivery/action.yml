@@ -68,7 +68,7 @@ inputs:
     required: false
     default: ""
   stage-workflows:
-    description: Multiline `stage=workflow file` overrides of the stage callers (defaults `ai-<stage>.yml` and `pr-fix.yml`).
+    description: Multiline `stage=workflow file` overrides of the stage callers (defaults `ai-<stage>.yml`, `pr-fix.yml`, and `merge-decision.yml`).
     required: false
     default: ""
   max-auto-dispatches:

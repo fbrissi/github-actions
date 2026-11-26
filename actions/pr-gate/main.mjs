@@ -10,7 +10,7 @@ const NAMES = [
   'command', 'pr-number', 'opt-in-label', 'branch-prefixes', 'max-rounds', 'escalation-label', 'check-name',
   'required-human-approvals', 'human-approval-exempt-base-prefixes', 'human-approval-exempt-authors', 'hold-labels', 'round', 'start-sha', 'outcome',
   'head-sha', 'result', 'check-run-id', 'merge-workflow', 'fix-workflow', 'ignore-authors', 'ignore-reply-authors',
-  'merge-check-name'
+  'merge-check-name', 'output-file'
 ];
 
 export const envName = (name) => `PR_GATE_${name.toUpperCase().replaceAll('-', '_')}`;
@@ -18,6 +18,7 @@ const words = (value = '') => value.split(/\s+/).filter(Boolean);
 const FIX_MARKER = /<!-- pr-fix round=(\d+) head=([0-9a-f]{40}) -->/;
 const FIX_ESCALATED = '<!-- pr-fix escalated -->';
 const SHA = /^[0-9a-f]{40}$/;
+const REDECIDE_MARKER = '<!-- merge-decision redecide -->';
 const WORKFLOW_FILE = /^[A-Za-z0-9_.-]+\.ya?ml$/;
 
 export function readContext(env = process.env) {
@@ -257,7 +258,13 @@ export async function mergeGate(ctx, api, sleep = (ms) => new Promise((resolve) 
 
   const comments = await api.paginate(`/repos/${repo}/issues/${number}/comments`);
   const marker = `<!-- merge-decision head=${headSha} -->`;
-  if (comments.some((comment) => comment.user?.type === 'Bot' && comment.body?.includes(marker))) {
+  const decided = comments.filter((comment) => comment.user?.type === 'Bot' && comment.body?.includes(marker)).at(-1);
+  // `/ai-resume merge-decision` leaves a redecide marker: one new decision on the current head, since the next decision
+  // record is newer than it.
+  const redecide = decided && comments.some((comment) => comment.user?.type === 'Bot'
+    && comment.body?.includes(REDECIDE_MARKER)
+    && new Date(comment.created_at) > new Date(decided.created_at));
+  if (decided && !redecide) {
     return { ...skip(`a merge decision was already made for ${headSha}.`), outputs };
   }
 
@@ -265,6 +272,36 @@ export async function mergeGate(ctx, api, sleep = (ms) => new Promise((resolve) 
     outputs: { ...outputs, action: 'decide', head_sha: headSha, base_ref: pr.base.ref, base_sha: pr.base.sha },
     summary: [`Merge gates passed for PR #${number} on ${headSha}.`]
   };
+}
+
+// The merge-risk skill ends its output with `merge-risk-result: merged | held | not-evaluated`. Older skills only print
+// `PR #<n>: MERGE | HOLD`. Anything else, or a failed harness without a result, could not be evaluated.
+export function parseMergeOutcome(text = '', harnessOutcome = 'success') {
+  const results = [...text.matchAll(/^[\s>*`_]*merge-risk-result:[\s*`_]*(merged|held|not-evaluated)\b/gim)];
+  if (results.length > 0) return results.at(-1)[1].toLowerCase();
+  if (harnessOutcome !== 'success') return 'not-evaluated';
+  const verdicts = [...text.matchAll(/PR #\d+:[\s*`_]*(MERGE|HOLD|NOT EVALUATED)\b/g)];
+  const verdict = verdicts.at(-1)?.[1];
+  if (verdict === 'MERGE') return 'merged';
+  if (verdict === 'HOLD') return 'held';
+  return 'not-evaluated';
+}
+
+export async function mergeOutcome(ctx) {
+  const file = ctx['output-file'] || `${process.env.RUNNER_TEMP ?? ''}/ai-harness-output`;
+  let text = '';
+  try {
+    text = readFileSync(file, 'utf8');
+  } catch {
+    // No output: the harness did not run far enough to decide.
+  }
+  const result = parseMergeOutcome(text, ctx.outcome || 'success');
+  const summary = [`Merge decision result: ${result}.`];
+  if (result === 'not-evaluated') {
+    const reason = 'the merge decision could not be evaluated; it is handed to a person and the head is not marked as decided.';
+    return { outputs: { result }, summary, notice: reason };
+  }
+  return { outputs: { result }, summary };
 }
 
 export async function mergeRecord(ctx, api) {
@@ -369,6 +406,7 @@ const COMMANDS = {
   'feedback-dispatch': feedbackDispatch,
   'fix-finish': fixFinish,
   'merge-dispatch': mergeDispatch,
+  'merge-outcome': mergeOutcome,
   'merge-gate': mergeGate,
   'merge-record': mergeRecord
 };

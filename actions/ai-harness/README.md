@@ -61,7 +61,7 @@ narrowest tokens that work.
 | `openai-api-key` | `""` | OpenAI key for OpenCode. |
 | `anthropic-api-key` | `""` | Anthropic key for Claude Code. |
 | `claude-code-oauth-token` | `""` | Claude Code OAuth token, used when no Anthropic key is set. |
-| `github-token` | `""` | Exposed as `GITHUB_TOKEN`/`GH_TOKEN` (with `GH_REPO` set to the current repository). Omit it when the task must not reach GitHub. |
+| `github-token` | `""` | Exposed as `GITHUB_TOKEN`/`GH_TOKEN` (with `GH_REPO` set to the current repository); with it, [`setup-gh`](../setup-gh/README.md) installs `gh` first when the runner lacks it. Omit it when the task must not reach GitHub. |
 
 ## Running an agent
 
