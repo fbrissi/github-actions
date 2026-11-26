@@ -99,6 +99,45 @@ describe('followUp', () => {
     assert.match(comment.body.body, /gh workflow run ai-business-refinement\.yml -f milestone=JIRA:DEV-1 -f jira_key=DEV-1 -f requested_by=alice/);
   });
 
+  it('allows a send-back to an earlier refinement and counts it', async () => {
+    const api = milestoneRepo({
+      description: '<!-- ai-delivery-dispatches technical-refinement=1 readiness-review=1 -->',
+      issues: [{ number: 4, labels: [label('status:needs-technical-refinement')] }]
+    });
+    await followUp(ctxFor({ task: 'readiness-review', milestone: 'JIRA:DEV-1', 'requested-by': 'alice' }), api, silent);
+    assert.equal(posts(api, /dispatches$/)[0].path, '/repos/octo/app/actions/workflows/ai-technical-refinement.yml/dispatches');
+    const patches = api.calls.filter((call) => call.method === 'PATCH');
+    assert.match(patches.at(-1).body.description, /<!-- ai-delivery-dispatches technical-refinement=2 readiness-review=1 send-backs=1 -->/);
+  });
+
+  it('hands off to the requester past max-send-backs', async () => {
+    const api = milestoneRepo({
+      description: '<!-- ai-delivery-dispatches technical-refinement=2 readiness-review=3 send-backs=3 -->',
+      issues: [{ number: 4, labels: [label('status:needs-technical-refinement')] }]
+    });
+    await followUp(ctxFor({ task: 'readiness-review', milestone: 'JIRA:DEV-1', 'requested-by': 'alice' }), api, silent);
+    assert.equal(posts(api, /dispatches$/).length, 0);
+    const [comment] = posts(api, /issues\/4\/comments$/);
+    assert.match(comment.body.body, /^@alice the AI delivery flow stopped at \*\*technical-refinement\*\*/);
+    assert.match(comment.body.body, /sent the issues back to an earlier refinement stage 3 times for this milestone \(limit 3\), and readiness-review wants to send them back to technical-refinement again/);
+  });
+
+  it('does not count forward dispatches as send-backs', async () => {
+    const api = milestoneRepo({
+      description: '<!-- ai-delivery-dispatches send-backs=1 -->',
+      issues: [{ number: 4, labels: [label('status:needs-review')] }]
+    });
+    await followUp(ctxFor({ task: 'technical-refinement', milestone: 'JIRA:DEV-1', 'requested-by': 'alice' }), api, silent);
+    assert.equal(posts(api, /dispatches$/)[0].path, '/repos/octo/app/actions/workflows/ai-readiness-review.yml/dispatches');
+  });
+
+  it('honors max-send-backs 0', async () => {
+    const api = milestoneRepo({ issues: [{ number: 4, labels: [label('status:needs-business-refinement')] }] });
+    await followUp(ctxFor({ task: 'technical-refinement', milestone: 'JIRA:DEV-1', 'requested-by': 'alice', 'max-send-backs': '0' }), api, silent);
+    assert.equal(posts(api, /dispatches$/).length, 0);
+    assert.equal(posts(api, /issues\/4\/comments$/).length, 1);
+  });
+
   it('hands off blocked issues once, linking the questions', async () => {
     const question = { user: { type: 'Bot' }, body: 'Which currency?', html_url: 'https://github.com/octo/app/issues/4#issuecomment-1' };
     const api = milestoneRepo({ issues: [{ number: 4, labels: [label('status:technical-blocked')] }], comments: [question] });

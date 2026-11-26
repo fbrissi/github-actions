@@ -122,6 +122,16 @@ on:
         required: false
         type: number
         default: 3
+      max-send-backs:
+        description: Times per milestone the follow-up may send issues back to an earlier refinement stage (for example readiness review back to technical refinement) before it hands off to the requester instead. A resume resets the counter.
+        required: false
+        type: number
+        default: 3
+      app-token-permission-issue-fields:
+        description: Issue fields permission of the agent token (`write` lets refinement set organization issue fields such as Priority and dates). The agent App must have it; empty skips it.
+        required: false
+        type: string
+        default: ""
       setup-command:
         description: Command run after `install-command` and before the agent, for example to install Playwright browsers and start the test environment for browser QA. Empty skips it.
         required: false
@@ -318,6 +328,7 @@ jobs:
           permission-pull-requests: ${{ (inputs.task == 'orchestrate' || inputs.task == 'implement' || inputs.task == 'issue-resolve') && 'write' || 'read' }}
           permission-actions: ${{ inputs.task == 'orchestrate' && 'write' || '' }}
           permission-organization-projects: ${{ inputs.project != '' && 'write' || '' }}
+          permission-issue-fields: ${{ inputs.app-token-permission-issue-fields }}
 
       - uses: actions/checkout@v7
         with:
@@ -451,5 +462,6 @@ jobs:
           status-labels: ${{ inputs.status-labels }}
           stage-workflows: ${{ inputs.stage-workflows }}
           max-auto-dispatches: ${{ inputs.max-auto-dispatches }}
+          max-send-backs: ${{ inputs.max-send-backs }}
           chain: ${{ inputs.chain }}
           jira-base-url: ${{ inputs.jira-base-url || vars.JIRA_BASE_URL }}

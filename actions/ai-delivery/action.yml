@@ -75,6 +75,10 @@ inputs:
     description: Automatic dispatches of one stage per milestone before `follow-up` hands off instead.
     required: false
     default: "3"
+  max-send-backs:
+    description: Times per milestone `follow-up` may send issues back to an earlier refinement stage (for example readiness review back to technical refinement) before it hands off to the requester instead.
+    required: false
+    default: "3"
   chain:
     description: Let `follow-up` dispatch the next stage. When false it only hands off.
     required: false
@@ -140,6 +144,7 @@ runs:
         AI_DELIVERY_STATUS_LABELS: ${{ inputs.status-labels }}
         AI_DELIVERY_STAGE_WORKFLOWS: ${{ inputs.stage-workflows }}
         AI_DELIVERY_MAX_AUTO_DISPATCHES: ${{ inputs.max-auto-dispatches }}
+        AI_DELIVERY_MAX_SEND_BACKS: ${{ inputs.max-send-backs }}
         AI_DELIVERY_CHAIN: ${{ inputs.chain }}
         AI_DELIVERY_ESCALATION_LABEL: ${{ inputs.escalation-label }}
         AI_DELIVERY_TRUSTED_BOTS: ${{ inputs.trusted-bots }}

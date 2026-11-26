@@ -17,7 +17,7 @@ directly only to build your own variant of them.
 | Marker | Where | Purpose |
 |---|---|---|
 | `<!-- ai-delivery requested-by=<login> -->` | milestone description | Person who started the flow; never a bot. |
-| `<!-- ai-delivery-dispatches <stage>=<n> ... -->` | milestone description | Automatic dispatches per stage (loop guard); a resume removes it. |
+| `<!-- ai-delivery-dispatches <stage>=<n> ... send-backs=<n> -->` | milestone description | Automatic dispatches per stage and send-backs to an earlier refinement stage (loop guards); a resume removes it. |
 | `<!-- ai-resume stage=... milestone=... issue=... pr=... requested-by=... branch=... base=... jira=... label=... workflow=... state=open -->` | handoff comment, after the ``Reply `/ai-resume` ...`` line | What to dispatch on resume; `state` turns `resumed` when a command resumes it. Values are percent-encoded. |
 | `<!-- merge-decision review-requested=<login> -->` | pull request comment | Deduplicates the review request. |
 
@@ -76,6 +76,7 @@ A handoff for the stage of the running workflow names that caller's own file (fr
 | `status-labels` | `""` | `state=label` overrides (default `status:<state>`). |
 | `stage-workflows` | `""` | `stage=file` overrides of the stage callers. |
 | `max-auto-dispatches` | `3` | Automatic dispatches of one stage per milestone before `follow-up` hands off instead. |
+| `max-send-backs` | `3` | Send-backs per milestone to an earlier refinement stage (readiness review or technical refinement back to a refinement) before `follow-up` hands off to the requester instead. |
 | `chain` | `true` | `follow-up` dispatches the next stage; `false` only hands off. |
 | `escalation-label` | `ai:needs-human` | Escalation label; a `pr-fix` resume removes it. |
 | `bot-login`, `trusted-bots` | `""` | `resume`: bot logins whose handoff comments may be resumed. |
