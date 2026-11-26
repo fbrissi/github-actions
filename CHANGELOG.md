@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.13.1
+
+Release order: `fbrissi/ai-skills` `v0.10.1` first, then this release.
+
+- **AI Task `ai-skills-ref` default `v0.10.0` -> `v0.10.1`** (the `ai-task.yml` workflow and the `ai-task` action):
+  orchestration now checks that the milestone pull request merges cleanly before marking it ready, and leaves a
+  conflicting one in draft with a blocker that names the files.
+
 ## v1.13.0
 
 Release order: `fbrissi/ai-skills` `v0.10.0` first (its `dependency-updates` and `issue-resolver` open a release when

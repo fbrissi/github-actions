@@ -1349,7 +1349,7 @@ jobs:
 Task parameters are the [`ai-task` action inputs](actions/ai-task/README.md#inputs) under the same names: `task`,
 `source`, `source-tracker`, `source-language`, `milestone`, `issue`, `branch`, `base-branch`, `milestone-template`,
 `output-language`, `status-labels`, `project`, `project-status-field`, `project-status-options`, `research-sources`, `instructions`, `context` (deprecated alias), `profile`,
-`implement-workflow`, `max-parallel`, `skills`, `agents`, and `ai-skills-ref` (default `v0.10.0`). The workflow adds:
+`implement-workflow`, `max-parallel`, `skills`, `agents`, and `ai-skills-ref` (default `v0.10.1`). The workflow adds:
 
 | Input | Default | Description |
 |---|---|---|
