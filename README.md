@@ -428,7 +428,9 @@ The fixer GitHub App needs `Contents: Read and write`, `Pull requests: Read and 
    skill could not evaluate the pull request (for example `gh` failed or the API errored) or the harness failed
    without a result, it records nothing and posts a `merge-decision` [handoff](#how-stages-chain) that mentions the
    requester with the run link. Push a commit, or reply `/ai-resume merge-decision` (it leaves a `<!-- merge-decision
-   redecide -->` comment that allows one new decision on the current head), to decide again. Agents get `gh` from
+   redecide -->` comment that allows one new decision on the current head), to decide again. `instructions` (for example
+   from `/ai-resume merge-decision <text>`) can only make the decision stricter: the prompt says they never raise the
+   max risk, add base branches, lower approvals, remove hold labels, or turn auto-merge on. Agents get `gh` from
    [`setup-gh`](actions/setup-gh/README.md) when the runner lacks it.
 
 ```mermaid

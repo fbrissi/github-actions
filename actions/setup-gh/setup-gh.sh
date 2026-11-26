@@ -3,18 +3,40 @@
 # pinned release for the runner's architecture under RUNNER_TEMP, without root, after checking its SHA-256.
 set -euo pipefail
 
-version="${GH_SETUP_VERSION:-2.103.3}"
-sha256_amd64="${GH_SETUP_SHA256_AMD64:-4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d}"
-sha256_arm64="${GH_SETUP_SHA256_ARM64:-ee32df2323c8847f5fac6cb6b4b69ca75828e9329a8f22f677021f7b3306ce63}"
+# Pinned release; change the version and both hashes together, from the release's checksums file.
+version="2.103.3"
+sha256_amd64="4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d"
+sha256_arm64="ee32df2323c8847f5fac6cb6b4b69ca75828e9329a8f22f677021f7b3306ce63"
 min_version="${GH_SETUP_MIN_VERSION:-}"
+
+if [ -n "$min_version" ] && ! [[ "$min_version" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+  echo "::error::min-version must be a dotted number such as 2.48.0, got '${min_version}'."
+  exit 1
+fi
 
 installed_version() {
   gh --version 2>/dev/null | sed -n 's/^gh version \([0-9][0-9.]*\).*/\1/p' | head -n 1
 }
 
-# version_at_least <version> <minimum>
+# version_at_least <version> <minimum>: dotted numeric versions, compared part by part (portable, no sort -V).
 version_at_least() {
-  [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n 1)" = "$2" ]
+  local IFS=.
+  local -a have want
+  read -r -a have <<< "$1"
+  read -r -a want <<< "$2"
+  local i count=${#have[@]}
+  if [ "${#want[@]}" -gt "$count" ]; then
+    count=${#want[@]}
+  fi
+  for ((i = 0; i < count; i++)); do
+    if ((10#${have[i]:-0} > 10#${want[i]:-0})); then
+      return 0
+    fi
+    if ((10#${have[i]:-0} < 10#${want[i]:-0})); then
+      return 1
+    fi
+  done
+  return 0
 }
 
 if command -v gh >/dev/null 2>&1; then

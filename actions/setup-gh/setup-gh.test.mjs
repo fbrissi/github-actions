@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const VERSION = '9.9.9';
-const TOOLS = ['bash', 'cat', 'cut', 'cp', 'gzip', 'head', 'mkdir', 'perl', 'rm', 'sed', 'sha256sum', 'shasum', 'sort', 'tar', 'tr'];
+const TOOLS = ['bash', 'cat', 'cut', 'cp', 'gzip', 'head', 'mkdir', 'perl', 'rm', 'sed', 'sha256sum', 'shasum', 'tar', 'tr'];
 
 let root;
 let bin;
@@ -39,10 +39,19 @@ function buildFixture(arch) {
   return { archive, sha256: createHash('sha256').update(readFileSync(archive)).digest('hex') };
 }
 
-const run = (env = {}) => spawnSync('bash', [join(here, 'setup-gh.sh')], {
-  encoding: 'utf8',
-  env: { PATH: bin, RUNNER_TEMP: join(root, 'tmp'), GITHUB_PATH: join(root, 'github-path'), GH_SETUP_VERSION: VERSION, ...env }
-});
+// The script pins its release; the tests run a copy pinned to the fixture's version and hashes.
+function run({ sha256Amd64 = '0'.repeat(64), sha256Arm64 = '0'.repeat(64), ...env } = {}) {
+  const script = readFileSync(join(here, 'setup-gh.sh'), 'utf8')
+    .replace(/^version=".*"$/m, `version="${VERSION}"`)
+    .replace(/^sha256_amd64=".*"$/m, `sha256_amd64="${sha256Amd64}"`)
+    .replace(/^sha256_arm64=".*"$/m, `sha256_arm64="${sha256Arm64}"`);
+  const copy = join(root, 'setup-gh.sh');
+  writeFileSync(copy, script);
+  return spawnSync('bash', [copy], {
+    encoding: 'utf8',
+    env: { PATH: bin, RUNNER_TEMP: join(root, 'tmp'), GITHUB_PATH: join(root, 'github-path'), ...env }
+  });
+}
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'setup-gh-'));
@@ -72,7 +81,7 @@ describe('setup-gh', () => {
   });
 
   it('installs the pinned release when gh is missing and adds it to the PATH', () => {
-    const result = run({ FIXTURE: fixture.archive, GH_SETUP_SHA256_AMD64: fixture.sha256 });
+    const result = run({ FIXTURE: fixture.archive, sha256Amd64: fixture.sha256 });
     assert.equal(result.status, 0, result.stderr + result.stdout);
     const added = readFileSync(join(root, 'github-path'), 'utf8').trim();
     assert.equal(added, join(root, 'tmp', `gh-${VERSION}`, `gh_${VERSION}_linux_amd64`, 'bin'));
@@ -81,24 +90,37 @@ describe('setup-gh', () => {
 
   it('picks the arm64 build on arm64 runners', () => {
     const arm = buildFixture('arm64');
-    const result = run({ FIXTURE: arm.archive, FAKE_ARCH: 'aarch64', GH_SETUP_SHA256_ARM64: arm.sha256 });
+    const result = run({ FIXTURE: arm.archive, FAKE_ARCH: 'aarch64', sha256Arm64: arm.sha256 });
     assert.equal(result.status, 0, result.stderr + result.stdout);
     assert.match(readFileSync(join(root, 'github-path'), 'utf8'), /linux_arm64\/bin/);
   });
 
   it('replaces a gh older than min-version', () => {
     write(join(bin, 'gh'), '#!/usr/bin/env bash\necho "gh version 2.40.1 (x)"\n', 0o755);
-    const result = run({ FIXTURE: fixture.archive, GH_SETUP_SHA256_AMD64: fixture.sha256, GH_SETUP_MIN_VERSION: '2.48.0' });
+    const result = run({ FIXTURE: fixture.archive, sha256Amd64: fixture.sha256, GH_SETUP_MIN_VERSION: '2.48.0' });
     assert.equal(result.status, 0, result.stderr + result.stdout);
     assert.match(result.stdout, /older than 2\.48\.0/);
     assert.ok(existsSync(join(root, 'github-path')));
   });
 
   it('refuses a download whose checksum does not match', () => {
-    const result = run({ FIXTURE: fixture.archive, GH_SETUP_SHA256_AMD64: '0'.repeat(64) });
+    const result = run({ FIXTURE: fixture.archive, sha256Amd64: '0'.repeat(64) });
     assert.notEqual(result.status, 0);
     assert.match(result.stdout, /Checksum mismatch/);
     assert.equal(existsSync(join(root, 'github-path')), false);
+  });
+
+  it('compares versions part by part and keeps a newer gh', () => {
+    write(join(bin, 'gh'), '#!/usr/bin/env bash\necho "gh version 2.100.0 (x)"\n', 0o755);
+    const result = run({ FIXTURE: fixture.archive, GH_SETUP_MIN_VERSION: '2.48.0' });
+    assert.equal(result.status, 0, result.stderr + result.stdout);
+    assert.match(result.stdout, /2\.100\.0 is already installed/);
+  });
+
+  it('rejects a min-version that is not a dotted number', () => {
+    const result = run({ FIXTURE: fixture.archive, GH_SETUP_MIN_VERSION: '2.48; rm -rf /' });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stdout, /dotted number/);
   });
 
   it('fails on an unsupported architecture', () => {

@@ -12,7 +12,7 @@ Release order: `fbrissi/ai-skills` `v0.9.0` first (its `merge-risk` prints the `
 reads), then this release.
 
 - **setup-gh:** new composite action that makes `gh` available on any Linux runner. It keeps an installed `gh` (at
-  least `min-version` when set), otherwise downloads the pinned official release (2.103.3) for `linux_amd64` or
+  least `min-version` when set, compared part by part), otherwise downloads the pinned official release (2.103.3) for `linux_amd64` or
   `linux_arm64` into `RUNNER_TEMP`, checks its SHA-256, and adds it to the `PATH`, without root. `ai-harness` runs it
   whenever it gets a `github-token`, so agents and skills in `ai-task`, `pr-fix.yml`, `merge-decision.yml`, and
   `code-review.yml` always have `gh` (before, a self-hosted runner without it made the merge decision hold with
@@ -23,7 +23,19 @@ reads), then this release.
   the skill's `merge-risk-result: merged | held | not-evaluated` line (older skills: the `PR #<n>: MERGE / HOLD`
   line). Only `merged` or `held` records the `<!-- merge-decision head=<sha> -->` marker; `not-evaluated`, or a failed
   harness without a result, posts a `merge-decision` handoff that mentions the requester with the run link and
-  leaves the head undecided. `ai-skills-ref` defaults to `v0.9.0` (was `v0.4.0`).
+  leaves the head undecided. The prompt states that per-run `instructions` (for example from `/ai-resume
+  merge-decision <text>`) can only make the decision stricter: never a higher max risk, more base branches, fewer
+  approvals, fewer hold labels, or auto-merge.
+- **Merge Decision `ai-skills-ref` default `v0.4.0` -> `v0.9.0`.** Callers that keep the default get these
+  `merge-risk` changes:
+  - Base branches are a list of names or patterns (`release/*`, `release/`) instead of one base branch.
+  - The profile may set `Max risk to merge` and `Required human approvals` per base pattern; the first matching row
+    wins over the general values.
+  - With `Required human approvals: 0` (or the workflow passing 0 for exempt bases and authors), an empty
+    `reviewDecision` passes; only `CHANGES_REQUESTED`, or `REVIEW_REQUIRED` from branch protection, holds. Otherwise
+    it counts human approvals on the head commit from the reviews, never `reviewDecision` alone.
+  - A tooling failure is `NOT EVALUATED` (no HOLD posted), and the output ends with `merge-risk-result:`.
+  Pin `ai-skills-ref: v0.4.0` to keep the old behavior (and the old HOLD on tooling failures).
 - **AI Delivery:** `merge-decision` is a stage: handoffs and `/ai-resume merge-decision` dispatch `merge-decision.yml`
   with `pr_number`. The resume first posts `<!-- merge-decision redecide -->`; `merge-gate` then allows one new
   decision on a head that already has a decision marker older than that comment (the new record is newer, so it is
