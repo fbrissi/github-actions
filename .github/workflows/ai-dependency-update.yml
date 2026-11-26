@@ -1,0 +1,46 @@
+name: AI Dependency Update
+
+# Weekly, after Dependabot's weekly Monday run: the dependency-updater agent of fbrissi/ai-skills brings the open
+# Dependabot PR into reviewed hotfix/ (security) and bugfix/ PRs into main that supersede it (profile
+# docs/ai/dependency-updates.md). It stops at the PRs;
+# this repository has no PR Fix or Merge Decision caller, so a person reviews and merges it.
+on:
+  schedule:
+    - cron: "0 6 * * 2"
+  workflow_dispatch:
+    inputs:
+      requested_by:
+        description: GitHub login to mention when the flow needs a person. Empty uses whoever ran it.
+        required: false
+        type: string
+      instructions:
+        description: Extra instructions for this run only, appended to the agent prompt.
+        required: false
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: ai-dependency-update
+  cancel-in-progress: false
+
+jobs:
+  dependency-update:
+    name: AI Dependency Update
+    # Skipped while the client-id variable is empty; a missing private key fails the run (AGENT_APP_CLIENT_ID variable and AGENT_APP_PRIVATE_KEY secret).
+    if: github.ref == 'refs/heads/main' && vars.AGENT_APP_CLIENT_ID != ''
+    uses: ./.github/workflows/ai-task.yml
+    permissions:
+      contents: read
+    with:
+      task: dependency-update
+      requested-by: ${{ inputs.requested_by }}
+      instructions: ${{ inputs.instructions }}
+      base-branch: main
+      timeout-minutes: 40
+    # Only the agent App key and the harness keys: this run installs and runs new third-party package versions.
+    secrets:
+      AGENT_APP_PRIVATE_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      OPEN_AI_TOKEN: ${{ secrets.OPEN_AI_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

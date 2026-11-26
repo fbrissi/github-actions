@@ -40,9 +40,9 @@ import {
 } from './delivery.mjs';
 import { createClient } from './github.mjs';
 
-const TASKS = ['business-refinement', 'technical-refinement', 'readiness-review', 'orchestrate', 'implement', 'issue-intake', 'issue-resolve'];
-// Issue tasks are not part of a milestone's delivery: their follow-up only hands off a failed run.
-const ISSUE_TASKS = ['issue-intake', 'issue-resolve'];
+const TASKS = ['business-refinement', 'technical-refinement', 'readiness-review', 'orchestrate', 'implement', 'issue-intake', 'issue-resolve', 'dependency-update'];
+// Issue and dependency tasks are not part of a milestone's delivery: their follow-up only hands off a failed run.
+const ISSUE_TASKS = ['issue-intake', 'issue-resolve', 'dependency-update'];
 const NAMES = [
   'command', 'task', 'result', 'milestone', 'result-milestone', 'issue', 'pr', 'branch', 'base-branch', 'source',
   'milestone-template', 'requested-by', 'blocker', 'marker', 'status-labels', 'stage-workflows', 'max-auto-dispatches',
@@ -478,7 +478,8 @@ const REQUIRED = {
   implement: [['issue'], ['branch']],
   'pr-fix': [['pr']],
   'issue-intake': [],
-  'issue-resolve': [['issue']]
+  'issue-resolve': [['issue']],
+  'dependency-update': []
 };
 
 // Decides from the issue_comment event alone whether it is an `/ai-resume` command written by a person.

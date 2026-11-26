@@ -141,7 +141,8 @@ describe('resolveAssets', () => {
       orchestrate: 'delivery-orchestrator',
       implement: 'task-implementer',
       'issue-intake': 'issue-resolver',
-      'issue-resolve': 'issue-resolver'
+      'issue-resolve': 'issue-resolver',
+      'dependency-update': 'dependency-updater'
     });
   });
 
@@ -212,6 +213,56 @@ describe('issue tasks', () => {
   });
 });
 
+describe('dependency-update task', () => {
+  it('needs no issue or milestone and runs the dependency-updater with the quality-cycle workers', () => {
+    assert.deepEqual(validate(inputsFor({ task: 'dependency-update' }), CREDENTIALS), []);
+    const assets = resolveAssets(inputsFor({ task: 'dependency-update' }));
+    assert.deepEqual(assets.agents, ['dependency-updater', 'developer', 'code-reviewer', 'qa-tester']);
+    assert.deepEqual(assets.skills.slice(0, 4), ['dependency-updates', 'dev', 'quality-cycle', 'pr-create']);
+  });
+
+  it('follows the dependency-updates skill with its own profile and stops at the pull request', () => {
+    const prompt = buildPrompt(inputsFor({ task: 'dependency-update', 'base-branch': 'main' }), { resultFile: true });
+    assert.match(prompt, /^You are the dependency-updater agent running the `dependency-update` task/);
+    assert.match(prompt, /Follow the `dependency-updates` skill \(available skills: dependency-updates, /);
+    assert.match(prompt, /repository profile \(`docs\/ai\/dependency-updates\.md`\)/);
+    assert.match(prompt, /- base-branch: main\n/);
+    assert.match(prompt, /Dependency update only: .*high or critical security advisory.* hotfix branch with a pull request into the base branch; the rest go to the bugfix branch .*oldest open release branch\)\. With no release branch to target, keep the non-urgent updates for a later run without a blocker.* Never close, merge, approve, comment on, or push to the bot pull requests/);
+    assert.match(prompt, /Reuse an earlier pull request only when it is from this repository \(not a fork, `isCrossRepository` false\), its author is this run's own App identity, and its branch starts with that kind's branch prefix/);
+    assert.match(prompt, /lifecycle scripts off/);
+    assert.match(prompt, /reviewer and QA of the quality cycle for every change/);
+    assert.doesNotMatch(prompt, /AI_TASK_RESULT_FILE|delivery\.md|SENTRY_AUTH_TOKEN/);
+    assert.match(buildPrompt(inputsFor({ task: 'dependency-update', profile: 'docs/deps.md' })), /repository profile \(`docs\/deps\.md`\)/);
+  });
+});
+
+describe('task credentials', () => {
+  const all = { HAS_JIRA_EMAIL: 'true', HAS_JIRA_API_TOKEN: 'true', HAS_SENTRY_AUTH_TOKEN: 'true' };
+
+  it('gives dependency-update neither Jira nor Sentry', () => {
+    const result = resolveTask(envFor({ task: 'dependency-update', 'jira-base-url': 'https://example.atlassian.net' }, all));
+    assert.deepEqual(result.credentials, []);
+    assert.doesNotMatch(result.prompt, /JIRA_|SENTRY_/);
+  });
+
+  it('gives Sentry only to the issue tasks and Jira to the delivery and issue tasks', () => {
+    const implement = resolveTask(envFor({ task: 'implement', issue: '1', branch: 'b', 'jira-base-url': 'https://example.atlassian.net' }, all));
+    assert.deepEqual(implement.credentials, ['jira']);
+    assert.doesNotMatch(implement.prompt, /SENTRY_/);
+    const resolve = resolveTask(envFor({ task: 'issue-resolve', issue: '1', 'jira-base-url': 'https://example.atlassian.net' }, all));
+    assert.deepEqual(resolve.credentials, ['jira', 'sentry']);
+  });
+
+  it('writes the credentials output', () => {
+    const lines = [];
+    const dir = mkdtempSync(join(tmpdir(), 'ai-task-'));
+    const file = join(dir, 'output');
+    assert.equal(main(envFor({ task: 'issue-intake' }, { HAS_SENTRY_AUTH_TOKEN: 'true', GITHUB_OUTPUT: file }), (line) => lines.push(line)), 0);
+    assert.match(readFileSync(file, 'utf8'), /^credentials=sentry$/m);
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
 describe('flow rules', () => {
   it('mentions the requester, or the milestone marker without one', () => {
     const prompt = buildPrompt(inputsFor({ task: 'technical-refinement', milestone: 'M1', 'requested-by': 'alice' }));
@@ -226,7 +277,7 @@ describe('flow rules', () => {
   });
 
   it('tells implement and issue-resolve the test environment is running when the caller started it', () => {
-    for (const task of ['implement', 'issue-resolve']) {
+    for (const task of ['implement', 'issue-resolve', 'dependency-update']) {
       const prompt = buildPrompt(inputsFor({ task, issue: '1', branch: 'b', 'test-environment': 'scripts/e2e.sh --host-browser\nnpx playwright install' }));
       assert.match(prompt, /started the test environment before this run with `scripts\/e2e\.sh --host-browser; npx playwright install`, and it is running/);
       assert.doesNotMatch(prompt, /no CI environment/);
@@ -250,7 +301,7 @@ describe('main', () => {
       const code = main({ ...envFor({ task: 'readiness-review', milestone: 'M1' }), GITHUB_OUTPUT: output }, (line) => logs.push(line));
       assert.equal(code, 0);
       const text = readFileSync(output, 'utf8');
-      assert.match(text, /^harness=claude\nagent=readiness-reviewer\nagents=readiness-reviewer\nskills=readiness-review\nprompt<<(PROMPT_[0-9a-f-]+)\n[\s\S]+\n\1\n$/);
+      assert.match(text, /^harness=claude\ncredentials=\nagent=readiness-reviewer\nagents=readiness-reviewer\nskills=readiness-review\nprompt<<(PROMPT_[0-9a-f-]+)\n[\s\S]+\n\1\n$/);
       assert.match(text, /run: https:\/\/github\.com\/octo\/app\/actions\/runs\/42/);
     } finally {
       rmSync(dir, { recursive: true, force: true });

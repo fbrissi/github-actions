@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.10.0
+
+- **AI Task:** new `dependency-update` task, run by the ai-skills `dependency-updater` agent with the
+  `dependency-updates` skill (plus `developer`, `code-reviewer`, and `qa-tester`). It takes the open dependency-bot
+  pull requests (and outdated packages when the profile asks), reads release notes and upgrade guides,
+  adapts the code, runs the checks and the review and QA cycle, and opens or updates pull requests that supersede the
+  bot pull requests, branched like `issue-resolve`: updates that fix a high or critical advisory go to a `hotfix/`
+  pull request into the base branch, the rest to a `bugfix/` pull request into the open release branch (or wait for a
+  later run when there is none), then stops; the PR Feedback Loop takes over. It needs no `issue` or `milestone`, reads
+  `docs/ai/dependency-updates.md` by default, gets `contents` and `pull-requests` write on the App token, and is told
+  about the `setup-command` test environment like `implement`. Default caller `ai-dependency-update.yml` (dispatch
+  input `requested_by`); `/ai-resume dependency-update` (or `dependency-updater`) resumes it, and the follow-up hands
+  off a failed run on a tracking issue.
+- **AI Task:** Jira and Sentry credentials reach only the tasks that use them: Jira the delivery and issue tasks,
+  Sentry only `issue-intake` and `issue-resolve` (the `ai-task.yml` workflow and the action both filter them), and
+  `dependency-update` gets neither, since it installs and runs new third-party package versions. Before, every task
+  had them in its environment. The `dependency-update` prompt reuses an earlier pull request only when it is from this
+  repository, authored by the run's own App, on a branch with the template's prefix, installs with lifecycle scripts
+  off where possible, and never closes, merges, approves, comments on, or pushes to the bot pull requests.
+- **Repository:** `.github/workflows/ai-dependency-update.yml` runs the `dependency-update` task on this repository every Tuesday 06:00 UTC (after Dependabot's weekly run) and on demand, with the profile `docs/ai/dependency-updates.md` (`Bugfix release branch: base`: no release branches here, so every update goes to `main`); it is skipped while the `AGENT_APP_CLIENT_ID` variable is empty (a missing private key fails the run), passes only the agent App key and harness keys, and stops at the PR. New `AGENTS.md` (with `CLAUDE.md`) with the commands and rules agents need.
+- **AI Task:** `ai-skills-ref` defaults to `v0.8.0`, the ai-skills release with the `dependency-updater` agent.
+
 ## v1.9.0
 
 - **AI Task:** the `implement` and `issue-resolve` prompts say when the test environment is already running. The

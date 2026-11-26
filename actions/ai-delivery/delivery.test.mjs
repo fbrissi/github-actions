@@ -42,7 +42,7 @@ describe('settings', () => {
 
   it('rejects unknown stages and non-workflow values', () => {
     assert.deepEqual(parseStageWorkflows('deploy=x.yml\nimplement=../x.yml\nbroken').errors, [
-      "Unknown stage 'deploy' in 'stage-workflows'. Use one of: business-refinement, technical-refinement, readiness-review, orchestrate, implement, pr-fix, issue-intake, issue-resolve.",
+      "Unknown stage 'deploy' in 'stage-workflows'. Use one of: business-refinement, technical-refinement, readiness-review, orchestrate, implement, pr-fix, issue-intake, issue-resolve, dependency-update.",
       "'stage-workflows' value for implement must be a workflow file name, got '../x.yml'.",
       "'stage-workflows' lines must be 'key=value', got 'broken'."
     ]);
@@ -174,6 +174,7 @@ describe('parseResumeCommand', () => {
     assert.deepEqual(parseResumeCommand('/ai-resume quality-cycle'), { stage: 'implement', instructions: '' });
     assert.equal(parseResumeCommand('/ai-resume delivery-orchestration').stage, 'orchestrate');
     assert.equal(parseResumeCommand('/ai-resume issue-resolver').stage, 'issue-resolve');
+    assert.equal(parseResumeCommand('/ai-resume dependency-updater').stage, 'dependency-update');
     assert.deepEqual(parseResumeCommand('/ai-resume deploy-now please'), { stage: '', instructions: 'deploy-now please', unknownStage: 'deploy-now' });
     assert.equal(parseResumeCommand('/ai-resumes'), null);
     assert.equal(parseResumeCommand('Thanks!\n/ai-resume'), null);

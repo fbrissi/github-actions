@@ -1,13 +1,13 @@
 name: AI Task
 description: >-
   Run one AI task delivery task (business-refinement, technical-refinement, readiness-review, orchestrate, or
-  implement) or issue task (issue-intake or issue-resolve) with its fbrissi/ai-skills agent, skills, and an explicit
-  non-interactive prompt.
+  implement), issue task (issue-intake or issue-resolve), or dependency-update task with its fbrissi/ai-skills
+  agent, skills, and an explicit non-interactive prompt.
 author: Filipe Bojikian Rissi
 
 inputs:
   task:
-    description: Task to run, `business-refinement`, `technical-refinement`, `readiness-review`, `orchestrate`, `implement`, `issue-intake`, or `issue-resolve`.
+    description: Task to run, `business-refinement`, `technical-refinement`, `readiness-review`, `orchestrate`, `implement`, `issue-intake`, `issue-resolve`, or `dependency-update`.
     required: true
   source:
     description: Source ticket (Jira key or URL, GitHub issue, or GitHub milestone). Required by `business-refinement`.
@@ -70,7 +70,7 @@ inputs:
     required: false
     default: ""
   test-environment:
-    description: Command that started the test environment before this action (for example the `setup-command` of `ai-task.yml`). When set, the `implement` and `issue-resolve` prompts tell QA it is running. Empty when none was started.
+    description: Command that started the test environment before this action (for example the `setup-command` of `ai-task.yml`). When set, the `implement`, `issue-resolve`, and `dependency-update` prompts tell QA it is running. Empty when none was started.
     required: false
     default: ""
   context:
@@ -124,7 +124,7 @@ inputs:
   ai-skills-ref:
     description: Tag or commit SHA of fbrissi/ai-skills the skills and agents are installed from. Pin it; never use a branch.
     required: false
-    default: v0.6.0
+    default: v0.8.0
   timeout-minutes:
     description: Maximum harness run time in minutes.
     required: false
@@ -267,13 +267,14 @@ runs:
     - name: Run task agent
       id: harness
       uses: fbrissi/github-actions/actions/ai-harness@v1
+      # Only the tasks that use Jira or Sentry see their credentials (resolve-task.mjs, JIRA_TASKS and SENTRY_TASKS).
       env:
-        JIRA_BASE_URL: ${{ inputs.jira-base-url }}
-        JIRA_EMAIL: ${{ inputs.jira-email }}
-        JIRA_API_TOKEN: ${{ inputs.jira-api-token }}
-        SENTRY_AUTH_TOKEN: ${{ inputs.sentry-auth-token }}
-        SENTRY_ORG: ${{ inputs.sentry-org }}
-        SENTRY_BASE_URL: ${{ inputs.sentry-base-url }}
+        JIRA_BASE_URL: ${{ contains(steps.resolve.outputs.credentials, 'jira') && inputs.jira-base-url || '' }}
+        JIRA_EMAIL: ${{ contains(steps.resolve.outputs.credentials, 'jira') && inputs.jira-email || '' }}
+        JIRA_API_TOKEN: ${{ contains(steps.resolve.outputs.credentials, 'jira') && inputs.jira-api-token || '' }}
+        SENTRY_AUTH_TOKEN: ${{ contains(steps.resolve.outputs.credentials, 'sentry') && inputs.sentry-auth-token || '' }}
+        SENTRY_ORG: ${{ contains(steps.resolve.outputs.credentials, 'sentry') && inputs.sentry-org || '' }}
+        SENTRY_BASE_URL: ${{ contains(steps.resolve.outputs.credentials, 'sentry') && inputs.sentry-base-url || '' }}
         AI_TASK_RESULT_FILE: ${{ steps.prepare.outputs.result-file }}
       with:
         harness: ${{ steps.resolve.outputs.harness }}
