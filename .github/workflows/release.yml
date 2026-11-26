@@ -193,7 +193,7 @@ jobs:
           fi
           major_version="${version%%.*}"
 
-          delimiter="EOF_$(uuidgen)"
+          delimiter="EOF_$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
           {
             echo 'skip=false'
             echo "version=$version"

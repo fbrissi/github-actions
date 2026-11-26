@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 // Deterministic gates and markers of the PR follow-up: whether pr-fix may run a pass or must escalate, whether a merge
-// decision may run, and the bot comments that record each pass and decision. Every GitHub call goes through the
+// decision may run, the bot comments that record each pass and decision, and the merge decision dispatch after a pass. Every GitHub call goes through the
 // injected client so the commands are testable.
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { createClient } from '../ai-delivery/github.mjs';
 
 const NAMES = [
   'command', 'pr-number', 'opt-in-label', 'branch-prefixes', 'max-rounds', 'escalation-label', 'check-name',
   'required-human-approvals', 'human-approval-exempt-base-prefixes', 'human-approval-exempt-authors', 'hold-labels', 'round', 'start-sha', 'outcome',
-  'head-sha', 'result', 'check-run-id'
+  'head-sha', 'result', 'check-run-id', 'merge-workflow', 'fix-workflow', 'ignore-authors', 'ignore-reply-authors',
+  'merge-check-name'
 ];
 
 export const envName = (name) => `PR_GATE_${name.toUpperCase().replaceAll('-', '_')}`;
@@ -17,10 +18,12 @@ const words = (value = '') => value.split(/\s+/).filter(Boolean);
 const FIX_MARKER = /<!-- pr-fix round=(\d+) head=([0-9a-f]{40}) -->/;
 const FIX_ESCALATED = '<!-- pr-fix escalated -->';
 const SHA = /^[0-9a-f]{40}$/;
+const WORKFLOW_FILE = /^[A-Za-z0-9_.-]+\.ya?ml$/;
 
 export function readContext(env = process.env) {
   const ctx = Object.fromEntries(NAMES.map((name) => [name, (env[envName(name)] ?? '').trim()]));
   ctx.repo = env.GITHUB_REPOSITORY ?? '';
+  ctx.eventName = env.GITHUB_EVENT_NAME ?? '';
   ctx.runUrl = env.GITHUB_RUN_ID ? `${env.GITHUB_SERVER_URL || 'https://github.com'}/${ctx.repo}/actions/runs/${env.GITHUB_RUN_ID}` : '';
   return ctx;
 }
@@ -138,6 +141,28 @@ export async function fixFinish(ctx, api) {
   return { outputs: {}, summary: [`${checkName} ${conclusion}.`] };
 }
 
+// After a successful fix pass, starts the merge decision again: a decision skipped while the pass was running is never
+// retried otherwise. Bounded by the fix rounds, since a merge decision never dispatches a fix.
+export async function mergeDispatch(ctx, api) {
+  const { repo } = ctx;
+  const number = prNumber(ctx);
+  const workflow = ctx['merge-workflow'];
+  if (!workflow) return { outputs: {}, summary: ['No merge workflow to dispatch.'] };
+  if (!WORKFLOW_FILE.test(workflow)) throw new Error(`'merge-workflow' must be a workflow file name, got '${workflow}'.`);
+  const { data: repository } = await api.request('GET', `/repos/${repo}`);
+  try {
+    await api.request('POST', `/repos/${repo}/actions/workflows/${workflow}/dispatches`, {
+      ref: repository.default_branch,
+      inputs: { pr_number: String(number) }
+    });
+  } catch (error) {
+    if (error.status !== 404) throw error;
+    const reason = `${workflow} is not on ${repository.default_branch}; PR #${number} was not dispatched.`;
+    return { outputs: {}, summary: [reason], notice: reason };
+  }
+  return { outputs: {}, summary: [`Dispatched ${workflow} for PR #${number}.`] };
+}
+
 const REVIEW_THREADS = `query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
@@ -148,6 +173,19 @@ const REVIEW_THREADS = `query($owner: String!, $repo: String!, $number: Int!, $c
     }
   }
 }`;
+
+async function unresolvedThreads(api, repo, number) {
+  const [owner, name] = repo.split('/');
+  let unresolved = 0;
+  let cursor = null;
+  do {
+    const result = await api.graphql(REVIEW_THREADS, { owner, repo: name, number, cursor });
+    const threads = result.repository.pullRequest.reviewThreads;
+    unresolved += threads.nodes.filter((thread) => !thread.isResolved).length;
+    cursor = threads.pageInfo.hasNextPage ? threads.pageInfo.endCursor : null;
+  } while (cursor);
+  return unresolved;
+}
 
 // Runs started by review or check events (such as the feedback dispatcher) are not CI; their checks are ignored.
 const DISPATCHER_EVENTS = new Set(['pull_request_review', 'pull_request_review_comment', 'check_run', 'workflow_run']);
@@ -214,15 +252,7 @@ export async function mergeGate(ctx, api, sleep = (ms) => new Promise((resolve) 
     return { outputs: { ...outputs, request_review: 'true' }, summary: [`skipped: ${reason}`], notice: reason };
   }
 
-  const [owner, name] = repo.split('/');
-  let unresolved = 0;
-  let cursor = null;
-  do {
-    const result = await api.graphql(REVIEW_THREADS, { owner, repo: name, number, cursor });
-    const threads = result.repository.pullRequest.reviewThreads;
-    unresolved += threads.nodes.filter((thread) => !thread.isResolved).length;
-    cursor = threads.pageInfo.hasNextPage ? threads.pageInfo.endCursor : null;
-  } while (cursor);
+  const unresolved = await unresolvedThreads(api, repo, number);
   if (unresolved > 0) return { ...skip(`${unresolved} unresolved review thread(s).`), outputs };
 
   const comments = await api.paginate(`/repos/${repo}/issues/${number}/comments`);
@@ -246,13 +276,109 @@ export async function mergeRecord(ctx, api) {
   return { outputs: {}, summary: [`Recorded the merge decision on PR #${number}.`] };
 }
 
-const COMMANDS = { 'fix-gate': fixGate, 'fix-record': fixRecord, 'fix-finish': fixFinish, 'merge-gate': mergeGate, 'merge-record': mergeRecord };
+// A reviewer that cannot approve (for example on its own pull request) leaves a clean grade as a comment: the top grade
+// alone, plus `Ticket:` lines.
+export function isCleanGrade(body = '') {
+  const lines = (body ?? '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  return lines[0] === '★★★★★' && lines.slice(1).every((line) => /^Ticket:/i.test(line));
+}
+
+// Turns a review or a check run into a fix or merge workflow dispatch on the default branch, so a pull request can
+// never change its own fixer or merger.
+export async function feedbackDispatch(ctx, api) {
+  const { repo, event = {}, eventName } = ctx;
+  const ref = event.repository?.default_branch ?? '';
+  const fixWorkflow = ctx['fix-workflow'];
+  const mergeWorkflow = ctx['merge-workflow'];
+  const mergeCheckName = ctx['merge-check-name'];
+  for (const [name, value] of [['fix-workflow', fixWorkflow], ['merge-workflow', mergeWorkflow]]) {
+    if (value && !WORKFLOW_FILE.test(value)) throw new Error(`'${name}' must be a workflow file name, got '${value}'.`);
+  }
+  const lower = (value) => words(value).map((login) => login.toLowerCase());
+  const ignored = new Set(lower(ctx['ignore-authors']));
+  const replyIgnored = new Set(lower(ctx['ignore-reply-authors']));
+  const summary = [];
+  const notices = [];
+
+  async function dispatch(workflow, number) {
+    try {
+      await api.request('POST', `/repos/${repo}/actions/workflows/${workflow}/dispatches`, { ref, inputs: { pr_number: String(number) } });
+      summary.push(`Dispatched ${workflow} for PR #${number}.`);
+    } catch (error) {
+      if (error.status !== 404) throw error;
+      const reason = `${workflow} is not on ${ref}; PR #${number} was not dispatched.`;
+      summary.push(reason);
+      notices.push(reason);
+    }
+  }
+
+  if (eventName === 'pull_request_review') {
+    const { review = {}, pull_request: pullRequest = {} } = event;
+    const author = review.user?.login ?? '';
+    const state = String(review.state).toLowerCase();
+    if (pullRequest.head?.repo?.full_name !== repo) {
+      summary.push(`Skipped: PR #${pullRequest.number} comes from a fork.`);
+    } else if (state === 'approved') {
+      if (mergeWorkflow) await dispatch(mergeWorkflow, pullRequest.number);
+      else summary.push('Skipped: merge-workflow is empty.');
+    } else if (state === 'changes_requested' || state === 'commented') {
+      const comments = await api.paginate(`/repos/${repo}/pulls/${pullRequest.number}/reviews/${review.id}/comments`);
+      const hasBody = Boolean(review.body?.trim());
+      const actionable = state === 'changes_requested' || hasBody || comments.length > 0;
+      const replyOnly = state === 'commented' && !hasBody && comments.length > 0 && comments.every((comment) => comment.in_reply_to_id);
+      const clean = state === 'commented' && comments.length === 0 && isCleanGrade(review.body)
+        && (await unresolvedThreads(api, repo, pullRequest.number)) === 0;
+      if (clean) {
+        if (mergeWorkflow) await dispatch(mergeWorkflow, pullRequest.number);
+        else summary.push('Skipped: the review is a clean grade and merge-workflow is empty.');
+      } else if (!fixWorkflow) {
+        summary.push('Skipped: fix-workflow is empty.');
+      } else if (ignored.has(author.toLowerCase())) {
+        summary.push(`Skipped: reviews by ${author} are ignored.`);
+      } else if (replyOnly && replyIgnored.has(author.toLowerCase())) {
+        summary.push(`Skipped: the review by ${author} only replies to existing threads.`);
+      } else if (!actionable) {
+        summary.push('Skipped: the review has no body and no inline comments.');
+      } else {
+        await dispatch(fixWorkflow, pullRequest.number);
+      }
+    } else {
+      summary.push(`Skipped: review state ${state}.`);
+    }
+  } else if (eventName === 'check_run') {
+    const checkRun = event.check_run ?? {};
+    if (!mergeWorkflow || !mergeCheckName) {
+      summary.push('Skipped: merge-workflow or merge-check-name is empty.');
+    } else if (checkRun.name !== mergeCheckName || checkRun.status !== 'completed' || checkRun.conclusion !== 'success') {
+      summary.push(`Skipped: check run ${checkRun.name} (${checkRun.status}/${checkRun.conclusion}) is not a successful ${mergeCheckName}.`);
+    } else {
+      // pull_requests only lists same-repository pull requests whose head matches the check run.
+      const numbers = (checkRun.pull_requests ?? []).filter((pr) => pr.head?.repo?.id === pr.base?.repo?.id).map((pr) => pr.number);
+      if (numbers.length === 0) summary.push('Skipped: the check run has no same-repository pull request.');
+      for (const number of numbers) await dispatch(mergeWorkflow, number);
+    }
+  } else {
+    summary.push(`Skipped: unsupported event ${eventName}.`);
+  }
+  return { outputs: {}, summary, ...(notices.length > 0 ? { notice: notices.join(' ') } : {}) };
+}
+
+const COMMANDS = {
+  'fix-gate': fixGate,
+  'fix-record': fixRecord,
+  'feedback-dispatch': feedbackDispatch,
+  'fix-finish': fixFinish,
+  'merge-dispatch': mergeDispatch,
+  'merge-gate': mergeGate,
+  'merge-record': mergeRecord
+};
 
 export async function main(env = process.env, api = null) {
   const ctx = readContext(env);
   const command = COMMANDS[ctx.command];
   if (!command) throw new Error(`Unsupported command '${ctx.command}'. Use ${Object.keys(COMMANDS).join(', ')}.`);
   const client = api ?? createClient({ token: env.GITHUB_TOKEN ?? '', apiUrl: env.GITHUB_API_URL || undefined, graphqlUrl: env.GITHUB_GRAPHQL_URL || '' });
+  if (ctx.command === 'feedback-dispatch') ctx.event = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8'));
   const result = await command(ctx, client);
   if (result.notice) console.log(`::notice::${result.notice.replace(/\r?\n/g, ' ')}`);
   for (const line of result.summary) console.log(line);

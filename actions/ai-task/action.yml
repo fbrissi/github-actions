@@ -124,7 +124,7 @@ inputs:
   ai-skills-ref:
     description: Tag or commit SHA of fbrissi/ai-skills the skills and agents are installed from. Pin it; never use a branch.
     required: false
-    default: v0.8.0
+    default: v0.8.1
   timeout-minutes:
     description: Maximum harness run time in minutes.
     required: false

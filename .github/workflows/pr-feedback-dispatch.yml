@@ -4,12 +4,15 @@ on:
   workflow_call:
     inputs:
       fix-workflow:
-        description: Workflow dispatched with `pr_number` when a review asks for changes or comments. Empty disables it.
+        description: Workflow dispatched with `pr_number` when a review asks for changes or comments (except a clean grade, which goes to `merge-workflow`). Empty disables it.
         required: false
         type: string
         default: pr-fix.yml
       merge-workflow:
-        description: Workflow dispatched with `pr_number` when a review approves, or when `merge-check-name` completes successfully. Empty disables it.
+        description: >-
+          Workflow dispatched with `pr_number` when a review approves, when a `commented` review is a clean grade (only
+          `★★★★★`, plus `Ticket:` lines, with no inline comments and no unresolved thread on the pull request), or when
+          `merge-check-name` completes successfully. Empty disables it.
         required: false
         type: string
         default: merge-decision.yml
@@ -50,106 +53,13 @@ jobs:
       actions: write
       pull-requests: read
     steps:
-      - uses: actions/github-script@v9
-        env:
-          FIX_WORKFLOW: ${{ inputs.fix-workflow }}
-          MERGE_WORKFLOW: ${{ inputs.merge-workflow }}
-          IGNORE_AUTHORS: ${{ inputs.ignore-authors }}
-          IGNORE_REPLY_AUTHORS: ${{ inputs.ignore-reply-authors }}
-          MERGE_CHECK_NAME: ${{ inputs.merge-check-name }}
+      # Dispatches on the default branch, so a pull request can never change its own fixer or merger.
+      - name: Dispatch from the review or check run
+        uses: fbrissi/github-actions/actions/pr-gate@v1
         with:
-          script: |
-            const { owner, repo } = context.repo;
-            const ref = context.payload.repository.default_branch;
-            const fixWorkflow = process.env.FIX_WORKFLOW.trim();
-            const mergeWorkflow = process.env.MERGE_WORKFLOW.trim();
-            const mergeCheckName = process.env.MERGE_CHECK_NAME.trim();
-            const ignored = new Set(process.env.IGNORE_AUTHORS.split(/\s+/).filter(Boolean).map((login) => login.toLowerCase()));
-            const replyIgnored = new Set(process.env.IGNORE_REPLY_AUTHORS.split(/\s+/).filter(Boolean).map((login) => login.toLowerCase()));
-            const summary = [];
-
-            // Dispatch on the default branch, so a pull request can never change its own fixer or merger.
-            async function dispatch(workflow, prNumber) {
-              try {
-                await github.rest.actions.createWorkflowDispatch({
-                  owner,
-                  repo,
-                  workflow_id: workflow,
-                  ref,
-                  inputs: { pr_number: String(prNumber) },
-                });
-                summary.push(`Dispatched ${workflow} for PR #${prNumber}.`);
-              } catch (error) {
-                if (error.status !== 404) {
-                  throw error;
-                }
-                core.warning(`${workflow} is not on ${ref}; PR #${prNumber} was not dispatched.`);
-              }
-            }
-
-            if (context.eventName === 'pull_request_review') {
-              const { review, pull_request: pullRequest } = context.payload;
-              const author = review.user?.login ?? '';
-              const state = String(review.state).toLowerCase();
-              if (pullRequest.head.repo?.full_name !== `${owner}/${repo}`) {
-                summary.push(`Skipped: PR #${pullRequest.number} comes from a fork.`);
-              } else if (state === 'approved') {
-                if (mergeWorkflow) {
-                  await dispatch(mergeWorkflow, pullRequest.number);
-                } else {
-                  summary.push('Skipped: merge-workflow is empty.');
-                }
-              } else if (state === 'changes_requested' || state === 'commented') {
-                let actionable = state === 'changes_requested' || Boolean(review.body?.trim());
-                let replyOnly = false;
-                if (!actionable) {
-                  const comments = await github.paginate(github.rest.pulls.listCommentsForReview, {
-                    owner,
-                    repo,
-                    pull_number: pullRequest.number,
-                    review_id: review.id,
-                    per_page: 100,
-                  });
-                  actionable = comments.length > 0;
-                  replyOnly = actionable && comments.every((comment) => comment.in_reply_to_id);
-                }
-                if (!fixWorkflow) {
-                  summary.push('Skipped: fix-workflow is empty.');
-                } else if (ignored.has(author.toLowerCase())) {
-                  summary.push(`Skipped: reviews by ${author} are ignored.`);
-                } else if (replyOnly && replyIgnored.has(author.toLowerCase())) {
-                  summary.push(`Skipped: the review by ${author} only replies to existing threads.`);
-                } else if (!actionable) {
-                  summary.push('Skipped: the review has no body and no inline comments.');
-                } else {
-                  await dispatch(fixWorkflow, pullRequest.number);
-                }
-              } else {
-                summary.push(`Skipped: review state ${state}.`);
-              }
-            } else if (context.eventName === 'check_run') {
-              const checkRun = context.payload.check_run;
-              if (!mergeWorkflow || !mergeCheckName) {
-                summary.push('Skipped: merge-workflow or merge-check-name is empty.');
-              } else if (checkRun.name !== mergeCheckName || checkRun.status !== 'completed' || checkRun.conclusion !== 'success') {
-                summary.push(`Skipped: check run ${checkRun.name} (${checkRun.status}/${checkRun.conclusion}) is not a successful ${mergeCheckName}.`);
-              } else {
-                // pull_requests only lists same-repository pull requests whose head matches the check run.
-                const prNumbers = (checkRun.pull_requests ?? [])
-                  .filter((pr) => pr.head?.repo?.id === pr.base?.repo?.id)
-                  .map((pr) => pr.number);
-                if (prNumbers.length === 0) {
-                  summary.push('Skipped: the check run has no same-repository pull request.');
-                }
-                for (const prNumber of prNumbers) {
-                  await dispatch(mergeWorkflow, prNumber);
-                }
-              }
-            } else {
-              summary.push(`Skipped: unsupported event ${context.eventName}.`);
-            }
-
-            for (const line of summary) {
-              core.info(line);
-            }
-            await core.summary.addRaw(summary.join('\n\n')).write();
+          command: feedback-dispatch
+          fix-workflow: ${{ inputs.fix-workflow }}
+          merge-workflow: ${{ inputs.merge-workflow }}
+          ignore-authors: ${{ inputs.ignore-authors }}
+          ignore-reply-authors: ${{ inputs.ignore-reply-authors }}
+          merge-check-name: ${{ inputs.merge-check-name }}

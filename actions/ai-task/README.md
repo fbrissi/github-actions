@@ -100,7 +100,7 @@ Run settings and credentials:
 | `opencode-variant` | `""` | OpenCode model variant. |
 | `claude-model` | `""` | Claude Code model. |
 | `claude-effort` | `""` | Claude Code effort level. |
-| `ai-skills-ref` | `v0.8.0` | `fbrissi/ai-skills` tag or SHA the skills and agents come from. |
+| `ai-skills-ref` | `v0.8.1` | `fbrissi/ai-skills` tag or SHA the skills and agents come from. |
 | `timeout-minutes` | `50` | Harness run timeout. GitHub App installation tokens expire after one hour. |
 | `github-token` | – (required) | GitHub App token used for `gh` and `git push`. |
 | `openai-api-key` | `""` | OpenAI API key. Required by `opencode` with an `openai/` model. |

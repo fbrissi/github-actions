@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { envName, fixFinish, fixGate, fixRecord, mergeGate, mergeRecord, readContext } from './main.mjs';
+import { envName, feedbackDispatch, fixFinish, fixGate, fixRecord, isCleanGrade, mergeDispatch, mergeGate, mergeRecord, readContext } from './main.mjs';
 
 const REPO = 'octo/app';
 const HEAD = 'a'.repeat(40);
@@ -150,6 +150,120 @@ describe('fix-record and fix-finish', () => {
     assert.equal(api.calls.at(-1).body.conclusion, 'failure');
     await fixFinish(ctxFor({ result: 'success', 'check-run-id': '99' }), api);
     assert.equal(api.calls.at(-1).body.conclusion, 'success');
+  });
+});
+
+describe('merge-dispatch', () => {
+  const dispatchRepo = (dispatch = {}) => fakeApi([
+    ['GET', /^\/repos\/octo\/app$/, { default_branch: 'main' }],
+    ['POST', /^\/repos\/octo\/app\/actions\/workflows\/merge-decision\.yml\/dispatches$/, dispatch]
+  ]);
+
+  it('dispatches the merge workflow on the default branch', async () => {
+    const api = dispatchRepo();
+    const result = await mergeDispatch(ctxFor({ 'pr-number': '#7', 'merge-workflow': 'merge-decision.yml' }), api);
+    assert.deepEqual(api.calls.at(-1).body, { ref: 'main', inputs: { pr_number: '7' } });
+    assert.match(result.summary[0], /Dispatched merge-decision\.yml for PR #7/);
+  });
+
+  it('dispatches nothing without a merge workflow', async () => {
+    const api = dispatchRepo();
+    const result = await mergeDispatch(ctxFor({ 'pr-number': '7' }), api);
+    assert.equal(api.calls.length, 0);
+    assert.match(result.summary[0], /No merge workflow/);
+  });
+
+  it('skips with a notice when the workflow is not on the default branch', async () => {
+    const api = fakeApi([['GET', /^\/repos\/octo\/app$/, { default_branch: 'main' }]]);
+    const result = await mergeDispatch(ctxFor({ 'pr-number': '7', 'merge-workflow': 'merge-decision.yml' }), api);
+    assert.match(result.notice, /not on main/);
+  });
+
+  it('fails on dispatch errors other than a missing workflow', async () => {
+    const api = dispatchRepo(() => { throw Object.assign(new Error('boom'), { status: 500 }); });
+    await assert.rejects(mergeDispatch(ctxFor({ 'pr-number': '7', 'merge-workflow': 'merge-decision.yml' }), api), /boom/);
+  });
+
+  it('refuses a workflow that is not a file name', async () => {
+    await assert.rejects(mergeDispatch(ctxFor({ 'pr-number': '7', 'merge-workflow': '../x.yml' }), dispatchRepo()), /workflow file name/);
+  });
+});
+
+describe('feedback-dispatch', () => {
+  const feedbackRepo = ({ comments = [], threads = [], dispatch = {} } = {}) => fakeApi([
+    ['GET', /^\/repos\/octo\/app\/pulls\/7\/reviews\/5\/comments$/, comments],
+    ['POST', /^\/repos\/octo\/app\/actions\/workflows\/[^/]+\/dispatches$/, dispatch]
+  ], threads);
+  const reviewCtx = (review, values = {}) => ({
+    ...ctxFor({ 'fix-workflow': 'pr-fix.yml', 'merge-workflow': 'merge-decision.yml', 'ignore-reply-authors': 'agent[bot]', ...values }),
+    eventName: 'pull_request_review',
+    event: {
+      repository: { default_branch: 'main' },
+      review: { id: 5, user: { login: 'agent[bot]' }, ...review },
+      pull_request: { number: 7, head: { repo: { full_name: REPO } } }
+    }
+  });
+  const dispatched = (api) => api.calls.filter((call) => call.method === 'POST').map((call) => call.path.split('/').at(-2));
+  const route = async (review, options = {}, values = {}) => {
+    const api = feedbackRepo(options);
+    const result = await feedbackDispatch(reviewCtx(review, values), api);
+    return { api, result, targets: dispatched(api) };
+  };
+
+  it('routes a clean grade comment to the merge workflow', async () => {
+    assert.deepEqual((await route({ state: 'COMMENTED', body: '★★★★★' })).targets, ['merge-decision.yml']);
+    assert.deepEqual((await route({ state: 'commented', body: '★★★★★\nTicket: not loaded' })).targets, ['merge-decision.yml']);
+  });
+
+  it('sends a clean grade with an unresolved thread or inline comment to the fixer', async () => {
+    assert.deepEqual((await route({ state: 'commented', body: '★★★★★' }, { threads: [{ isResolved: false }] })).targets, ['pr-fix.yml']);
+    assert.deepEqual((await route({ state: 'commented', body: '★★★★★' }, { comments: [{ id: 1 }] })).targets, ['pr-fix.yml']);
+  });
+
+  it('sends lower grades and partial reviews to the fixer', async () => {
+    assert.deepEqual((await route({ state: 'commented', body: '★★★★☆\nfix x' })).targets, ['pr-fix.yml']);
+    assert.deepEqual((await route({ state: 'commented', body: '★★★★★\nCovered: a\nNot covered: b' })).targets, ['pr-fix.yml']);
+  });
+
+  it('keeps changes requested, reply-only, empty, and approved reviews as before', async () => {
+    assert.deepEqual((await route({ state: 'changes_requested', body: '' })).targets, ['pr-fix.yml']);
+    assert.deepEqual((await route({ state: 'changes_requested', body: '' }, { comments: [{ in_reply_to_id: 2 }] })).targets, ['pr-fix.yml']);
+    assert.deepEqual((await route({ state: 'commented', body: '' }, { comments: [{ in_reply_to_id: 2 }] })).targets, []);
+    assert.deepEqual((await route({ state: 'commented', body: '' })).targets, []);
+    assert.deepEqual((await route({ state: 'approved', body: '' })).targets, ['merge-decision.yml']);
+    assert.deepEqual((await route({ state: 'commented', body: 'nit' }, {}, { 'ignore-authors': 'agent[bot]' })).targets, []);
+  });
+
+  it('skips forks and reports a workflow missing on the default branch', async () => {
+    const api = feedbackRepo();
+    const ctx = reviewCtx({ state: 'approved' });
+    ctx.event.pull_request.head.repo.full_name = 'evil/app';
+    assert.match((await feedbackDispatch(ctx, api)).summary[0], /fork/);
+    const missing = fakeApi([], []);
+    assert.match((await feedbackDispatch(reviewCtx({ state: 'approved' }), missing)).notice, /not on main/);
+  });
+
+  it('dispatches the merge workflow for a successful merge check run', async () => {
+    const api = feedbackRepo();
+    const ctx = {
+      ...ctxFor({ 'merge-workflow': 'merge-decision.yml', 'merge-check-name': 'Code Review' }),
+      eventName: 'check_run',
+      event: {
+        repository: { default_branch: 'main' },
+        check_run: { name: 'Code Review', status: 'completed', conclusion: 'success', pull_requests: [
+          { number: 7, head: { repo: { id: 1 } }, base: { repo: { id: 1 } } },
+          { number: 8, head: { repo: { id: 2 } }, base: { repo: { id: 1 } } }
+        ] }
+      }
+    };
+    await feedbackDispatch(ctx, api);
+    assert.deepEqual(api.calls.filter((call) => call.method === 'POST').map((call) => call.body.inputs.pr_number), ['7']);
+  });
+
+  it('recognizes only the top grade as clean', () => {
+    assert.equal(isCleanGrade('★★★★★'), true);
+    assert.equal(isCleanGrade('★★★★☆'), false);
+    assert.equal(isCleanGrade(''), false);
   });
 });
 
