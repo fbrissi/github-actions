@@ -11,7 +11,7 @@ merging a pull request that adds one tags the release and moves the major tag.
 Release order: `fbrissi/ai-skills` `v0.10.0` first (its `dependency-updates` and `issue-resolver` open a release when
 a bugfix has none), then this release.
 
-- **AI Task `ai-skills-ref` default `v0.9.0` -> `v0.10.0`.** The `dependency-update` prompt rule no longer tells the
+- **AI Task `ai-skills-ref` default `v0.9.0` -> `v0.10.0`** (the `ai-task.yml` workflow and the `ai-task` action). The `dependency-update` prompt rule no longer tells the
   agent to wait when there is no release branch: it opens one as the skill says (a milestone named after the next
   version, its release branch from the base branch, and a tracking issue the bugfix pull request closes), and waits
   only when the release branch cannot be created. `issue-resolve` does the same through its agent.
