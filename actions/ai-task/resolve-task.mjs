@@ -104,7 +104,7 @@ export const isBotLogin = (login) => /\[bot\]$/i.test(login) || login.toLowerCas
 
 export function readInputs(env = process.env) {
   const inputs = {};
-  for (const name of [...PARAMETERS, 'context', 'instructions', 'skills', 'agents', 'harness', 'opencode-model']) {
+  for (const name of [...PARAMETERS, 'context', 'instructions', 'test-environment', 'skills', 'agents', 'harness', 'opencode-model']) {
     inputs[name] = (env[envName(name)] ?? '').trim();
   }
   inputs.harness ||= DEFAULT_HARNESS;
@@ -274,8 +274,13 @@ export function buildPrompt(inputs, { repository = '', runUrl = '', hasJira = fa
   if (inputs.task === 'issue-resolve') {
     rules.push(`- Resolve only issue #${inputs.issue.replace(/^#/, '')}: branch, change, quality cycle, and pull request, then stop. Never wait for CI, reviews, approvals, or the merge: the pull request follow-up workflows take it from there.`);
   }
-  if (inputs.task === 'implement') {
-    rules.push("- Browser QA: when the profile's test environment is reachable (the caller may have started it before this run), run the BDD scenarios in a real browser. When no test environment is reachable, run QA in tests-only mode: rely on the automated tests that run as pull request checks (do not re-run them needlessly), report \"browser QA skipped: no CI environment\", and never escalate or block for that reason.");
+  if (inputs.task === 'implement' || inputs.task === 'issue-resolve') {
+    rules.push('- Run the reviewer and QA of the quality cycle for every change, also small or documentation-only ones, and report both verdicts.');
+    if (inputs['test-environment']) {
+      rules.push(`- Browser QA: the caller started the test environment before this run with \`${inputs['test-environment'].split(/\r?\n/).map((line) => line.trim()).filter(Boolean).join('; ')}\`, and it is running. Tell QA so: QA uses it (checking that it answers, never starting it again) and runs the BDD scenarios for this change in a real browser.`);
+    } else {
+      rules.push("- Browser QA: when the profile's test environment is reachable, run the BDD scenarios in a real browser. When no test environment is reachable, run QA in tests-only mode: rely on the automated tests that run as pull request checks (do not re-run them needlessly), report \"browser QA skipped: no CI environment\", and never escalate or block for that reason.");
+    }
   }
   if (resultFile && !inputs.milestone && !mode) {
     rules.push('- Before you stop, write one line `milestone=<title>` with the GitHub milestone you created or worked on to the file named by the AI_TASK_RESULT_FILE environment variable, so the flow can continue from it.');

@@ -77,6 +77,10 @@ A handoff for the stage of the running workflow names that caller's own file (fr
 | `stage-workflows` | `""` | `stage=file` overrides of the stage callers. |
 | `max-auto-dispatches` | `3` | Automatic dispatches of one stage per milestone before `follow-up` hands off instead. |
 | `max-send-backs` | `3` | Send-backs per milestone to an earlier refinement stage (readiness review or technical refinement back to a refinement) before `follow-up` hands off to the requester instead. |
+| `project` | `""` | Project (`owner/number`) whose status field `follow-up` sets from each issue's final status label. Empty uses the profile's `Project` line, else skips it. |
+| `project-status-field` | `Status` | Single-select status field; empty uses the profile's `Project status field`. |
+| `project-status-options` | `""` | `state=Option name` lines; empty uses the profile's `Project status options`, else the state in sentence case. |
+| `profile` | `docs/ai/delivery.md` | Delivery profile on the default branch read for the Project lines. |
 | `chain` | `true` | `follow-up` dispatches the next stage; `false` only hands off. |
 | `escalation-label` | `ai:needs-human` | Escalation label; a `pr-fix` resume removes it. |
 | `bot-login`, `trusted-bots` | `""` | `resume`: bot logins whose handoff comments may be resumed. |

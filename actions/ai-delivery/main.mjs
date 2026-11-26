@@ -23,6 +23,9 @@ import {
   lines,
   milestoneFromKey,
   parseDispatchCounts,
+  parseProfileProject,
+  parseProject,
+  parseProjectStatusOptions,
   parseRequestedBy,
   parseResumeCommand,
   parseResumeMarker,
@@ -43,7 +46,7 @@ const ISSUE_TASKS = ['issue-intake', 'issue-resolve'];
 const NAMES = [
   'command', 'task', 'result', 'milestone', 'result-milestone', 'issue', 'pr', 'branch', 'base-branch', 'source',
   'milestone-template', 'requested-by', 'blocker', 'marker', 'status-labels', 'stage-workflows', 'max-auto-dispatches',
-  'max-send-backs', 'chain', 'escalation-label', 'trusted-bots', 'bot-login', 'jira-base-url', 'required-approvals'
+  'max-send-backs', 'project', 'project-status-field', 'project-status-options', 'profile', 'chain', 'escalation-label', 'trusted-bots', 'bot-login', 'jira-base-url', 'required-approvals'
 ];
 
 export const envName = (name) => `AI_DELIVERY_${name.toUpperCase().replaceAll('-', '_')}`;
@@ -65,7 +68,10 @@ function settings(ctx) {
   const errors = [];
   const stageWorkflows = parseStageWorkflows(ctx['stage-workflows']);
   const statusLabels = parseStatusLabels(ctx['status-labels']);
-  errors.push(...stageWorkflows.errors, ...statusLabels.errors);
+  const projectOptions = parseProjectStatusOptions(ctx['project-status-options']);
+  errors.push(...stageWorkflows.errors, ...statusLabels.errors, ...projectOptions.errors);
+  const project = ctx.project ? parseProject(ctx.project) : null;
+  if (ctx.project && !project) errors.push(`'project' must be 'owner/number', got '${ctx.project}'.`);
   for (const name of ['issue', 'pr']) {
     if (ctx[name] && !number(ctx[name])) errors.push(`'${name}' must be a number, got '${ctx[name]}'.`);
   }
@@ -85,7 +91,67 @@ function settings(ctx) {
   const workflowFor = (stage) => stageWorkflows.overrides[stage]
     || (stage === ctx.task && isWorkflowFile(ctx.ownWorkflow) ? ctx.ownWorkflow : '')
     || stageWorkflows.workflows[stage];
-  return { workflows: stageWorkflows.workflows, workflowFor, labels: statusLabels.labels, limit, sendBackLimit };
+  return { workflows: stageWorkflows.workflows, workflowFor, labels: statusLabels.labels, limit, sendBackLimit,
+    project, projectField: ctx['project-status-field'] || 'Status', projectOptions: projectOptions.options };
+}
+
+const PROJECT_QUERY = `query($owner: String!, $number: Int!, $field: String!) {
+  organization(login: $owner) { projectV2(number: $number) { id field(name: $field) { ... on ProjectV2SingleSelectField { id options { id name } } } } }
+}`;
+const USER_PROJECT_QUERY = PROJECT_QUERY.replace('organization(login: $owner)', 'user(login: $owner)');
+const ITEM_QUERY = `query($owner: String!, $name: String!, $number: Int!, $field: String!) {
+  repository(owner: $owner, name: $name) { issue(number: $number) { id projectItems(first: 50) { nodes { id project { id }
+    fieldValueByName(name: $field) { ... on ProjectV2ItemFieldSingleSelectValue { name } } } } } }
+}`;
+
+async function findProject(api, { owner, number }, field) {
+  for (const query of [PROJECT_QUERY, USER_PROJECT_QUERY]) {
+    try {
+      const data = await api.graphql(query, { owner, number, field });
+      const project = (data.organization ?? data.user)?.projectV2;
+      if (project) return project;
+    } catch (error) {
+      if (!/Could not resolve|NOT_FOUND/i.test(error.message)) throw error;
+    }
+  }
+  return null;
+}
+
+// Mirrors each issue's status label on the Project's single-select status field, so moves the follow-up or an agent
+// made through labels show on the board. Never fails the follow-up: problems are warnings.
+export async function syncProjectStatus(api, repo, config, issues, log) {
+  if (!config.project || issues.length === 0) return [];
+  const summary = [];
+  try {
+    const project = await findProject(api, config.project, config.projectField);
+    if (!project?.field?.options) {
+      log.warning(`Project ${config.project.owner}/${config.project.number} or its single-select field '${config.projectField}' was not found; status not mirrored.`);
+      return summary;
+    }
+    const [owner, name] = repo.split('/');
+    for (const { number: issueNumber, state } of issues) {
+      const optionName = config.projectOptions[state];
+      const option = project.field.options.find((item) => item.name === optionName);
+      if (!option) {
+        log.warning(`Project field '${config.projectField}' has no option '${optionName}' for ${state}; #${issueNumber} not mirrored.`);
+        continue;
+      }
+      const { issue } = (await api.graphql(ITEM_QUERY, { owner, name, number: issueNumber, field: config.projectField })).repository;
+      let item = issue.projectItems.nodes.find((node) => node.project.id === project.id);
+      if (item?.fieldValueByName?.name === optionName) continue;
+      if (!item) {
+        const added = await api.graphql('mutation($project: ID!, $content: ID!) { addProjectV2ItemById(input: {projectId: $project, contentId: $content}) { item { id } } }',
+          { project: project.id, content: issue.id });
+        item = added.addProjectV2ItemById.item;
+      }
+      await api.graphql('mutation($project: ID!, $item: ID!, $field: ID!, $option: String!) { updateProjectV2ItemFieldValue(input: {projectId: $project, itemId: $item, fieldId: $field, value: {singleSelectOptionId: $option}}) { projectV2Item { id } } }',
+        { project: project.id, item: item.id, field: project.field.id, option: option.id });
+      summary.push(`Set ${config.projectField} of #${issueNumber} to ${optionName}.`);
+    }
+  } catch (error) {
+    log.warning(`Could not mirror the status on the Project: ${error.message}`);
+  }
+  return summary;
 }
 
 async function findMilestone(api, repo, title) {
@@ -177,14 +243,37 @@ function writeSummary(env, text) {
   if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, `${text}\n`);
 }
 
-export async function followUp(ctx, api, log) {
-  const { repo } = ctx;
-  if (!TASKS.includes(ctx.task)) throw new Error(`Unsupported task '${ctx.task}'. Use one of: ${TASKS.join(', ')}.`);
+// Fills the Project inputs the caller left empty from the delivery profile on the default branch.
+async function withProfileProject(ctx, api, ref, log) {
+  if (ctx.project && ctx['project-status-options']) return ctx;
+  const path = ctx.profile || 'docs/ai/delivery.md';
+  let text = '';
+  try {
+    const { data } = await api.request('GET', `/repos/${ctx.repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(ref)}`);
+    text = Buffer.from(data?.content ?? '', 'base64').toString('utf8');
+  } catch (error) {
+    if (error.status !== 404) log.warning(`Could not read the profile ${path}: ${error.message}`);
+    return ctx;
+  }
+  const profile = parseProfileProject(text);
+  return {
+    ...ctx,
+    project: ctx.project || profile.project,
+    'project-status-field': ctx['project-status-field'] || profile.field,
+    'project-status-options': ctx['project-status-options'] || profile.options
+  };
+}
+
+export async function followUp(input, api, log) {
+  const { repo } = input;
+  if (!TASKS.includes(input.task)) throw new Error(`Unsupported task '${input.task}'. Use one of: ${TASKS.join(', ')}.`);
+  settings(input);
+  const { data: repository } = await api.request('GET', `/repos/${repo}`);
+  const ref = repository.default_branch;
+  const ctx = await withProfileProject(input, api, ref, log);
   const config = settings(ctx);
   const result = ctx.result || 'success';
   const summary = [];
-  const { data: repository } = await api.request('GET', `/repos/${repo}`);
-  const ref = repository.default_branch;
 
   const scopeIssue = number(ctx.issue)
     ? (await api.request('GET', `/repos/${repo}/issues/${ctx.issue}`)).data
@@ -232,6 +321,12 @@ export async function followUp(ctx, api, log) {
     await api.request('POST', `/repos/${repo}/issues/${issueNumber}/labels`, { labels: [config.labels.ready] });
     summary.push(`Moved #${issueNumber} from ${config.labels['in-progress']} back to ${config.labels.ready}.`);
   }
+
+  const finalStates = issues
+    .map((issue) => ({ number: issue.number, states: decision.release.includes(issue.number) && issue.states.has('in-progress') ? new Set(['ready']) : issue.states }))
+    .filter((issue) => issue.states.size === 1)
+    .map((issue) => ({ number: issue.number, state: [...issue.states][0] }));
+  summary.push(...await syncProjectStatus(api, repo, config, finalStates, log));
 
   let trackingNumber = null;
   async function trackingIssue() {

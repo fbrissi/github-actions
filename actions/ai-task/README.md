@@ -78,6 +78,7 @@ Task parameters (see the [task table](#ai-task) for which are required):
 | `project-status-field` | profile, then `Status` | Single-select status field of `project`. |
 | `project-status-options` | profile, then Title Case of the state | Multiline `state=Option name` mapping to `project-status-field` options; several states may share one option, for example `needs-review=Technical Refinement`, `business-blocked=Blocked`. |
 | `research-sources` | profile | Multiline URLs or repository paths to consult when details are missing. |
+| `test-environment` | – | Command that started the test environment before this action (the `setup-command` of `ai-task.yml`). The `implement` and `issue-resolve` prompts then tell QA it is running. |
 | `instructions` | – | Per-run instructions appended to the prompt under `Additional instructions for this run:`. |
 | `context` | – | Deprecated, use `instructions`. Free text appended to the prompt. |
 | `profile` | `docs/ai/delivery.md` | Repository profile path. |
@@ -128,7 +129,9 @@ the harness step, and never written into the prompt.
 The `implement` prompt tells the agent to run browser QA when the profile's test environment is reachable (start it
 before this action, for example with the `setup-command` input of [`ai-task.yml`](../../README.md#qa-in-ci)). When
 none is reachable, QA runs in tests-only mode: it relies on the automated tests that run as pull request checks,
-reports `browser QA skipped: no CI environment`, and never escalates for that reason.
+reports `browser QA skipped: no CI environment`, and never escalates for that reason. With `test-environment` set, the
+prompt says the environment is already running, so QA uses it instead. The `implement` and `issue-resolve` prompts
+always ask for the reviewer and QA, documentation-only changes included.
 
 ## Notes
 

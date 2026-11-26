@@ -105,6 +105,43 @@ export function parseStatusLabels(text = '') {
   return { labels, errors };
 }
 
+// Project status options per state: `state=Option name` lines, else the state in sentence case (`in-review` -> `In review`).
+export function parseProjectStatusOptions(text = '') {
+  const { values, errors } = parsePairs(text, 'project-status-options', (state) =>
+    (STATES.includes(state) ? '' : `Unknown state '${state}' in 'project-status-options'. Use one of: ${STATES.join(', ')}.`));
+  const sentence = (state) => state.charAt(0).toUpperCase() + state.slice(1).replaceAll('-', ' ');
+  const options = Object.fromEntries(STATES.map((state) => [state, values[state] ?? sentence(state)]));
+  return { options, errors };
+}
+
+// Reads `- Project:`, `- Project status field:`, and the indented `state=Option` lines under `- Project status
+// options:` from a delivery profile (docs/ai/delivery.md). Missing lines stay empty.
+export function parseProfileProject(text = '') {
+  const result = { project: '', field: '', options: '' };
+  const rows = String(text ?? '').split(/\r?\n/);
+  for (let index = 0; index < rows.length; index += 1) {
+    const line = rows[index];
+    const value = (key) => new RegExp(`^\\s*-\\s*${key}:\\s*(.*)$`, 'i').exec(line)?.[1].replace(/`/g, '').trim();
+    const project = value('Project');
+    if (project !== undefined && /^[^\s<]+\/[0-9]+$/.test(project)) result.project = project;
+    const field = value('Project status field');
+    if (field && !field.startsWith('<')) result.field = field;
+    if (value('Project status options') !== undefined) {
+      const options = [];
+      for (let next = index + 1; next < rows.length && /^\s+-\s*[a-z-]+\s*=/.test(rows[next]); next += 1) {
+        options.push(rows[next].replace(/^\s+-\s*/, '').trim());
+      }
+      result.options = options.join('\n');
+    }
+  }
+  return result;
+}
+
+export function parseProject(value = '') {
+  const match = /^([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)\/([1-9][0-9]*)$/.exec(value.trim());
+  return match ? { owner: match[1], number: Number(match[2]) } : null;
+}
+
 export function issueStates(labelNames, statusLabels) {
   const names = new Set(labelNames);
   return new Set(STATES.filter((state) => names.has(statusLabels[state])));
