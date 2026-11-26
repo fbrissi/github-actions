@@ -176,7 +176,7 @@ on:
         description: Tag or commit SHA of fbrissi/ai-skills the skills and agents are installed from.
         required: false
         type: string
-        default: v0.10.1
+        default: v0.11.0
       jira-base-url:
         description: Jira base URL. Empty uses the `JIRA_BASE_URL` variable.
         required: false

@@ -32,6 +32,11 @@ on:
         required: false
         type: boolean
         default: true
+      fix-workflow:
+        description: Fix workflow file (the PR Fix caller). While a run of it is queued, unresolved review threads only skip the decision; otherwise they hand the pull request off to the requester. Empty always hands off.
+        required: false
+        type: string
+        default: pr-fix.yml
       hold-labels:
         description: Whitespace-separated labels that block any decision.
         required: false
@@ -106,7 +111,7 @@ on:
         description: Tag or commit SHA of fbrissi/ai-skills used when `skill-source` is `ai-skills`.
         required: false
         type: string
-        default: v0.9.0
+        default: v0.11.0
       base-skills-path:
         description: Directory holding one folder per skill in the repository, used when `skill-source` is `base`.
         required: false
@@ -179,6 +184,7 @@ jobs:
       base_sha: ${{ steps.gate.outputs.base_sha }}
       required_approvals: ${{ steps.gate.outputs.required_approvals }}
       request_review: ${{ steps.gate.outputs.request_review }}
+      handoff: ${{ steps.gate.outputs.handoff }}
     steps:
       - name: Check gates
         id: gate
@@ -191,6 +197,7 @@ jobs:
           human-approval-exempt-authors: ${{ inputs.human-approval-exempt-authors }}
           hold-labels: ${{ inputs.hold-labels }}
           branch-prefixes: ${{ inputs.branch-prefixes }}
+          fix-workflow: ${{ inputs.fix-workflow }}
 
   decide:
     name: Run Merge Decision
@@ -401,3 +408,36 @@ jobs:
           github-token: ${{ steps.app-token.outputs.token }}
           pr: ${{ needs.gate.outputs.pr_number }}
           required-approvals: ${{ needs.gate.outputs.required_approvals }}
+
+  hand-off-threads:
+    name: Hand Off Unresolved Threads
+    needs: gate
+    if: ${{ needs.gate.outputs.handoff == 'true' }}
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions: {}
+    timeout-minutes: 5
+    environment:
+      name: ${{ inputs.environment }}
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+          permission-issues: read
+          permission-pull-requests: write
+
+      # Every other gate passed and no fix pass is queued, so nothing else resolves the threads. One open handoff per
+      # pull request; resuming decides again.
+      - name: Hand off to the requester
+        uses: fbrissi/github-actions/actions/ai-delivery@v1
+        with:
+          command: handoff
+          github-token: ${{ steps.app-token.outputs.token }}
+          task: merge-decision
+          pr: ${{ needs.gate.outputs.pr_number }}
+          marker: "<!-- merge-decision unresolved-threads -->"
+          blocker: >-
+            Every other merge gate passed, but review threads are still unresolved and no fix pass is queued; resolve
+            the threads that are answered (or answer the rest), then resume to decide again.

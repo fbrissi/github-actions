@@ -81,7 +81,7 @@ inputs:
     required: false
     default: ""
   fix-workflow:
-    description: "`feedback-dispatch`: workflow file dispatched with `pr_number` for review feedback. Empty dispatches nothing."
+    description: "`feedback-dispatch`: workflow file dispatched with `pr_number` for review feedback. Empty dispatches nothing. `merge-gate`: while a run of it is queued, unresolved review threads only skip; otherwise they set `handoff`."
     required: false
     default: ""
   ignore-authors:
@@ -135,6 +135,9 @@ outputs:
   request_review:
     description: "`merge-gate`: `true` when human approvals are missing."
     value: ${{ steps.run.outputs.request_review }}
+  handoff:
+    description: "`merge-gate`: `true` when only unresolved review threads block the decision and no fix run is queued."
+    value: ${{ steps.run.outputs.handoff }}
 
 runs:
   using: composite

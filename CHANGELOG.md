@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.14.0
+
+Release order: `fbrissi/ai-skills` `v0.11.0` first, then this release.
+
+- **Merge gate counts only the newest check run of each name** (`pr-gate` `merge-gate`, used by `merge-decision.yml`):
+  `check-runs?filter=latest` is per check suite and each workflow run has its own suite, so a cancelled run that a
+  newer run of the same check replaced still blocked the merge (`checks not successful ... (cancelled)`). Check runs
+  are now grouped by name and only the newest (latest `started_at`, then highest id) is judged.
+- **Unresolved review threads no longer stall a merge silently:** when they are the only gate left and no
+  `fix-workflow` run is queued, `merge-gate` sets the new `handoff` output and `merge-decision.yml` runs **Hand Off
+  Unresolved Threads**, one `merge-decision` handoff to the requester (`<!-- merge-decision unresolved-threads -->`,
+  not repeated while it is open). New `merge-decision.yml` and `pr-gate` input `fix-workflow` (default `pr-fix.yml` in
+  the workflow); while a run of it is queued, the decision only skips, since that pass dispatches it again.
+- **Clean grades never dispatch PR Fix** (`pr-gate` `feedback-dispatch`, used by `pr-feedback-dispatch.yml`): a
+  `commented` review that is only a clean `★★★★★` grade with no inline comments now always goes to `merge-workflow`,
+  even with unresolved threads (the merge gate hands those off). Before, two clean reviews of one head with a thread
+  still open dispatched two fix passes at the same moment.
+- **Release Note `exempt-paths`** (`release-note.yml`, default empty, so nothing changes until set): a pull request
+  that only changes matching paths, for example `*.md docs/* .ai/* .github/*` (documentation, agent configuration,
+  CI), and adds no release heading passes with an empty `version`.
+- **`ai-skills-ref` default `v0.11.0`** in `ai-task.yml`, the `ai-task` action (from `v0.10.1`), and
+  `merge-decision.yml` (from `v0.9.0`): every stage opens the issue's images itself, the fixer and reviewer resolve
+  their own fixed threads, and the milestone pull request is marked ready only with its required checks green.
+  `pr-fix.yml` (`v0.4.0`) and `code-review.yml` (`v0.2.0`) keep their defaults; pin `ai-skills-ref: v0.11.0` on them to
+  get the thread resolution.
+
 ## v1.13.1
 
 Release order: `fbrissi/ai-skills` `v0.10.1` first, then this release.

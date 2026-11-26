@@ -218,9 +218,15 @@ describe('feedback-dispatch', () => {
     assert.deepEqual((await route({ state: 'commented', body: '★★★★★\nTicket: not loaded' })).targets, ['merge-decision.yml']);
   });
 
-  it('sends a clean grade with an unresolved thread or inline comment to the fixer', async () => {
-    assert.deepEqual((await route({ state: 'commented', body: '★★★★★' }, { threads: [{ isResolved: false }] })).targets, ['pr-fix.yml']);
+  it('sends a clean grade with an inline comment to the fixer', async () => {
     assert.deepEqual((await route({ state: 'commented', body: '★★★★★' }, { comments: [{ id: 1 }] })).targets, ['pr-fix.yml']);
+  });
+
+  it('never dispatches a fix for clean grades while a thread is still open', async () => {
+    const threads = [{ isResolved: false }];
+    const first = await route({ state: 'commented', body: '★★★★★' }, { threads });
+    const second = await route({ state: 'commented', body: '★★★★★' }, { threads });
+    assert.deepEqual([...first.targets, ...second.targets], ['merge-decision.yml', 'merge-decision.yml']);
   });
 
   it('sends lower grades and partial reviews to the fixer', async () => {
@@ -303,8 +309,9 @@ describe('merge-outcome', () => {
   });
 });
 
-function mergeRepo({ pr = pull(), runs = [], checks = [], status = { total_count: 0, state: 'pending' }, reviews = [], comments = [], threads = [] } = {}) {
+function mergeRepo({ pr = pull(), runs = [], checks = [], status = { total_count: 0, state: 'pending' }, reviews = [], comments = [], threads = [], fixRuns = null } = {}) {
   return fakeApi([
+    ...(fixRuns ? [['GET', /^\/repos\/octo\/app\/actions\/workflows\/pr-fix\.yml\/runs\?/, { workflow_runs: fixRuns }]] : []),
     ['GET', /^\/repos\/octo\/app\/pulls\/7$/, pr],
     ['GET', /^\/repos\/octo\/app\/actions\/runs\?head_sha=/, { workflow_runs: runs }],
     ['GET', /^\/repos\/octo\/app\/commits\/[0-9a-f]+\/check-runs/, { check_runs: checks }],
@@ -379,6 +386,36 @@ describe('merge-gate', () => {
     assert.equal(dispatcher.outputs.action, 'decide');
     const failed = await mergeGate(ctx, mergeRepo({ checks: [{ name: 'CI', status: 'completed', conclusion: 'failure', check_suite: { id: 1 } }] }), noSleep);
     assert.match(failed.summary[0], /CI \(failure\)/);
+  });
+
+  it('keeps only the newest check run of each name: cancelled then success, same name', async () => {
+    const ctx = ctxFor({ ...base, 'human-approval-exempt-base-prefixes': 'feat/' });
+    const check = (id, conclusion, at, suite) => ({ id, name: 'Quality Checks', status: 'completed', conclusion, started_at: at, check_suite: { id: suite } });
+    const cancelledThenSuccess = [check(10, 'cancelled', '2026-01-01T00:00:00Z', 1), check(11, 'success', '2026-01-01T00:01:00Z', 2)];
+    assert.equal((await mergeGate(ctx, mergeRepo({ checks: cancelledThenSuccess }), noSleep)).outputs.action, 'decide');
+    assert.equal((await mergeGate(ctx, mergeRepo({ checks: [...cancelledThenSuccess].reverse() }), noSleep)).outputs.action, 'decide');
+    const successThenFailure = [check(10, 'success', '2026-01-01T00:00:00Z', 1), check(11, 'failure', '2026-01-01T00:01:00Z', 2)];
+    assert.match((await mergeGate(ctx, mergeRepo({ checks: successThenFailure }), noSleep)).summary[0], /Quality Checks \(failure\)/);
+    const sameStart = [check(12, 'success', '2026-01-01T00:00:00Z', 1), check(13, 'cancelled', '2026-01-01T00:00:00Z', 2)];
+    assert.match((await mergeGate(ctx, mergeRepo({ checks: sameStart }), noSleep)).summary[0], /cancelled/);
+  });
+
+  it('hands off unresolved threads unless a fix run is queued', async () => {
+    const ctx = ctxFor({ ...base, 'human-approval-exempt-base-prefixes': 'feat/', 'fix-workflow': 'pr-fix.yml' });
+    const threads = [{ isResolved: false }];
+    const idle = await mergeGate(ctx, mergeRepo({ threads, fixRuns: [{ status: 'completed' }, { status: 'in_progress' }] }), noSleep);
+    assert.equal(idle.outputs.action, 'skip');
+    assert.equal(idle.outputs.handoff, 'true');
+    assert.match(idle.summary[0], /1 unresolved/);
+    for (const status of ['queued', 'pending', 'waiting']) {
+      const queued = await mergeGate(ctx, mergeRepo({ threads, fixRuns: [{ status }] }), noSleep);
+      assert.equal(queued.outputs.handoff, undefined);
+      assert.match(queued.summary[0], /pr-fix\.yml run is queued/);
+    }
+    const missing = await mergeGate(ctx, mergeRepo({ threads }), noSleep);
+    assert.equal(missing.outputs.handoff, 'true');
+    const noFixWorkflow = await mergeGate(ctxFor({ ...base, 'human-approval-exempt-base-prefixes': 'feat/' }), mergeRepo({ threads }), noSleep);
+    assert.equal(noFixWorkflow.outputs.handoff, 'true');
   });
 
   it('skips with unresolved threads or a decision already recorded for the head', async () => {

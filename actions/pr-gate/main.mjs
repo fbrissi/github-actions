@@ -188,6 +188,36 @@ async function unresolvedThreads(api, repo, number) {
   return unresolved;
 }
 
+// `filter=latest` is per check suite, and each workflow run has its own suite, so a cancelled run that a rerun or a
+// newer run superseded is still listed. Only the newest run of each name counts (latest start, then highest id).
+export function newestByName(checkRuns) {
+  const newest = new Map();
+  const key = (check) => [Date.parse(check.started_at ?? '') || 0, Number(check.id) || 0];
+  for (const check of checkRuns) {
+    const current = newest.get(check.name);
+    const [at, id] = key(check);
+    const [currentAt, currentId] = current ? key(current) : [-1, -1];
+    if (!current || at > currentAt || (at === currentAt && id > currentId)) newest.set(check.name, check);
+  }
+  return [...newest.values()];
+}
+
+// A fix pass that has not started yet (queued, waiting for the concurrency group or an environment) will answer the
+// open threads, and its follow-up dispatches the decision again. A running pass shows as the running PR Fix check.
+const WAITING_RUN = new Set(['queued', 'pending', 'requested', 'waiting']);
+
+async function fixQueued(api, repo, workflow) {
+  if (!workflow) return false;
+  if (!WORKFLOW_FILE.test(workflow)) throw new Error(`'fix-workflow' must be a workflow file name, got '${workflow}'.`);
+  try {
+    const { data } = await api.request('GET', `/repos/${repo}/actions/workflows/${workflow}/runs?per_page=50`);
+    return (data?.workflow_runs ?? []).some((run) => WAITING_RUN.has(run.status));
+  } catch (error) {
+    if (error.status === 404) return false;
+    throw error;
+  }
+}
+
 // Runs started by review or check events (such as the feedback dispatcher) are not CI; their checks are ignored.
 const DISPATCHER_EVENTS = new Set(['pull_request_review', 'pull_request_review_comment', 'check_run', 'workflow_run']);
 
@@ -215,8 +245,8 @@ export async function mergeGate(ctx, api, sleep = (ms) => new Promise((resolve) 
 
   const runs = await paginateKey(api, `/repos/${repo}/actions/runs?head_sha=${headSha}`, 'workflow_runs');
   const ignoredSuites = new Set(runs.filter((run) => DISPATCHER_EVENTS.has(run.event)).map((run) => run.check_suite_id));
-  const checkRuns = (await paginateKey(api, `/repos/${repo}/commits/${headSha}/check-runs?filter=latest`, 'check_runs'))
-    .filter((check) => !ignoredSuites.has(check.check_suite?.id));
+  const checkRuns = newestByName((await paginateKey(api, `/repos/${repo}/commits/${headSha}/check-runs?filter=latest`, 'check_runs'))
+    .filter((check) => !ignoredSuites.has(check.check_suite?.id)));
   const pending = checkRuns.filter((check) => check.status !== 'completed').map((check) => check.name);
   if (pending.length > 0) return skip(`checks still running on ${headSha}: ${pending.join(', ')}.`);
   const failed = checkRuns
@@ -254,7 +284,14 @@ export async function mergeGate(ctx, api, sleep = (ms) => new Promise((resolve) 
   }
 
   const unresolved = await unresolvedThreads(api, repo, number);
-  if (unresolved > 0) return { ...skip(`${unresolved} unresolved review thread(s).`), outputs };
+  if (unresolved > 0) {
+    if (await fixQueued(api, repo, ctx['fix-workflow'])) {
+      return { ...skip(`${unresolved} unresolved review thread(s); a ${ctx['fix-workflow']} run is queued.`), outputs };
+    }
+    // Nothing else will resolve them, so a person is told instead of the pull request waiting silently.
+    const reason = `${unresolved} unresolved review thread(s).`;
+    return { outputs: { ...outputs, handoff: 'true' }, summary: [`skipped: ${reason}`], notice: reason };
+  }
 
   const comments = await api.paginate(`/repos/${repo}/issues/${number}/comments`);
   const marker = `<!-- merge-decision head=${headSha} -->`;
@@ -363,8 +400,9 @@ export async function feedbackDispatch(ctx, api) {
       const hasBody = Boolean(review.body?.trim());
       const actionable = state === 'changes_requested' || hasBody || comments.length > 0;
       const replyOnly = state === 'commented' && !hasBody && comments.length > 0 && comments.every((comment) => comment.in_reply_to_id);
-      const clean = state === 'commented' && comments.length === 0 && isCleanGrade(review.body)
-        && (await unresolvedThreads(api, repo, pullRequest.number)) === 0;
+      // A clean grade asks for no change, so it never dispatches a fix, even with threads still open: the merge gate
+      // hands those to a person. Two clean reviews of one head then never start two fix passes.
+      const clean = state === 'commented' && comments.length === 0 && isCleanGrade(review.body);
       if (clean) {
         if (mergeWorkflow) await dispatch(mergeWorkflow, pullRequest.number);
         else summary.push('Skipped: the review is a clean grade and merge-workflow is empty.');
