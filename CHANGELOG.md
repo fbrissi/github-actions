@@ -23,7 +23,7 @@ merging a pull request that adds one tags the release and moves the major tag.
   had them in its environment. The `dependency-update` prompt reuses an earlier pull request only when it is from this
   repository, authored by the run's own App, on a branch with the template's prefix, installs with lifecycle scripts
   off where possible, and never closes, merges, approves, comments on, or pushes to the bot pull requests.
-- **Repository:** `.github/workflows/ai-dependency-update.yml` runs the `dependency-update` task on this repository every Tuesday 06:00 UTC (after Dependabot's weekly run) and on demand, with the profile `docs/ai/dependency-updates.md`; it skips while the `AGENT_APP_CLIENT_ID` variable is empty, passes only the agent App key and harness keys, and stops at the PR. New `AGENTS.md` (with `CLAUDE.md`) with the commands and rules agents need.
+- **Repository:** `.github/workflows/ai-dependency-update.yml` runs the `dependency-update` task on this repository every Tuesday 06:00 UTC (after Dependabot's weekly run) and on demand, with the profile `docs/ai/dependency-updates.md`; it is skipped while the `AGENT_APP_CLIENT_ID` variable is empty (a missing private key fails the run), passes only the agent App key and harness keys, and stops at the PR. New `AGENTS.md` (with `CLAUDE.md`) with the commands and rules agents need.
 - **AI Task:** `ai-skills-ref` defaults to `v0.8.0`, the ai-skills release with the `dependency-updater` agent.
 
 ## v1.9.0
