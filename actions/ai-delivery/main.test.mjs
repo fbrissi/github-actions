@@ -270,6 +270,36 @@ describe('handoff', () => {
     assert.match(body, /gh pr edit 7 --remove-label ai:needs-human && gh workflow run pr-fix\.yml -f pr_number=7/);
   });
 
+  const prRepo = (comments) => fakeApi([
+    ['GET', /^\/repos\/octo\/app\/pulls\/7$/, { number: 7, user: { login: 'agent[bot]' }, base: { ref: 'feat/m1' }, milestone: null }],
+    ['GET', /^\/repos\/octo\/app\/issues\/7\/comments$/, comments],
+    ['POST', /^\/repos\/octo\/app\/issues\/7\/comments$/, {}],
+    ['PATCH', /^\/repos\/octo\/app\/issues\/comments\/\d+$/, {}]
+  ]);
+  const openHandoff = (marker) => ({
+    id: 60,
+    user: { login: 'agent[bot]', type: 'Bot' },
+    body: `${marker}\n${buildHandoff({ stage: 'pr-fix', pr: 7, label: 'ai:needs-human', workflow: 'pr-fix.yml' })}`
+  });
+
+  it('supersedes an open handoff with other markers, so the escalation is posted', async () => {
+    const api = prRepo([openHandoff('<!-- pr-fix failed -->')]);
+    const summary = await handoff(ctxFor({ task: 'pr-fix', pr: '7', marker: '<!-- pr-fix escalated -->', 'escalation-label': 'ai:needs-human' }), api, silent);
+    const patch = api.calls.find((call) => call.method === 'PATCH');
+    assert.match(patch.path, /comments\/60$/);
+    assert.match(patch.body.body, /state=superseded/);
+    assert.match(posts(api, /comments$/)[0].body.body, /^<!-- pr-fix escalated -->/);
+    assert.match(summary.join('\n'), /Superseded/);
+  });
+
+  it('does not repeat an open handoff with the same markers', async () => {
+    const api = prRepo([openHandoff('<!-- pr-fix failed -->')]);
+    const summary = await handoff(ctxFor({ task: 'pr-fix', pr: '7', marker: '<!-- pr-fix failed -->' }), api, silent);
+    assert.equal(posts(api, /comments$/).length, 0);
+    assert.equal(api.calls.filter((call) => call.method === 'PATCH').length, 0);
+    assert.match(summary[0], /already has an open pr-fix handoff/);
+  });
+
   it('rejects markers that are not HTML comments', async () => {
     await assert.rejects(handoff(ctxFor({ task: 'pr-fix', pr: '7', marker: 'hello' }), fakeApi([]), silent), /must be HTML comments/);
   });

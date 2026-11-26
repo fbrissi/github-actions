@@ -15,15 +15,22 @@ Release order: `fbrissi/ai-skills` `v0.8.1` first, then this release.
   not found` failed the step). They now read 16 random bytes with `od` from `/dev/urandom`.
 - **PR Fix:** a failed pass posts a `pr-fix` handoff on the pull request (marker `<!-- pr-fix failed -->`) that
   mentions the requester and links the run, instead of only failing the check run. New input `merge-workflow`
-  (default empty): after a successful pass, **Finish PR Fix** dispatches it with `pr_number` once the check run is
-  complete, so a merge decision skipped with `checks still running: PR Fix` is decided again. It needs `Actions: Read
-  and write` on the fixer App; one dispatch per pass, so `max-rounds` bounds it. The finish job now uses
-  `environment` (for the App key) like the fix job.
-- **pr-gate:** new `merge-dispatch` command and `merge-workflow` input.
+  (default empty): after a successful pass, it is dispatched with `pr_number` once the check run is complete, so a
+  merge decision skipped with `checks still running: PR Fix` is decided again. It needs `Actions: Read and write` on
+  the fixer App; one dispatch per pass, so `max-rounds` bounds it. Both run in a new **Follow Up PR Fix** job that uses
+  `environment` (for the App key) and mints only what its path needs; **Finish PR Fix** stays without an environment,
+  so environment protection never holds the check run open.
+- **AI Delivery:** `handoff` supersedes an open handoff of the same stage that has other markers (state
+  `superseded`) instead of skipping, so a max-rounds escalation after a failed-pass handoff is still posted with its
+  `<!-- pr-fix escalated -->` marker. An open handoff with the same markers is still not repeated.
+- **pr-gate:** new `merge-dispatch` command, and `feedback-dispatch`, which holds the routing of PR Feedback Dispatch
+  (moved from an inline script, now covered by tests).
 - **PR Feedback Dispatch:** a `commented` review that is only a clean `★★★★★` grade (plus `Ticket:` lines), with no
   inline comments and no unresolved thread on the pull request, dispatches `merge-workflow` instead of
   `fix-workflow`. A reviewer that cannot approve its own pull request leaves its approval that way, and the fix pass
-  it used to start had nothing to do. Merge gates and human approval rules are unchanged.
+  it used to start had nothing to do. Such a review now gets no PR Fix pass: with failing CI, the pull request waits
+  like an approved one (the merge gate skips it) until CI or a new review changes. Merge gates and human approval
+  rules are unchanged.
 - **AI Task:** `app-token-permission-issue-fields` reaches create-github-app-token through the step environment
   (`INPUT_PERMISSION-ISSUE-FIELDS`, which the action reads for every permission) instead of an undeclared input, so
   the runner no longer warns `Unexpected input(s) 'permission-issue-fields'`. `ai-skills-ref` defaults to `v0.8.1`,

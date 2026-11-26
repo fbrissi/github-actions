@@ -472,8 +472,6 @@ jobs:
     runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
     permissions:
       checks: write
-    environment:
-      name: ${{ inputs.environment }}
     steps:
       - name: Complete check run
         uses: fbrissi/github-actions/actions/pr-gate@v1
@@ -483,20 +481,31 @@ jobs:
           check-run-id: ${{ needs.gate.outputs.check_run_id }}
           check-name: ${{ inputs.check-name }}
 
+  # Separate from finish, so environment protection never holds the check run open. Runs after it, so the merge gate
+  # no longer sees this pass as a running check.
+  follow-up:
+    name: Follow Up PR Fix
+    needs: [gate, fix, finish]
+    if: ${{ always() && !cancelled() && needs.gate.outputs.action == 'fix' && (needs.fix.result != 'success' || inputs.merge-workflow != '') }}
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions: {}
+    environment:
+      name: ${{ inputs.environment }}
+    steps:
+      # Each path gets only what it needs: the dispatch `actions` write, the handoff comment `pull-requests` write.
       - name: Generate GitHub App token
         id: app-token
-        if: ${{ needs.fix.result != 'success' || inputs.merge-workflow != '' }}
         uses: actions/create-github-app-token@v3
         with:
           client-id: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
           private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
-          permission-actions: ${{ inputs.merge-workflow != '' && 'write' || '' }}
-          permission-issues: read
-          permission-pull-requests: write
+          permission-actions: ${{ needs.fix.result == 'success' && 'write' || '' }}
+          permission-issues: ${{ needs.fix.result != 'success' && 'read' || '' }}
+          permission-pull-requests: ${{ needs.fix.result != 'success' && 'write' || '' }}
 
-      # Runs after the check run is complete, so the merge gate no longer sees this pass as a running check.
+      # One dispatch per pass, so max-rounds bounds it; a merge decision never dispatches a fix.
       - name: Dispatch the merge decision
-        if: ${{ needs.fix.result == 'success' && inputs.merge-workflow != '' }}
+        if: ${{ needs.fix.result == 'success' }}
         uses: fbrissi/github-actions/actions/pr-gate@v1
         with:
           command: merge-dispatch

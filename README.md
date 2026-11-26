@@ -326,12 +326,14 @@ merge workflow from the Code Review caller once the review succeeds:
 2. **Run PR Fix** checks out the head branch with the App token, commits as the App bot, installs dependencies, and
    runs the harness. It never watches CI or waits for comments: the next review dispatches the next pass. It then
    records the round and fails if the branch was rewritten.
-3. **Finish PR Fix** completes the check run. When the pass failed (for example a runner or credential problem),
-   it posts a `pr-fix` [handoff](#how-stages-chain) that mentions the requester and links the run, so the pull request
-   does not wait silently; `/ai-resume` runs the pass again. After a successful pass with `merge-workflow` set, it
-   dispatches that workflow, so a merge decision skipped while the pass was running (`checks still running: PR Fix`)
-   is decided again. Each pass dispatches it at most once, so `max-rounds` bounds it, and a merge decision never
-   dispatches a fix. The job uses `environment` too, for the App key.
+3. **Finish PR Fix** completes the check run.
+4. **Follow Up PR Fix** (in `environment`, for the App key; after the check run is complete) posts a `pr-fix`
+   [handoff](#how-stages-chain) when the pass failed (for example a runner or credential problem), mentioning the
+   requester and linking the run, so the pull request does not wait silently; `/ai-resume` runs the pass again. A
+   later escalation supersedes that handoff, so the escalation is still posted. After a successful pass with
+   `merge-workflow` set, it dispatches that workflow, so a merge decision skipped while the pass was running
+   (`checks still running: PR Fix`) is decided again. Each pass dispatches it at most once, so `max-rounds` bounds
+   it, and a merge decision never dispatches a fix.
 
 ```yaml
 # .github/workflows/pr-fix.yml
@@ -390,7 +392,7 @@ The fixer GitHub App needs `Contents: Read and write`, `Pull requests: Read and 
 | `base-skills-path` | `.rulesync/skills` | Skills directory read from the base commit with `base`. |
 | `check-name` | `PR Fix` | Check run name. |
 | `merge-workflow` | `""` | Workflow dispatched with `pr_number` after a successful pass, for example `merge-decision.yml`. Needs `Actions: Read and write` on the fixer App. Empty disables it. |
-| `environment` | `pr-fix` | Environment of the fix and finish jobs; its secrets are visible to them. |
+| `environment` | `pr-fix` | Environment of the fix and follow-up jobs; its secrets are visible to them. |
 | `agent-client-id` | `AGENT_APP_CLIENT_ID` | Client ID of the fixer GitHub App. |
 
 `harness`, `opencode-plugins` (default `""`), `opencode-model`, `opencode-variant`, `claude-model`, `claude-effort`,

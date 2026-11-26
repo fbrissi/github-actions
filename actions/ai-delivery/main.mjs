@@ -451,7 +451,21 @@ export async function handoff(ctx, api) {
     requestedBy ||= context.requestedBy;
   }
   const comments = await api.paginate(`/repos/${repo}/issues/${target}/comments`);
-  if (hasOpenHandoff(comments, ctx.task)) return [`#${target} already has an open ${ctx.task} handoff.`];
+  // An open handoff of the stage with the same markers is this one again. One with other markers (for example an
+  // earlier failed pass when the escalation comes) is superseded, so the new blocker and its markers are posted.
+  const open = comments.filter((comment) => comment.user?.type === 'Bot'
+    && isOpenHandoff(comment.body)
+    && parseResumeMarker(comment.body)?.stage === ctx.task);
+  if (open.some((comment) => markers.every((marker) => comment.body.includes(marker)))) {
+    return [`#${target} already has an open ${ctx.task} handoff.`];
+  }
+  const summary = [];
+  for (const comment of open) {
+    await api.request('PATCH', `/repos/${repo}/issues/comments/${comment.id}`, {
+      body: setHandoffState(comment.body, 'superseded', 'Superseded by a newer handoff below.')
+    });
+    summary.push(`Superseded the open ${ctx.task} handoff ${comment.html_url ?? comment.id}.`);
+  }
   const body = buildHandoff({
     stage: ctx.task,
     milestone,
@@ -467,7 +481,7 @@ export async function handoff(ctx, api) {
     markers
   });
   await api.request('POST', `/repos/${repo}/issues/${target}/comments`, { body });
-  return [`Handed ${ctx.task} off on #${target}${requestedBy ? ` to @${requestedBy}` : ''}.`];
+  return [...summary, `Handed ${ctx.task} off on #${target}${requestedBy ? ` to @${requestedBy}` : ''}.`];
 }
 
 const REQUIRED = {

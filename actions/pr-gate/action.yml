@@ -6,10 +6,10 @@ author: Filipe Bojikian Rissi
 
 inputs:
   command:
-    description: "`fix-gate`, `fix-record`, `fix-finish`, `merge-dispatch`, `merge-gate`, or `merge-record`."
+    description: "`feedback-dispatch`, `fix-gate`, `fix-record`, `fix-finish`, `merge-dispatch`, `merge-gate`, or `merge-record`."
     required: true
   github-token:
-    description: Token for the GitHub API. `fix-gate` needs `checks` write and `issues` and `pull-requests` read; `fix-finish` needs `checks` write; `merge-dispatch` needs `actions` write; `merge-gate` needs `actions`, `checks`, `issues`, `pull-requests`, and `statuses` read; the record commands need a GitHub App token with `pull-requests` write, because only bot comments count as markers.
+    description: Token for the GitHub API. `feedback-dispatch` needs `actions` write and `pull-requests` read; `fix-gate` needs `checks` write and `issues` and `pull-requests` read; `fix-finish` needs `checks` write; `merge-dispatch` needs `actions` write; `merge-gate` needs `actions`, `checks`, `issues`, `pull-requests`, and `statuses` read; the record commands need a GitHub App token with `pull-requests` write, because only bot comments count as markers.
     required: false
     default: ${{ github.token }}
   pr-number:
@@ -77,7 +77,23 @@ inputs:
     required: false
     default: ""
   merge-workflow:
-    description: "`merge-dispatch`: workflow file dispatched with `pr_number` on the default branch, for example `merge-decision.yml`. Empty dispatches nothing."
+    description: "`merge-dispatch` and `feedback-dispatch`: workflow file dispatched with `pr_number` on the default branch, for example `merge-decision.yml`. Empty dispatches nothing."
+    required: false
+    default: ""
+  fix-workflow:
+    description: "`feedback-dispatch`: workflow file dispatched with `pr_number` for review feedback. Empty dispatches nothing."
+    required: false
+    default: ""
+  ignore-authors:
+    description: "`feedback-dispatch`: logins whose reviews never dispatch `fix-workflow`."
+    required: false
+    default: ""
+  ignore-reply-authors:
+    description: "`feedback-dispatch`: logins whose reply-only reviews never dispatch `fix-workflow`."
+    required: false
+    default: ""
+  merge-check-name:
+    description: "`feedback-dispatch`: check run whose successful completion dispatches `merge-workflow`. Empty disables it."
     required: false
     default: ""
 
@@ -155,6 +171,10 @@ runs:
         PR_GATE_RESULT: ${{ inputs.result }}
         PR_GATE_CHECK_RUN_ID: ${{ inputs.check-run-id }}
         PR_GATE_MERGE_WORKFLOW: ${{ inputs.merge-workflow }}
+        PR_GATE_FIX_WORKFLOW: ${{ inputs.fix-workflow }}
+        PR_GATE_IGNORE_AUTHORS: ${{ inputs.ignore-authors }}
+        PR_GATE_IGNORE_REPLY_AUTHORS: ${{ inputs.ignore-reply-authors }}
+        PR_GATE_MERGE_CHECK_NAME: ${{ inputs.merge-check-name }}
       run: node "$GITHUB_ACTION_PATH/main.mjs"
 
 branding:
