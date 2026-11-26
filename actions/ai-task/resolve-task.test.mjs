@@ -227,7 +227,7 @@ describe('dependency-update task', () => {
     assert.match(prompt, /Follow the `dependency-updates` skill \(available skills: dependency-updates, /);
     assert.match(prompt, /repository profile \(`docs\/ai\/dependency-updates\.md`\)/);
     assert.match(prompt, /- base-branch: main\n/);
-    assert.match(prompt, /Dependency update only: .*high or critical security advisory.* hotfix branch with a pull request into the base branch; the rest go to the bugfix branch .*oldest open release branch\)\. With no release branch to target, keep the non-urgent updates for a later run without a blocker.* Never close, merge, approve, comment on, or push to the bot pull requests/);
+    assert.match(prompt, /Dependency update only: .*high or critical security advisory.* hotfix branch with a pull request into the base branch; the rest go to the bugfix branch .*oldest open release branch\)\. With no release branch to target .*open one as the skill says .*only when the release branch cannot be created, keep the non-urgent updates for a later run without a blocker.* Never close, merge, approve, comment on, or push to the bot pull requests/);
     assert.match(prompt, /Reuse an earlier pull request only when it is from this repository \(not a fork, `isCrossRepository` false\), its author is this run's own App identity, and its branch starts with that kind's branch prefix/);
     assert.match(prompt, /lifecycle scripts off/);
     assert.match(prompt, /reviewer and QA of the quality cycle for every change/);
