@@ -10,9 +10,11 @@ merging a pull request that adds one tags the release and moves the major tag.
 
 - **AI Task:** new `dependency-update` task, run by the ai-skills `dependency-updater` agent with the
   `dependency-updates` skill (plus `developer`, `code-reviewer`, and `qa-tester`). It takes the open dependency-bot
-  pull requests (and outdated packages when the profile asks) into one branch, reads release notes and upgrade guides,
-  adapts the code, runs the checks and the review and QA cycle, and opens or updates one pull request that supersedes
-  the bot pull requests, then stops; the PR Feedback Loop takes over. It needs no `issue` or `milestone`, reads
+  pull requests (and outdated packages when the profile asks), reads release notes and upgrade guides,
+  adapts the code, runs the checks and the review and QA cycle, and opens or updates pull requests that supersede the
+  bot pull requests, branched like `issue-resolve`: updates that fix a high or critical advisory go to a `hotfix/`
+  pull request into the base branch, the rest to a `bugfix/` pull request into the open release branch (or wait for a
+  later run when there is none), then stops; the PR Feedback Loop takes over. It needs no `issue` or `milestone`, reads
   `docs/ai/dependency-updates.md` by default, gets `contents` and `pull-requests` write on the App token, and is told
   about the `setup-command` test environment like `implement`. Default caller `ai-dependency-update.yml` (dispatch
   input `requested_by`); `/ai-resume dependency-update` (or `dependency-updater`) resumes it, and the follow-up hands
@@ -23,7 +25,7 @@ merging a pull request that adds one tags the release and moves the major tag.
   had them in its environment. The `dependency-update` prompt reuses an earlier pull request only when it is from this
   repository, authored by the run's own App, on a branch with the template's prefix, installs with lifecycle scripts
   off where possible, and never closes, merges, approves, comments on, or pushes to the bot pull requests.
-- **Repository:** `.github/workflows/ai-dependency-update.yml` runs the `dependency-update` task on this repository every Tuesday 06:00 UTC (after Dependabot's weekly run) and on demand, with the profile `docs/ai/dependency-updates.md`; it is skipped while the `AGENT_APP_CLIENT_ID` variable is empty (a missing private key fails the run), passes only the agent App key and harness keys, and stops at the PR. New `AGENTS.md` (with `CLAUDE.md`) with the commands and rules agents need.
+- **Repository:** `.github/workflows/ai-dependency-update.yml` runs the `dependency-update` task on this repository every Tuesday 06:00 UTC (after Dependabot's weekly run) and on demand, with the profile `docs/ai/dependency-updates.md` (`Bugfix release branch: base`: no release branches here, so every update goes to `main`); it is skipped while the `AGENT_APP_CLIENT_ID` variable is empty (a missing private key fails the run), passes only the agent App key and harness keys, and stops at the PR. New `AGENTS.md` (with `CLAUDE.md`) with the commands and rules agents need.
 - **AI Task:** `ai-skills-ref` defaults to `v0.8.0`, the ai-skills release with the `dependency-updater` agent.
 
 ## v1.9.0

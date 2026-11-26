@@ -1247,27 +1247,34 @@ Keep `timeout-minutes` at `50` or less (the default): the App token expires afte
 ### Dependency updates
 
 The `dependency-update` task runs the `dependency-updater` agent of fbrissi/ai-skills with the `dependency-updates`
-skill: it takes the open Dependabot (or Renovate) pull requests into the base branch, and outdated packages when the
-profile (`docs/ai/dependency-updates.md`) asks, reads each package's release notes and upgrade guide, adapts the code,
-holds back what cannot be adopted safely, runs the checks and the review and QA cycle (with the `setup-command`
-environment when given), and opens one pull request (default branch `chore/dependency-updates-{date}`) that lists
-the packages, the breaking changes and their handling, the held packages, and `Supersedes #<n>` for each bot pull
-request. A later run updates that pull request while it is open instead of opening another. It never closes, merges,
-or pushes to the bot pull requests; they close themselves once the updates reach the base branch.
+skill: it takes the open Dependabot (or Renovate) pull requests into the base branch, outdated packages when the
+profile (`docs/ai/dependency-updates.md`) asks, and the open advisories; reads each package's release notes and upgrade
+guide, adapts the code, holds back what cannot be adopted safely, and runs the checks and the review and QA cycle
+(with the `setup-command` environment when given). It branches like `issue-resolve`: updates that fix a high or
+critical advisory on the version in use (or that a person labeled with the hotfix label) go to
+`hotfix/dependency-updates-<date>` with a pull request into the base branch; the rest go to
+`bugfix/dependency-updates-<date>` into the delivery profile's `Bugfix release branch`, else the oldest open release
+branch, and wait for a later run (reported, no blocker) when there is none. Each pull request lists the packages, the
+breaking changes and their handling, the held packages, and `Supersedes #<n>` for the bot pull requests it covers; a
+later run updates the open pull request of its kind. It never closes, merges, approves, comments on, or pushes to the
+bot pull requests; they close themselves once the updates reach the base branch.
 
 ```mermaid
 flowchart LR
-  bots["Dependabot / Renovate<br/>pull requests"] --> cron["Weekly schedule after the bots<br/>or manual run"]
+  bots["Dependabot / Renovate<br/>pull requests, advisories"] --> cron["Weekly schedule after the bots<br/>or manual run"]
   cron --> run["ai-dependency-update.yml<br/>task dependency-update"]
-  run --> pr["One pull request<br/>Supersedes #n"]
-  pr --> loop["PR Feedback Loop"]
+  run -- "high or critical advisory" --> hf["hotfix/* pull request<br/>into the base branch"]
+  run -- "other updates" --> bf["bugfix/* pull request<br/>into the open release branch"]
+  run -. "no release branch" .-> wait["Wait for a later run"]
+  hf --> loop["PR Feedback Loop"]
+  bf --> loop
   run -. "failed run" .-> ho["Handoff with a resume"]
 ```
 
-Like the other tasks it stops at the pull request: the [PR Feedback Loop](#pr-feedback-loop) takes over, so add the
-branch prefix (for example `chore/dependency-updates-`) to the `branch-prefixes` of the PR Fix and Merge Decision
-callers. A failed run hands off on a tracking issue with a `dependency-update` resume. Schedule it after the bots, and
-give it the same dependency setup as `implement` so checks and QA can run:
+Like the other tasks it stops at the pull requests: the [PR Feedback Loop](#pr-feedback-loop) takes over (the
+`hotfix/` and `bugfix/` prefixes already opt them in). A repository without release branches sets `Bugfix release
+branch: base` in its profile, so the non-urgent updates also go to the base branch. A failed run hands off on a
+tracking issue with a `dependency-update` resume. Schedule it after the bots, and give it the same dependency setup as `implement` so checks and QA can run:
 
 ```yaml
 # .github/workflows/ai-dependency-update.yml
