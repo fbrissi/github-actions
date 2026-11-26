@@ -24,6 +24,7 @@ deploys, credential rotation) stays in each project.
 | [`ai-harness`](actions/ai-harness/README.md) | Composite action | Installs OpenCode or Claude Code (pinned) and runs one prompt. |
 | [`ai-task`](actions/ai-task/README.md) | Composite action | Validates an AI delivery task, installs its agents and skills, and runs it with `ai-harness`. |
 | [`ai-delivery`](actions/ai-delivery/README.md) | Composite action | Deterministic delivery steps: chain or hand off after a stage, handoff comments, resume, review requests. |
+| [`setup-gh`](actions/setup-gh/README.md) | Composite action | Makes `gh` available on any Linux runner: keeps the installed one, else installs a pinned, checksum-verified release without root. |
 | [`pr-gate`](actions/pr-gate/README.md) | Composite action | Deterministic PR follow-up gates and markers of `pr-fix.yml` and `merge-decision.yml`, for wrappers that load secrets at run time. |
 | [`terraform-cloud-wait`](actions/terraform-cloud-wait/README.md) | Composite action | Waits for the HCP Terraform apply of a commit. |
 | [`terraform-permissions`](actions/terraform-permissions/README.md) | Composite action | Checks a Cloudflare permission manifest and the real token. |
@@ -421,9 +422,16 @@ The fixer GitHub App needs `Contents: Read and write`, `Pull requests: Read and 
    changed by the change it rates, runs the skill in decide mode with the base branch, the required approvals, and
    the approval rule (with 0 required approvals an empty `reviewDecision` passes and only `CHANGES_REQUESTED`, or
    `REVIEW_REQUIRED` from branch protection, fails; otherwise it counts human approvals on the head commit from the
-   reviews, never `reviewDecision` alone), and records a
-   `<!-- merge-decision head=<sha> -->` comment, so each head commit is decided once. Push a commit (or delete that
-   comment) to decide again.
+   reviews, never `reviewDecision` alone). It reads the skill's last line, `merge-risk-result: merged | held |
+   not-evaluated` (older skills: the `PR #<n>: MERGE | HOLD` line). A real decision (`merged`, or `held` for a gate or
+   the rating) records a `<!-- merge-decision head=<sha> -->` comment, so each head commit is decided once. When the
+   skill could not evaluate the pull request (for example `gh` failed or the API errored) or the harness failed
+   without a result, it records nothing and posts a `merge-decision` [handoff](#how-stages-chain) that mentions the
+   requester with the run link. Push a commit, or reply `/ai-resume merge-decision` (it leaves a `<!-- merge-decision
+   redecide -->` comment that allows one new decision on the current head), to decide again. `instructions` (for example
+   from `/ai-resume merge-decision <text>`) can only make the decision stricter: the prompt says they never raise the
+   max risk, add base branches, lower approvals, remove hold labels, or turn auto-merge on. Agents get `gh` from
+   [`setup-gh`](actions/setup-gh/README.md) when the runner lacks it.
 
 ```mermaid
 flowchart TD
@@ -501,7 +509,7 @@ The review request uses the same App with `pull-requests: write`.
 | `instructions` | `""` | Per-run instructions appended to the prompt under `Additional instructions for this run:`. |
 | `prompt-append` | `""` | Deprecated, use `instructions`. Appended to the prompt. |
 | `skill-source` | `ai-skills` | `ai-skills` (pinned `ai-skills-ref`), `base` (the base commit), or `none`. |
-| `ai-skills-ref` | `v0.4.0` | `fbrissi/ai-skills` tag or SHA used with `ai-skills`. |
+| `ai-skills-ref` | `v0.9.0` | `fbrissi/ai-skills` tag or SHA used with `ai-skills`. |
 | `base-skills-path` | `.rulesync/skills` | Skills directory read from the base commit with `base`. |
 | `environment` | `merge-decision` | Environment of the decision job; its secrets are visible to the job. |
 | `agent-client-id` | `AGENT_APP_CLIENT_ID` | Client ID of the merge GitHub App. |
@@ -542,7 +550,7 @@ for the current one, and only the newest waiting run is kept.
 Do these once per repository, in this order:
 
 1. **Releases.** Tag `fbrissi/ai-skills` first (the agents and skills, pinned by `ai-skills-ref`, default
-   `v0.8.1`), then release this repository: the reusable workflows call `actions/ai-task@v1` and
+   `v0.9.0`), then release this repository: the reusable workflows call `actions/ai-task@v1` and
    `actions/ai-delivery@v1`, so a workflow only works once a `v1` release contains those actions. Callers then use
    `@v1` (or a pinned `@v1.8.0`).
 2. **GitHub App** for the agent, installed on the repository, with these repository permissions:
@@ -701,7 +709,7 @@ more instructions on the next lines
 ```
 
 The stage is optional. It is a stage name (`business-refinement`, `technical-refinement`, `readiness-review`,
-`orchestrate`, `implement`, `pr-fix`, `issue-intake`, `issue-resolve`, `dependency-update`) or a skill or agent name a blocker comment
+`orchestrate`, `implement`, `pr-fix`, `merge-decision`, `issue-intake`, `issue-resolve`, `dependency-update`) or a skill or agent name a blocker comment
 used as its stage (`delivery-orchestration` -> `orchestrate`; `dev`, `quality-cycle`, `task-implementer` ->
 `implement`; `issue-resolver` -> `issue-resolve`; `dependency-updater` and `dependency-updates` -> `dependency-update`; and the other task agents); an unknown stage-like word gets a reply
 with the valid stages. Anything after it on the first line, plus the following lines, becomes the `instructions` of
@@ -716,8 +724,9 @@ maintain, or admin permission. It then:
    replies with the list of stages and dispatches nothing,
 3. marks the handoff `state=resumed` (`Resumed by @<login>`) before dispatching, so a second command finds nothing
    open; runs are serialized per issue or pull request,
-4. removes the escalation label (`ai:needs-human`) of the pull request when the stage is `pr-fix`, and resets the
-   milestone's automatic dispatch counters,
+4. removes the escalation label (`ai:needs-human`) of the pull request when the stage is `pr-fix`, posts a
+   `<!-- merge-decision redecide -->` comment when it is `merge-decision` (one new decision on the current head even
+   when it was decided before), and resets the milestone's automatic dispatch counters,
 5. dispatches the stage caller (the workflow named in the marker, else `stage-workflows`) on the default branch with
    `milestone`, `issue`, `jira_key`, `branch`, `base_branch`, or `pr_number`, `requested_by`, and `instructions`,
 6. links the run in the handoff (`Resumed by @<login> -> <run link>`), reacts with `rocket`, and replies with the
@@ -1333,7 +1342,7 @@ jobs:
 Task parameters are the [`ai-task` action inputs](actions/ai-task/README.md#inputs) under the same names: `task`,
 `source`, `source-tracker`, `source-language`, `milestone`, `issue`, `branch`, `base-branch`, `milestone-template`,
 `output-language`, `status-labels`, `project`, `project-status-field`, `project-status-options`, `research-sources`, `instructions`, `context` (deprecated alias), `profile`,
-`implement-workflow`, `max-parallel`, `skills`, `agents`, and `ai-skills-ref` (default `v0.8.1`). The workflow adds:
+`implement-workflow`, `max-parallel`, `skills`, `agents`, and `ai-skills-ref` (default `v0.9.0`). The workflow adds:
 
 | Input | Default | Description |
 |---|---|---|

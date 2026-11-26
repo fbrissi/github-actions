@@ -1,6 +1,6 @@
 // Pure helpers of the AI delivery flow: stages, markers, handoff comments, and the chaining decision.
 
-export const STAGES = ['business-refinement', 'technical-refinement', 'readiness-review', 'orchestrate', 'implement', 'pr-fix', 'issue-intake', 'issue-resolve', 'dependency-update'];
+export const STAGES = ['business-refinement', 'technical-refinement', 'readiness-review', 'orchestrate', 'implement', 'pr-fix', 'merge-decision', 'issue-intake', 'issue-resolve', 'dependency-update'];
 
 export const DEFAULT_STAGE_WORKFLOWS = {
   'business-refinement': 'ai-business-refinement.yml',
@@ -9,6 +9,7 @@ export const DEFAULT_STAGE_WORKFLOWS = {
   orchestrate: 'ai-orchestrate.yml',
   implement: 'ai-implement.yml',
   'pr-fix': 'pr-fix.yml',
+  'merge-decision': 'merge-decision.yml',
   'issue-intake': 'ai-issue-intake.yml',
   'issue-resolve': 'ai-issue-resolve.yml',
   'dependency-update': 'ai-dependency-update.yml'
@@ -22,6 +23,7 @@ export const NEXT_STEP = {
   orchestrate: 'implement',
   implement: 'pull request review and merge decision',
   'pr-fix': 'merge decision',
+  'merge-decision': 'merge or hold on the current head',
   'issue-intake': 'issue-resolve for each issue it labels',
   'issue-resolve': 'pull request review and merge decision',
   'dependency-update': 'pull request review and merge decision'
@@ -36,6 +38,7 @@ export const STAGE_INPUTS = {
   orchestrate: ['milestone', 'requested_by', 'instructions'],
   implement: ['issue', 'branch', 'base_branch', 'requested_by', 'instructions'],
   'pr-fix': ['pr_number', 'instructions'],
+  'merge-decision': ['pr_number', 'instructions'],
   'issue-intake': ['requested_by', 'instructions'],
   'issue-resolve': ['issue', 'requested_by', 'instructions'],
   'dependency-update': ['requested_by', 'instructions']

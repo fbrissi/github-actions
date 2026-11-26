@@ -339,6 +339,27 @@ describe('resume', () => {
     assert.match(parseResumeEvent(eventFor('/ai-resume', { comment: { id: 1, user: { login: 'agent[bot]', type: 'Bot' }, body: '/ai-resume' } })).skip, /not a person/);
   });
 
+  it('leaves a redecide marker before dispatching a named merge decision', async () => {
+    const api = fakeApi(routes([]));
+    await resume(ctx(), api, silent, eventFor('/ai-resume merge-decision'));
+    const dispatch = api.calls.find((call) => call.path.endsWith('/dispatches'));
+    assert.equal(dispatch.path, '/repos/octo/app/actions/workflows/merge-decision.yml/dispatches');
+    assert.deepEqual(dispatch.body.inputs, { pr_number: '7' });
+    const comments = posts(api, /issues\/7\/comments$/);
+    assert.match(comments[0].body.body, /^<!-- merge-decision redecide -->\n@bob asked for a new merge decision/);
+    assert.ok(api.calls.indexOf(comments[0]) < api.calls.indexOf(dispatch));
+    assert.match(comments[1].body.body, /resumed \*\*merge-decision\*\*/);
+  });
+
+  it('resumes a merge-decision handoff on its pull request', async () => {
+    const body = buildHandoff({ stage: 'merge-decision', pr: 7, requestedBy: 'alice', workflow: 'merge-decision.yml' });
+    const api = fakeApi(routes([{ ...handoff, body }]));
+    await resume(ctx(), api, silent, eventFor('/ai-resume'));
+    assert.ok(api.calls.some((call) => call.path === '/repos/octo/app/actions/workflows/merge-decision.yml/dispatches'));
+    assert.ok(posts(api, /issues\/7\/comments$/).some((call) => call.body.body.startsWith('<!-- merge-decision redecide -->')));
+    assert.match(body, /gh workflow run merge-decision\.yml -f pr_number=7/);
+  });
+
   it('marks the open handoff resumed, removes the label, dispatches with the instructions, and replies', async () => {
     const api = fakeApi(routes());
     await resume(ctx(), api, silent, eventFor('/ai-resume\nOnly fix the lint errors.'));

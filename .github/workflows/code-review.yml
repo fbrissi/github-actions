@@ -427,6 +427,12 @@ jobs:
           path: ${{ inputs.dependency-cache-path }}
           key: ${{ steps.dependency-cache.outputs.cache-primary-key }}
 
+      # The published-review check below uses `gh api --slurp`.
+      - name: Setup GitHub CLI
+        uses: fbrissi/github-actions/actions/setup-gh@v1
+        with:
+          min-version: 2.48.0
+
       - name: Record review start
         id: review-start
         run: echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"

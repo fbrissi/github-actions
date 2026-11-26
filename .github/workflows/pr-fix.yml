@@ -314,6 +314,9 @@ jobs:
           permission-issues: read
           permission-pull-requests: write
 
+      - name: Setup GitHub CLI
+        uses: fbrissi/github-actions/actions/setup-gh@v1
+
       - name: Escalate to a human
         if: ${{ needs.gate.outputs.action == 'escalate' }}
         env:

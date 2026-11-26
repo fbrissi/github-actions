@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { envName, feedbackDispatch, fixFinish, fixGate, fixRecord, isCleanGrade, mergeDispatch, mergeGate, mergeRecord, readContext } from './main.mjs';
+import { envName, feedbackDispatch, fixFinish, fixGate, fixRecord, isCleanGrade, mergeDispatch, mergeGate, mergeOutcome, mergeRecord, parseMergeOutcome, readContext } from './main.mjs';
 
 const REPO = 'octo/app';
 const HEAD = 'a'.repeat(40);
@@ -267,6 +270,39 @@ describe('feedback-dispatch', () => {
   });
 });
 
+describe('merge-outcome', () => {
+  it('reads the last merge-risk-result line', () => {
+    assert.equal(parseMergeOutcome('PR #7: HOLD (risk 3/5)\nmerge-risk-result: held\n'), 'held');
+    assert.equal(parseMergeOutcome('merge-risk-result: held\n**merge-risk-result: merged**'), 'merged');
+    assert.equal(parseMergeOutcome('PR #7: NOT EVALUATED (not rated)\nmerge-risk-result: not-evaluated'), 'not-evaluated');
+  });
+
+  it('falls back to the verdict line of older skills', () => {
+    assert.equal(parseMergeOutcome('**PR #7: MERGE (risk 1/5, max 2, auto-merge on)**'), 'merged');
+    assert.equal(parseMergeOutcome('PR #7: HOLD (risk 4/5)'), 'held');
+    assert.equal(parseMergeOutcome('I could not load the PR.'), 'not-evaluated');
+  });
+
+  it('treats a failed harness without a result as not evaluated', () => {
+    assert.equal(parseMergeOutcome('PR #7: HOLD (no decision made)', 'failure'), 'not-evaluated');
+    assert.equal(parseMergeOutcome('merge-risk-result: merged', 'failure'), 'merged');
+  });
+
+  it('reads the harness output file and reports missing output as not evaluated', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'merge-outcome-'));
+    try {
+      const file = join(dir, 'out');
+      writeFileSync(file, 'merge-risk-result: held\n');
+      assert.equal((await mergeOutcome(ctxFor({ 'output-file': file, outcome: 'success' }))).outputs.result, 'held');
+      const missing = await mergeOutcome(ctxFor({ 'output-file': join(dir, 'none'), outcome: 'failure' }));
+      assert.equal(missing.outputs.result, 'not-evaluated');
+      assert.match(missing.notice, /could not be evaluated/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 function mergeRepo({ pr = pull(), runs = [], checks = [], status = { total_count: 0, state: 'pending' }, reviews = [], comments = [], threads = [] } = {}) {
   return fakeApi([
     ['GET', /^\/repos\/octo\/app\/pulls\/7$/, pr],
@@ -350,6 +386,17 @@ describe('merge-gate', () => {
     assert.match((await mergeGate(ctx, mergeRepo({ threads: [{ isResolved: false }] }), noSleep)).summary[0], /1 unresolved/);
     const comments = [bot(`<!-- merge-decision head=${HEAD} -->`)];
     assert.match((await mergeGate(ctx, mergeRepo({ comments }), noSleep)).summary[0], /already made/);
+  });
+
+  it('decides again once after a redecide marker newer than the decision', async () => {
+    const ctx = ctxFor({ ...base, 'human-approval-exempt-base-prefixes': 'feat/' });
+    const decision = bot(`<!-- merge-decision head=${HEAD} -->`, '2026-01-02T00:00:00Z');
+    const redecide = bot('<!-- merge-decision redecide -->\n@alice resumed', '2026-01-03T00:00:00Z');
+    assert.equal((await mergeGate(ctx, mergeRepo({ comments: [decision, redecide] }), noSleep)).outputs.action, 'decide');
+    const again = bot(`<!-- merge-decision head=${HEAD} -->`, '2026-01-04T00:00:00Z');
+    assert.match((await mergeGate(ctx, mergeRepo({ comments: [decision, redecide, again] }), noSleep)).summary[0], /already made/);
+    const byPerson = { ...redecide, user: { login: 'mallory', type: 'User' } };
+    assert.match((await mergeGate(ctx, mergeRepo({ comments: [decision, byPerson] }), noSleep)).summary[0], /already made/);
   });
 
   it('retries while GitHub computes mergeability', async () => {

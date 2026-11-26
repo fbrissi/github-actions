@@ -225,6 +225,12 @@ runs:
         OPENCODE_AGENTS_LOCAL_DIR: ${{ inputs.opencode-agents-local-dir }}
       run: bash "$GITHUB_ACTION_PATH/install-assets.sh"
 
+    # Agents and skills use gh; self-hosted runner images may not have it. Same repository ref as this action.
+    - name: Setup GitHub CLI
+      if: ${{ inputs.github-token != '' }}
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/../setup-gh/setup-gh.sh"
+
     - name: Run harness
       shell: bash
       env:

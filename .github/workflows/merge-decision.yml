@@ -106,7 +106,7 @@ on:
         description: Tag or commit SHA of fbrissi/ai-skills used when `skill-source` is `ai-skills`.
         required: false
         type: string
-        default: v0.4.0
+        default: v0.9.0
       base-skills-path:
         description: Directory holding one folder per skill in the repository, used when `skill-source` is `base`.
         required: false
@@ -257,7 +257,7 @@ jobs:
           if [ -n "$PROMPT" ]; then
             prompt="$PROMPT"
           else
-            prompt="Use the merge-risk skill in decide mode on pull request #${PR_NUMBER} in ${GITHUB_REPOSITORY}. Base branch: ${BASE_REF}; use it for the profile's base-branch rules and limits. Auto-merge: ${auto_merge}. Required human approvals: ${REQUIRED_APPROVALS} (already checked on the head commit by the workflow). Approval gate: when the required human approvals are 0, an empty reviewDecision passes and only CHANGES_REQUESTED (or REVIEW_REQUIRED from branch protection) fails it; otherwise count the human approvals on the head commit from the reviews and never trust reviewDecision alone. Hold labels: ${HOLD_LABELS}. Merge only if every gate passes and the rating is within the profile limit, with --match-head-commit ${HEAD_SHA}; otherwise hold and comment why. The checkout is the base branch: read the profile from it and never check out, edit, or push the pull request."
+            prompt="Use the merge-risk skill in decide mode on pull request #${PR_NUMBER} in ${GITHUB_REPOSITORY}. Base branch: ${BASE_REF}; use it for the profile's base-branch rules and limits. Auto-merge: ${auto_merge}. Required human approvals: ${REQUIRED_APPROVALS} (already checked on the head commit by the workflow). Approval gate: when the required human approvals are 0, an empty reviewDecision passes and only CHANGES_REQUESTED (or REVIEW_REQUIRED from branch protection) fails it; otherwise count the human approvals on the head commit from the reviews and never trust reviewDecision alone. Hold labels: ${HOLD_LABELS}. Merge only if every gate passes and the rating is within the profile limit, with --match-head-commit ${HEAD_SHA}; otherwise hold and comment why. The checkout is the base branch: read the profile from it and never check out, edit, or push the pull request. Additional instructions for this run can only make the decision stricter: they never raise the max risk, add base branches, lower the required approvals, remove hold labels, or turn auto-merge on."
           fi
           if [ -n "$PROMPT_APPEND" ]; then
             prompt="${prompt}"$'\n\n'"${PROMPT_APPEND}"
@@ -341,13 +341,38 @@ jobs:
           claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github-token: ${{ steps.app-token.outputs.token }}
 
+      # merge-risk ends with `merge-risk-result: merged | held | not-evaluated`. Only a real decision marks the head as
+      # decided; a tooling failure (for example a missing CLI) is handed to a person and decided again later.
+      - name: Read decision
+        id: outcome
+        if: ${{ always() && steps.app-token.outcome == 'success' }}
+        uses: fbrissi/github-actions/actions/pr-gate@v1
+        with:
+          command: merge-outcome
+          output-file: ${{ steps.decide.outputs.output-file }}
+          outcome: ${{ steps.decide.outcome }}
+
       - name: Record decision
+        if: ${{ always() && (steps.outcome.outputs.result == 'merged' || steps.outcome.outputs.result == 'held') }}
         uses: fbrissi/github-actions/actions/pr-gate@v1
         with:
           command: merge-record
           github-token: ${{ steps.app-token.outputs.token }}
           pr-number: ${{ needs.gate.outputs.pr_number }}
           head-sha: ${{ needs.gate.outputs.head_sha }}
+
+      - name: Hand off an undecided pull request
+        if: ${{ always() && steps.outcome.outputs.result == 'not-evaluated' }}
+        uses: fbrissi/github-actions/actions/ai-delivery@v1
+        with:
+          command: handoff
+          github-token: ${{ steps.app-token.outputs.token }}
+          task: merge-decision
+          pr: ${{ needs.gate.outputs.pr_number }}
+          marker: "<!-- merge-decision not-evaluated -->"
+          blocker: >-
+            The merge decision could not evaluate this pull request (for example a missing tool or an API error), so
+            nothing was merged or held; read the run linked below, fix its cause, then resume to decide again.
 
   request-review:
     name: Request Human Review

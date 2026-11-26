@@ -40,6 +40,7 @@ import {
 } from './delivery.mjs';
 import { createClient } from './github.mjs';
 
+export const REDECIDE_MARKER = '<!-- merge-decision redecide -->';
 const TASKS = ['business-refinement', 'technical-refinement', 'readiness-review', 'orchestrate', 'implement', 'issue-intake', 'issue-resolve', 'dependency-update'];
 // Issue and dependency tasks are not part of a milestone's delivery: their follow-up only hands off a failed run.
 const ISSUE_TASKS = ['issue-intake', 'issue-resolve', 'dependency-update'];
@@ -491,6 +492,7 @@ const REQUIRED = {
   orchestrate: [['milestone']],
   implement: [['issue'], ['branch']],
   'pr-fix': [['pr']],
+  'merge-decision': [['pr']],
   'issue-intake': [],
   'issue-resolve': [['issue']],
   'dependency-update': []
@@ -629,6 +631,13 @@ export async function resume(ctx, api, log, event) {
     }
   }
 
+  // Before the dispatch, so the merge gate sees it: decide the current head again even when it was decided before. The
+  // next decision record is newer than this marker, so each resume allows one decision.
+  if (fields.stage === 'merge-decision') {
+    await api.request('POST', `/repos/${repo}/issues/${fields.pr}/comments`, {
+      body: `${REDECIDE_MARKER}\n@${sender} asked for a new merge decision on the current head.\n`
+    });
+  }
   const ref = parsed.defaultBranch || (await api.request('GET', `/repos/${repo}`)).data.default_branch;
   const workflow = fields.workflow || config.workflows[fields.stage];
   const inputs = dispatchInputs(fields.stage, resumeValues(fields, fields['requested-by'] || sender, instructions));

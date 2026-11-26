@@ -42,7 +42,7 @@ describe('settings', () => {
 
   it('rejects unknown stages and non-workflow values', () => {
     assert.deepEqual(parseStageWorkflows('deploy=x.yml\nimplement=../x.yml\nbroken').errors, [
-      "Unknown stage 'deploy' in 'stage-workflows'. Use one of: business-refinement, technical-refinement, readiness-review, orchestrate, implement, pr-fix, issue-intake, issue-resolve, dependency-update.",
+      "Unknown stage 'deploy' in 'stage-workflows'. Use one of: business-refinement, technical-refinement, readiness-review, orchestrate, implement, pr-fix, merge-decision, issue-intake, issue-resolve, dependency-update.",
       "'stage-workflows' value for implement must be a workflow file name, got '../x.yml'.",
       "'stage-workflows' lines must be 'key=value', got 'broken'."
     ]);

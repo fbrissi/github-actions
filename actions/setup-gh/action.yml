@@ -1,0 +1,24 @@
+name: Setup GitHub CLI
+description: >-
+  Makes the GitHub CLI (gh) available on any Linux runner: keeps the installed one, else installs a pinned,
+  checksum-verified release for x64 or arm64 under RUNNER_TEMP, without root.
+author: Filipe Bojikian Rissi
+
+inputs:
+  min-version:
+    description: Lowest gh version to accept from the runner, for example `2.48.0` for `gh api --slurp`. Empty accepts any installed gh.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Setup GitHub CLI
+      shell: bash
+      env:
+        GH_SETUP_MIN_VERSION: ${{ inputs.min-version }}
+      run: bash "$GITHUB_ACTION_PATH/setup-gh.sh"
+
+branding:
+  icon: terminal
+  color: purple

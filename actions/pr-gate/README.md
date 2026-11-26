@@ -13,6 +13,7 @@ from a secret store instead of GitHub secrets (a reusable workflow only accepts 
 | `feedback-dispatch` | `actions: write`, `pull-requests: read` (the job's `GITHUB_TOKEN` is enough) | Routes the `pull_request_review` or `check_run` event to `fix-workflow` or `merge-workflow` with the rules of [PR Feedback Dispatch](../../README.md#pr-feedback-dispatch); [`pr-feedback-dispatch.yml`](../../README.md#pr-feedback-dispatch) runs it. |
 | `merge-dispatch` | `actions: write` (a GitHub App token, or the job's `GITHUB_TOKEN`) | Dispatches `merge-workflow` with `pr_number` on the default branch, so a merge decision skipped while a fix pass ran is decided again; nothing without `merge-workflow`, a notice when the workflow is not on the default branch. |
 | `merge-gate` | `actions`, `checks`, `issues`, `pull-requests`, and `statuses` read | Outputs `action` `decide` or `skip` with the rules of [Merge Decision](../../README.md#merge-decision); `request_review` is `true` when human approvals are missing. |
+| `merge-outcome` | none | Reads the harness output (`output-file`, default the ai-harness file) and the harness `outcome`, and outputs `result`: `merged`, `held`, or `not-evaluated` from the last `merge-risk-result:` line (older skills: the `PR #<n>: MERGE / HOLD` line; a failed harness without a result is `not-evaluated`). |
 | `merge-record` | GitHub App token with `pull-requests: write` | Posts the `<!-- merge-decision head=<sha> -->` comment, so each head commit is decided once. |
 
 Only comments by bots count as markers, so the record commands need an App token, not a personal one.
@@ -43,7 +44,7 @@ jobs:
 
 | Input | Default | Description |
 |---|---|---|
-| `command` | – (required) | `feedback-dispatch`, `fix-gate`, `fix-record`, `fix-finish`, `merge-dispatch`, `merge-gate`, or `merge-record`. |
+| `command` | – (required) | `feedback-dispatch`, `fix-gate`, `fix-record`, `fix-finish`, `merge-dispatch`, `merge-gate`, `merge-outcome`, or `merge-record`. |
 | `github-token` | `github.token` | Token for the GitHub API (see the table above). |
 | `pr-number` | `""` | Pull request number. |
 | `opt-in-label` | `ai:auto-fix` | `fix-gate`: opt-in label. |
@@ -62,7 +63,7 @@ jobs:
 | `fix-workflow`, `ignore-authors`, `ignore-reply-authors`, `merge-check-name` | `""` | `feedback-dispatch`: as the inputs of the same name of `pr-feedback-dispatch.yml`. |
 
 Outputs: `action`, `pr_number`, `round`, `head_ref`, `head_sha`, `base_ref`, `base_sha`, `check_run_id`,
-`required_approvals`, and `request_review`.
+`required_approvals`, `request_review`, and `result`.
 
 The script uses Node.js (installed with actions/setup-node when the runner has none) and no dependencies. Run the
 tests with `node --test actions/pr-gate/*.test.mjs`.

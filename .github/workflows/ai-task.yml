@@ -113,7 +113,7 @@ on:
         type: boolean
         default: true
       stage-workflows:
-        description: Multiline `stage=workflow file` overrides of the stage callers the follow-up dispatches and the handoffs resume (defaults `ai-business-refinement.yml`, `ai-technical-refinement.yml`, `ai-readiness-review.yml`, `ai-orchestrate.yml`, `ai-implement.yml`, `pr-fix.yml`, `ai-issue-intake.yml`, `ai-issue-resolve.yml`, `ai-dependency-update.yml`).
+        description: Multiline `stage=workflow file` overrides of the stage callers the follow-up dispatches and the handoffs resume (defaults `ai-business-refinement.yml`, `ai-technical-refinement.yml`, `ai-readiness-review.yml`, `ai-orchestrate.yml`, `ai-implement.yml`, `pr-fix.yml`, `merge-decision.yml`, `ai-issue-intake.yml`, `ai-issue-resolve.yml`, `ai-dependency-update.yml`).
         required: false
         type: string
         default: ""
@@ -176,7 +176,7 @@ on:
         description: Tag or commit SHA of fbrissi/ai-skills the skills and agents are installed from.
         required: false
         type: string
-        default: v0.8.1
+        default: v0.9.0
       jira-base-url:
         description: Jira base URL. Empty uses the `JIRA_BASE_URL` variable.
         required: false
@@ -337,6 +337,9 @@ jobs:
         with:
           token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 0
+
+      - name: Setup GitHub CLI
+        uses: fbrissi/github-actions/actions/setup-gh@v1
 
       - name: Configure git identity
         env:
