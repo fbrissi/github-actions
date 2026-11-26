@@ -13,6 +13,7 @@ import {
   dispatchInputs,
   hasOpenHandoff,
   humanLogin,
+  isSendBack,
   isGitBranch,
   isWorkflowFile,
   isOpenHandoff,
@@ -28,6 +29,7 @@ import {
   parseStageWorkflows,
   parseStatusLabels,
   resumeValues,
+  SEND_BACKS,
   setHandoffState,
   upsertDispatchCounts,
   upsertRequestedBy,
@@ -41,7 +43,7 @@ const ISSUE_TASKS = ['issue-intake', 'issue-resolve'];
 const NAMES = [
   'command', 'task', 'result', 'milestone', 'result-milestone', 'issue', 'pr', 'branch', 'base-branch', 'source',
   'milestone-template', 'requested-by', 'blocker', 'marker', 'status-labels', 'stage-workflows', 'max-auto-dispatches',
-  'chain', 'escalation-label', 'trusted-bots', 'bot-login', 'jira-base-url', 'required-approvals'
+  'max-send-backs', 'chain', 'escalation-label', 'trusted-bots', 'bot-login', 'jira-base-url', 'required-approvals'
 ];
 
 export const envName = (name) => `AI_DELIVERY_${name.toUpperCase().replaceAll('-', '_')}`;
@@ -76,11 +78,14 @@ function settings(ctx) {
   const rawLimit = ctx['max-auto-dispatches'];
   const limit = rawLimit === '' ? 3 : /^[0-9]+$/.test(rawLimit) ? Number(rawLimit) : NaN;
   if (Number.isNaN(limit)) errors.push(`'max-auto-dispatches' must be a non-negative integer, got '${ctx['max-auto-dispatches']}'.`);
+  const rawSendBacks = ctx['max-send-backs'];
+  const sendBackLimit = rawSendBacks === '' ? 1 : /^[0-9]+$/.test(rawSendBacks) ? Number(rawSendBacks) : NaN;
+  if (Number.isNaN(sendBackLimit)) errors.push(`'max-send-backs' must be a non-negative integer, got '${ctx['max-send-backs']}'.`);
   if (errors.length > 0) throw new Error(errors.join('\n'));
   const workflowFor = (stage) => stageWorkflows.overrides[stage]
     || (stage === ctx.task && isWorkflowFile(ctx.ownWorkflow) ? ctx.ownWorkflow : '')
     || stageWorkflows.workflows[stage];
-  return { workflows: stageWorkflows.workflows, workflowFor, labels: statusLabels.labels, limit };
+  return { workflows: stageWorkflows.workflows, workflowFor, labels: statusLabels.labels, limit, sendBackLimit };
 }
 
 async function findMilestone(api, repo, title) {
@@ -301,7 +306,11 @@ export async function followUp(ctx, api, log) {
     } else {
       const counts = parseDispatchCounts(milestone.description);
       const count = counts[stage] ?? 0;
-      if (count >= config.limit) {
+      const sendBack = isSendBack(ctx.task, stage);
+      const sendBacks = counts[SEND_BACKS] ?? 0;
+      if (sendBack && sendBacks >= config.sendBackLimit) {
+        await handOff({ issue: firstIssue, stage, reason: 'send-back', resumeIssue: scoped, count: sendBacks, limit: config.sendBackLimit });
+      } else if (count >= config.limit) {
         await handOff({ issue: firstIssue, stage, reason: 'loop', resumeIssue: scoped, count });
       } else {
         const workflow = config.workflows[stage];
@@ -314,6 +323,7 @@ export async function followUp(ctx, api, log) {
         try {
           const dispatched = await dispatchWorkflow(api, repo, workflow, ref, inputs, log);
           counts[stage] = count + 1;
+          if (sendBack) counts[SEND_BACKS] = sendBacks + 1;
           await setMilestoneDescription(api, repo, milestone, upsertDispatchCounts(milestone.description, counts));
           summary.push(`Dispatched ${workflow} (${stage}) with ${JSON.stringify(dispatched.inputs)}${dispatched.url ? `: ${dispatched.url}` : ''}.`);
         } catch (error) {

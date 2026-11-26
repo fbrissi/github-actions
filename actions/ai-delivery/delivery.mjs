@@ -142,14 +142,23 @@ export function upsertRequestedBy(description = '', login) {
   return text ? `${text.replace(/\s+$/, '')}\n\n${marker}` : marker;
 }
 
-// <!-- ai-delivery-dispatches stage=N ... --> in the milestone description: the loop guard counters.
+// Refinement stages in flow order: a dispatch to an earlier one than the finished task is a send-back.
+const REFINEMENT_ORDER = ['business-refinement', 'technical-refinement', 'readiness-review'];
+export const SEND_BACKS = 'send-backs';
+export function isSendBack(task, stage) {
+  const from = REFINEMENT_ORDER.indexOf(task);
+  const to = REFINEMENT_ORDER.indexOf(stage);
+  return from >= 0 && to >= 0 && to < from;
+}
+
+// <!-- ai-delivery-dispatches stage=N ... send-backs=N --> in the milestone description: the loop guard counters.
 const DISPATCHES = /\n*<!-- ai-delivery-dispatches([^>]*?) -->/;
 export function parseDispatchCounts(description = '') {
   const match = DISPATCHES.exec(description ?? '');
   if (!match) return {};
   const counts = {};
   for (const [stage, value] of Object.entries(parseFields(match[1]))) {
-    if (STAGES.includes(stage) && /^[0-9]+$/.test(value)) counts[stage] = Number(value);
+    if ((STAGES.includes(stage) || stage === SEND_BACKS) && /^[0-9]+$/.test(value)) counts[stage] = Number(value);
   }
   return counts;
 }
@@ -391,6 +400,7 @@ export function blockerText(reason, { stage, task, issue, labels, runUrl, limit,
   if (reason === 'escalated') return `The implementation of issue #${issue} was escalated to a human (${runUrl}).`;
   if (reason === 'no-pr') return `The implement run of issue #${issue} ended without a pull request (${runUrl}); the issue was moved back to \`${labels.ready}\`.`;
   if (reason === 'loop') return `The flow already dispatched ${stage} automatically ${count} times for this milestone (limit ${limit}); check the issues before resuming.`;
+  if (reason === 'send-back') return `The flow already sent the issues back to an earlier refinement stage ${count} ${count === 1 ? 'time' : 'times'} for this milestone (limit ${limit}), and ${task} wants to send them back to ${stage} again: ${runUrl}. Investigate why the refinement did not fix it before resuming.`;
   if (reason === 'dispatch-failed') return `The flow could not dispatch ${failedStage}: ${error}`;
   return reason;
 }

@@ -628,6 +628,10 @@ stateDiagram-v2
 - **Loop guard.** Each automatic dispatch of a stage increments a counter in the milestone description
   (`<!-- ai-delivery-dispatches stage=N -->`). Past `max-auto-dispatches` (default `3`) the follow-up hands off
   instead; a resume resets the counters.
+- **Send-back limit.** A dispatch to an earlier refinement stage (readiness review back to business or technical
+  refinement, or technical refinement back to business refinement) is a send-back, counted as `send-backs=N` in the
+  same marker. Past `max-send-backs` (default `1`) the follow-up hands off to the requester to investigate why the
+  refinement did not fix it; a resume resets the counter.
 - **Requester.** `requested-by` (default `github.triggering_actor`) is stored in the milestone description as
   `<!-- ai-delivery requested-by=<login> -->` and passed on as `requested_by` to every dispatch. Runs started by the
   App (whose triggering actor is the bot) use the marker instead, and bots are never mentioned. PR Fix and Merge
@@ -648,7 +652,9 @@ flowchart TD
   next -- "none" --> stop["Done"]
   next -- "yes" --> chain{"chain true?"}
   chain -- "no" --> stop
-  chain -- "yes" --> guard{"Stage dispatched more than<br/>max-auto-dispatches times?"}
+  chain -- "yes" --> back{"Send-back to an earlier refinement<br/>past max-send-backs?"}
+  back -- "yes" --> hand
+  back -- "no" --> guard{"Stage dispatched more than<br/>max-auto-dispatches times?"}
   guard -- "yes" --> hand
   guard -- "no" --> disp["Count it in the milestone<br/>dispatch the stage caller<br/>on the default branch"]
 ```
@@ -786,10 +792,13 @@ agent is scoped per task:
 | `implement`, `issue-resolve` | `contents: write`, `issues: write`, `pull-requests: write` |
 | `issue-intake` | `contents: read`, `issues: write`, `pull-requests: read` |
 | any, with `project` | adds `organization-projects: write` |
+| any, with `app-token-permission-issue-fields: write` | adds `issue-fields: write` |
 | follow-up job | `actions: write`, `issues: write`, `pull-requests: read` |
 
-Organization issue field values (for example Priority, Effort, Start date, Target date) are set with the
-`issues: write` permission every task already gets; no other permission is needed.
+Organization issue field values (for example Priority, Effort, Start date, Target date) need the `issue-fields:
+write` token permission. Set `app-token-permission-issue-fields: write` when the profile uses issue fields and the
+agent App has the Issue fields permission; without it the agent cannot set them and readiness review sends the
+issues back.
 
 Set `project` as a workflow input, not only in the profile, so the token gets the projects permission. Projects
 must belong to the organization that owns the repository: App installation tokens cannot reach projects of
@@ -1238,6 +1247,8 @@ Task parameters are the [`ai-task` action inputs](actions/ai-task/README.md#inpu
 | `chain` | `true` | Dispatch the next stage after the run. When false the follow-up only hands off. |
 | `stage-workflows` | `""` | Multiline `stage=file` overrides of the stage callers. Defaults: `business-refinement=ai-business-refinement.yml`, `technical-refinement=ai-technical-refinement.yml`, `readiness-review=ai-readiness-review.yml`, `orchestrate=ai-orchestrate.yml`, `implement=ai-implement.yml`, `pr-fix=pr-fix.yml`, `issue-intake=ai-issue-intake.yml`, `issue-resolve=ai-issue-resolve.yml`. |
 | `max-auto-dispatches` | `3` | Automatic dispatches of one stage per milestone before the follow-up hands off instead. |
+| `max-send-backs` | `1` | Send-backs per milestone to an earlier refinement stage (readiness review or technical refinement back to a refinement) before the follow-up hands off to the requester instead. |
+| `app-token-permission-issue-fields` | `""` | Set to `write` so the agent can set organization issue fields (Priority, Effort, dates). The agent App must have the Issue fields permission. |
 | `setup-command` | `""` | Runs after `install-command` and before the agent, for example to install browsers and start the test environment. |
 | `harness`, `opencode-model`, `opencode-variant`, `claude-model`, `claude-effort` | see [Variables](#variables) | Harness and model, like every AI workflow. |
 | `jira-base-url` | `JIRA_BASE_URL` | Jira base URL; Jira is used only with the `JIRA_EMAIL` and `JIRA_API_TOKEN` secrets. |
