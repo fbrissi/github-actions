@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.13.0
+
+Release order: `fbrissi/ai-skills` `v0.10.0` first (its `dependency-updates` and `issue-resolver` open a release when
+a bugfix has none), then this release.
+
+- **AI Task `ai-skills-ref` default `v0.9.0` -> `v0.10.0`.** The `dependency-update` prompt rule no longer tells the
+  agent to wait when there is no release branch: it opens one as the skill says (a milestone named after the next
+  version, its release branch from the base branch, and a tracking issue the bugfix pull request closes), and waits
+  only when the release branch cannot be created. `issue-resolve` does the same through its agent.
+- **Docs:** the orchestrate-on-merge caller example also re-runs the orchestrator for `bugfix/*` pull requests merged
+  into `release/*` (a release opened for a bugfix has no other work; the milestone comes from the pull request), and
+  the branch model, `issue-resolve`, and `dependency-update` sections describe the new rule. Callers that copied the
+  example should add the `bugfix/` head prefix.
+
 ## v1.12.0
 
 Release order: `fbrissi/ai-skills` `v0.9.0` first (its `merge-risk` prints the `merge-risk-result:` line this release

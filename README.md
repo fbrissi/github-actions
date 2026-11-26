@@ -550,7 +550,7 @@ for the current one, and only the newest waiting run is kept.
 Do these once per repository, in this order:
 
 1. **Releases.** Tag `fbrissi/ai-skills` first (the agents and skills, pinned by `ai-skills-ref`, default
-   `v0.9.0`), then release this repository: the reusable workflows call `actions/ai-task@v1` and
+   `v0.10.0`), then release this repository: the reusable workflows call `actions/ai-task@v1` and
    `actions/ai-delivery@v1`, so a workflow only works once a `v1` release contains those actions. Callers then use
    `@v1` (or a pinned `@v1.8.0`).
 2. **GitHub App** for the agent, installed on the repository, with these repository permissions:
@@ -1014,7 +1014,8 @@ jobs:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
 
-Re-run the orchestrator each time a task PR (`feature/*`) merges into a release branch, so it starts the next issues,
+Re-run the orchestrator each time a task PR (`feature/*`) or a bugfix PR (`bugfix/*`, which may be the only work of a
+release opened for it) merges into a release branch, so it starts the next issues or completes the release,
 and when the release PR (`release/*`) merges into the default branch, so it finishes the milestone. The milestone
 comes from the PR, or from the issues it closes (see [Branch model](#branch-model)):
 
@@ -1033,7 +1034,8 @@ jobs:
   dispatch:
     if: >-
       ${{ github.event.pull_request.merged == true && (
-      (startsWith(github.event.pull_request.head.ref, 'feature/') && startsWith(github.event.pull_request.base.ref, 'release/'))
+      ((startsWith(github.event.pull_request.head.ref, 'feature/') || startsWith(github.event.pull_request.head.ref, 'bugfix/'))
+      && startsWith(github.event.pull_request.base.ref, 'release/'))
       || (startsWith(github.event.pull_request.head.ref, 'release/') && github.event.pull_request.base.ref == 'main')) }}
     runs-on: ubuntu-latest
     permissions:
@@ -1088,7 +1090,7 @@ of fbrissi/ai-skills.
 | `feature/*` | a `release/*` | that `release/*` | New work: one task of a milestone. |
 | `release/*` | `main` | `main` | A release being prepared; in the delivery flow, the milestone (aggregating) branch. |
 | `hotfix/*` | `main` | `main` | Urgent production fix. |
-| `bugfix/*` | `main` | the open `release/*` | Non-urgent production bug. |
+| `bugfix/*` | the open `release/*` | that `release/*` | Non-urgent production bug; with no open release, the flow opens one. |
 | `develop` | `main` | – | Optional backup of `main`, fast-forwarded by [Branch Sync](#branch-sync). |
 
 `main` is the default branch. Prefixes are plain `startsWith` matches and the inputs take any list, so callers that
@@ -1153,7 +1155,7 @@ same App token, checkout, dependency setup, harness, requester, `instructions`, 
 | Task | Mode | Input | What it does |
 |---|---|---|---|
 | `issue-intake` | `intake` | – | Reads the source (for example unresolved Sentry issues filtered by the profile), deduplicates against existing GitHub issues, creates or updates one GitHub issue per source issue with a severity decision and the `ai:resolve` label, and stops. Never changes code. |
-| `issue-resolve` | `resolve` | `issue` | Fixes one issue: branch (`hotfix/*` into the default branch when critical, else `bugfix/*` into the open `release/*`, per the profile), change, quality cycle, pull request, then stops. |
+| `issue-resolve` | `resolve` | `issue` | Fixes one issue: branch (`hotfix/*` into the default branch when critical, else `bugfix/*` into the open `release/*`, per the profile; with none, it opens a release: a milestone named after the next version, its `release/*` branch, and the issue moved into it), change, quality cycle, pull request, then stops. |
 
 ```mermaid
 flowchart LR
@@ -1164,7 +1166,7 @@ flowchart LR
   person["Person adds ai:resolve"] --> resolve
   resolve --> crit{"Critical?"}
   crit -- "yes" --> hf["hotfix/* PR<br/>into the default branch"]
-  crit -- "no" --> bf["bugfix/* PR<br/>into the open release/*"]
+  crit -- "no" --> bf["bugfix/* PR<br/>into the open release/*<br/>(opened when none is open)"]
   hf --> loop["PR Feedback Loop"]
   bf --> loop
   intake -. "failed run" .-> ho["Handoff with a resume"]
@@ -1275,7 +1277,10 @@ guide, adapts the code, holds back what cannot be adopted safely, and runs the c
 critical advisory on the version in use (or that a person labeled with the hotfix label) go to
 `hotfix/dependency-updates-<date>` with a pull request into the base branch; the rest go to
 `bugfix/dependency-updates-<date>` into the delivery profile's `Bugfix release branch`, else the oldest open release
-branch, and wait for a later run (reported, no blocker) when there is none. Each pull request lists the packages, the
+branch. When there is none, it opens one: a milestone named after the next version, its release branch from the base
+branch, and a `Dependency updates <date>` tracking issue the pull request closes; the orchestrator completes that
+release once the pull request merges (see [Callers](#callers): the orchestrate-on-merge caller must accept `bugfix/`
+heads). Only when the release branch cannot be created do the updates wait for a later run (reported, no blocker). Each pull request lists the packages, the
 breaking changes and their handling, the held packages, and `Supersedes #<n>` for the bot pull requests it covers; a
 later run updates the open pull request of its kind. It never closes, merges, approves, comments on, or pushes to the
 bot pull requests; they close themselves once the updates reach the base branch.
@@ -1286,7 +1291,9 @@ flowchart LR
   cron --> run["ai-dependency-update.yml<br/>task dependency-update"]
   run -- "high or critical advisory" --> hf["hotfix/* pull request<br/>into the base branch"]
   run -- "other updates" --> bf["bugfix/* pull request<br/>into the open release branch"]
-  run -. "no release branch" .-> wait["Wait for a later run"]
+  run -. "no release branch" .-> open["Open a release:<br/>milestone, release branch, issue"]
+  open --> bf
+  open -. "branch refused" .-> wait["Wait for a later run"]
   hf --> loop["PR Feedback Loop"]
   bf --> loop
   run -. "failed run" .-> ho["Handoff with a resume"]
@@ -1342,7 +1349,7 @@ jobs:
 Task parameters are the [`ai-task` action inputs](actions/ai-task/README.md#inputs) under the same names: `task`,
 `source`, `source-tracker`, `source-language`, `milestone`, `issue`, `branch`, `base-branch`, `milestone-template`,
 `output-language`, `status-labels`, `project`, `project-status-field`, `project-status-options`, `research-sources`, `instructions`, `context` (deprecated alias), `profile`,
-`implement-workflow`, `max-parallel`, `skills`, `agents`, and `ai-skills-ref` (default `v0.9.0`). The workflow adds:
+`implement-workflow`, `max-parallel`, `skills`, `agents`, and `ai-skills-ref` (default `v0.10.0`). The workflow adds:
 
 | Input | Default | Description |
 |---|---|---|
