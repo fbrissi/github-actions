@@ -1,0 +1,40 @@
+name: AI Dependency Update
+
+# Weekly, after Dependabot's weekly Monday run: the dependency-updater agent of fbrissi/ai-skills brings the open
+# Dependabot PR into one reviewed PR that supersedes it (profile docs/ai/dependency-updates.md). It stops at the PR;
+# this repository has no PR Fix or Merge Decision caller, so a person reviews and merges it.
+on:
+  schedule:
+    - cron: "0 6 * * 2"
+  workflow_dispatch:
+    inputs:
+      requested_by:
+        description: GitHub login to mention when the flow needs a person. Empty uses whoever ran it.
+        required: false
+        type: string
+      instructions:
+        description: Extra instructions for this run only, appended to the agent prompt.
+        required: false
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: ai-dependency-update
+  cancel-in-progress: false
+
+jobs:
+  dependency-update:
+    name: AI Dependency Update
+    # Skipped until the agent App is configured (AGENT_APP_CLIENT_ID variable and AGENT_APP_PRIVATE_KEY secret).
+    if: github.ref == 'refs/heads/main' && vars.AGENT_APP_CLIENT_ID != ''
+    uses: ./.github/workflows/ai-task.yml
+    permissions:
+      contents: read
+    with:
+      task: dependency-update
+      requested-by: ${{ inputs.requested_by }}
+      instructions: ${{ inputs.instructions }}
+      base-branch: main
+      timeout-minutes: 40
+    secrets: inherit

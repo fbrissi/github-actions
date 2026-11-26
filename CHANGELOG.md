@@ -17,6 +17,7 @@ merging a pull request that adds one tags the release and moves the major tag.
   about the `setup-command` test environment like `implement`. Default caller `ai-dependency-update.yml` (dispatch
   input `requested_by`); `/ai-resume dependency-update` (or `dependency-updater`) resumes it, and the follow-up hands
   off a failed run on a tracking issue.
+- **Repository:** `.github/workflows/ai-dependency-update.yml` runs the `dependency-update` task on this repository every Tuesday 06:00 UTC (after Dependabot's weekly run) and on demand, with the profile `docs/ai/dependency-updates.md`; it skips while the `AGENT_APP_CLIENT_ID` variable is empty and stops at the PR. New `AGENTS.md` (with `CLAUDE.md`) with the commands and rules agents need.
 - **AI Task:** `ai-skills-ref` defaults to `v0.8.0`, the ai-skills release with the `dependency-updater` agent.
 
 ## v1.9.0
