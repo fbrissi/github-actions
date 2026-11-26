@@ -417,12 +417,14 @@ jobs:
           openai-api-key: ${{ secrets.OPEN_AI_TOKEN }}
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          jira-base-url: ${{ inputs.jira-base-url || vars.JIRA_BASE_URL }}
-          jira-email: ${{ secrets.JIRA_EMAIL }}
-          jira-api-token: ${{ secrets.JIRA_API_TOKEN }}
-          sentry-auth-token: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          sentry-org: ${{ inputs.sentry-org || vars.SENTRY_ORG }}
-          sentry-base-url: ${{ inputs.sentry-base-url || vars.SENTRY_BASE_URL }}
+          # Jira for the delivery and issue tasks, Sentry for the issue tasks only; dependency-update, which runs new
+          # third-party package code, gets neither.
+          jira-base-url: ${{ inputs.task != 'dependency-update' && (inputs.jira-base-url || vars.JIRA_BASE_URL) || '' }}
+          jira-email: ${{ inputs.task != 'dependency-update' && secrets.JIRA_EMAIL || '' }}
+          jira-api-token: ${{ inputs.task != 'dependency-update' && secrets.JIRA_API_TOKEN || '' }}
+          sentry-auth-token: ${{ startsWith(inputs.task, 'issue-') && secrets.SENTRY_AUTH_TOKEN || '' }}
+          sentry-org: ${{ startsWith(inputs.task, 'issue-') && (inputs.sentry-org || vars.SENTRY_ORG) || '' }}
+          sentry-base-url: ${{ startsWith(inputs.task, 'issue-') && (inputs.sentry-base-url || vars.SENTRY_BASE_URL) || '' }}
 
   follow-up:
     name: AI Task / ${{ inputs.task }} follow-up

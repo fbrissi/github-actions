@@ -267,13 +267,14 @@ runs:
     - name: Run task agent
       id: harness
       uses: fbrissi/github-actions/actions/ai-harness@v1
+      # Only the tasks that use Jira or Sentry see their credentials (resolve-task.mjs, JIRA_TASKS and SENTRY_TASKS).
       env:
-        JIRA_BASE_URL: ${{ inputs.jira-base-url }}
-        JIRA_EMAIL: ${{ inputs.jira-email }}
-        JIRA_API_TOKEN: ${{ inputs.jira-api-token }}
-        SENTRY_AUTH_TOKEN: ${{ inputs.sentry-auth-token }}
-        SENTRY_ORG: ${{ inputs.sentry-org }}
-        SENTRY_BASE_URL: ${{ inputs.sentry-base-url }}
+        JIRA_BASE_URL: ${{ contains(steps.resolve.outputs.credentials, 'jira') && inputs.jira-base-url || '' }}
+        JIRA_EMAIL: ${{ contains(steps.resolve.outputs.credentials, 'jira') && inputs.jira-email || '' }}
+        JIRA_API_TOKEN: ${{ contains(steps.resolve.outputs.credentials, 'jira') && inputs.jira-api-token || '' }}
+        SENTRY_AUTH_TOKEN: ${{ contains(steps.resolve.outputs.credentials, 'sentry') && inputs.sentry-auth-token || '' }}
+        SENTRY_ORG: ${{ contains(steps.resolve.outputs.credentials, 'sentry') && inputs.sentry-org || '' }}
+        SENTRY_BASE_URL: ${{ contains(steps.resolve.outputs.credentials, 'sentry') && inputs.sentry-base-url || '' }}
         AI_TASK_RESULT_FILE: ${{ steps.prepare.outputs.result-file }}
       with:
         harness: ${{ steps.resolve.outputs.harness }}

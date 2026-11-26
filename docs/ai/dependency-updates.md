@@ -14,10 +14,15 @@ Profile of the fbrissi/ai-skills `dependency-updates` skill for this repository,
 - Labels: dependencies
 
 ## Never update
-- `.github/workflows/**`: the agent's App token has no `Workflows` permission, so it cannot push workflow changes; leave those updates in the Dependabot PR for a person.
+- `.github/workflows/**`: the agent's App token has no `Workflows` permission, so it cannot push workflow changes; leave those updates in the Dependabot PR for a person (that PR then stays partly superseded).
 
 ## Hold
 - (none)
+
+## Supply chain
+- Minimum release age: 3d   # also worth a Dependabot `cooldown`
+- Install scripts: off (no package manager installs here)
+- Secrets: `AGENT_APP_PRIVATE_KEY` and the harness keys only
 
 ## Validation
 - Checks: `node --test actions/*/*.test.mjs`, actionlint, and shellcheck, as `CONTRIBUTING.md` (Validation) says.

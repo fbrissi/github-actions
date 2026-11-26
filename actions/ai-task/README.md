@@ -109,9 +109,11 @@ Run settings and credentials:
 | `jira-base-url` | `""` | Jira base URL, exported as `JIRA_BASE_URL`. |
 | `jira-email` | `""` | Exported as `JIRA_EMAIL`; masked. |
 | `jira-api-token` | `""` | Exported as `JIRA_API_TOKEN`; masked. |
-| `sentry-auth-token` | `""` | Exported as `SENTRY_AUTH_TOKEN`; masked. The prompt mentions Sentry only when it is set. |
+| `sentry-auth-token` | `""` | Exported as `SENTRY_AUTH_TOKEN` for the issue tasks only; masked. The prompt mentions Sentry only when it is set. |
 | `sentry-org`, `sentry-base-url` | `""` | Exported as `SENTRY_ORG` and `SENTRY_BASE_URL`. |
 
+The Jira inputs reach the agent only for the delivery and issue tasks, and the Sentry inputs only for `issue-intake` and
+`issue-resolve`; `dependency-update`, which installs and runs new third-party package versions, gets neither.
 Jira is enabled only when the URL, e-mail, and token are all set; an e-mail or token without the others fails, and
 so does `business-refinement` with `source-tracker: jira` without them. The credentials are masked, only exported to
 the harness step, and never written into the prompt.
