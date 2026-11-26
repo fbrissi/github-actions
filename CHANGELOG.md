@@ -8,11 +8,10 @@ merging a pull request that adds one tags the release and moves the major tag.
 
 ## v1.8.1
 
-- **AI Task:** new `max-send-backs` input (default `1`). The follow-up may send a milestone's issues back to an
-  earlier refinement stage (for example readiness review back to technical refinement) only that many times; after
-  that it hands off to the requester to investigate, instead of looping between refinement and readiness review
-  until `max-auto-dispatches`. Counted as `send-backs=N` in the dispatch marker; a resume resets it. Also on the
-  `ai-delivery` action.
+- **AI Task:** new `max-send-backs` input (default `3`). The follow-up may send a milestone's issues back to an
+  earlier refinement stage (for example readiness review back to technical refinement) only that many times in the
+  whole milestone; after that it hands off to the requester to investigate. Counted as `send-backs=N` in the
+  dispatch marker; a resume resets it. Also on the `ai-delivery` action.
 - **AI Task:** new `app-token-permission-issue-fields` input. Set it to `write` so refinement can set organization
   issue fields (Priority, Effort, Start date, Target date); the narrowed token did not include that permission, so
   readiness review kept sending issues back. The README no longer says `issues: write` is enough.

@@ -126,7 +126,7 @@ on:
         description: Times per milestone the follow-up may send issues back to an earlier refinement stage (for example readiness review back to technical refinement) before it hands off to the requester instead. A resume resets the counter.
         required: false
         type: number
-        default: 1
+        default: 3
       app-token-permission-issue-fields:
         description: Issue fields permission of the agent token (`write` lets refinement set organization issue fields such as Priority and dates). The agent App must have it; empty skips it.
         required: false

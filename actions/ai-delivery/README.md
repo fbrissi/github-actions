@@ -76,7 +76,7 @@ A handoff for the stage of the running workflow names that caller's own file (fr
 | `status-labels` | `""` | `state=label` overrides (default `status:<state>`). |
 | `stage-workflows` | `""` | `stage=file` overrides of the stage callers. |
 | `max-auto-dispatches` | `3` | Automatic dispatches of one stage per milestone before `follow-up` hands off instead. |
-| `max-send-backs` | `1` | Send-backs per milestone to an earlier refinement stage (readiness review or technical refinement back to a refinement) before `follow-up` hands off to the requester instead. |
+| `max-send-backs` | `3` | Send-backs per milestone to an earlier refinement stage (readiness review or technical refinement back to a refinement) before `follow-up` hands off to the requester instead. |
 | `chain` | `true` | `follow-up` dispatches the next stage; `false` only hands off. |
 | `escalation-label` | `ai:needs-human` | Escalation label; a `pr-fix` resume removes it. |
 | `bot-login`, `trusted-bots` | `""` | `resume`: bot logins whose handoff comments may be resumed. |

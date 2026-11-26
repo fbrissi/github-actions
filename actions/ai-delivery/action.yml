@@ -78,7 +78,7 @@ inputs:
   max-send-backs:
     description: Times per milestone `follow-up` may send issues back to an earlier refinement stage (for example readiness review back to technical refinement) before it hands off to the requester instead.
     required: false
-    default: "1"
+    default: "3"
   chain:
     description: Let `follow-up` dispatch the next stage. When false it only hands off.
     required: false

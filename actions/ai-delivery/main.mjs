@@ -79,7 +79,7 @@ function settings(ctx) {
   const limit = rawLimit === '' ? 3 : /^[0-9]+$/.test(rawLimit) ? Number(rawLimit) : NaN;
   if (Number.isNaN(limit)) errors.push(`'max-auto-dispatches' must be a non-negative integer, got '${ctx['max-auto-dispatches']}'.`);
   const rawSendBacks = ctx['max-send-backs'];
-  const sendBackLimit = rawSendBacks === '' ? 1 : /^[0-9]+$/.test(rawSendBacks) ? Number(rawSendBacks) : NaN;
+  const sendBackLimit = rawSendBacks === '' ? 3 : /^[0-9]+$/.test(rawSendBacks) ? Number(rawSendBacks) : NaN;
   if (Number.isNaN(sendBackLimit)) errors.push(`'max-send-backs' must be a non-negative integer, got '${ctx['max-send-backs']}'.`);
   if (errors.length > 0) throw new Error(errors.join('\n'));
   const workflowFor = (stage) => stageWorkflows.overrides[stage]

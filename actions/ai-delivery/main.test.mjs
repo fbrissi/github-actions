@@ -99,7 +99,7 @@ describe('followUp', () => {
     assert.match(comment.body.body, /gh workflow run ai-business-refinement\.yml -f milestone=JIRA:DEV-1 -f jira_key=DEV-1 -f requested_by=alice/);
   });
 
-  it('allows one send-back to an earlier refinement and counts it', async () => {
+  it('allows a send-back to an earlier refinement and counts it', async () => {
     const api = milestoneRepo({
       description: '<!-- ai-delivery-dispatches technical-refinement=1 readiness-review=1 -->',
       issues: [{ number: 4, labels: [label('status:needs-technical-refinement')] }]
@@ -110,16 +110,16 @@ describe('followUp', () => {
     assert.match(patches.at(-1).body.description, /<!-- ai-delivery-dispatches technical-refinement=2 readiness-review=1 send-backs=1 -->/);
   });
 
-  it('hands off to the requester on the second send-back', async () => {
+  it('hands off to the requester past max-send-backs', async () => {
     const api = milestoneRepo({
-      description: '<!-- ai-delivery-dispatches technical-refinement=2 readiness-review=2 send-backs=1 -->',
+      description: '<!-- ai-delivery-dispatches technical-refinement=2 readiness-review=3 send-backs=3 -->',
       issues: [{ number: 4, labels: [label('status:needs-technical-refinement')] }]
     });
     await followUp(ctxFor({ task: 'readiness-review', milestone: 'JIRA:DEV-1', 'requested-by': 'alice' }), api, silent);
     assert.equal(posts(api, /dispatches$/).length, 0);
     const [comment] = posts(api, /issues\/4\/comments$/);
     assert.match(comment.body.body, /^@alice the AI delivery flow stopped at \*\*technical-refinement\*\*/);
-    assert.match(comment.body.body, /sent the issues back to an earlier refinement stage 1 time for this milestone \(limit 1\), and readiness-review wants to send them back to technical-refinement again/);
+    assert.match(comment.body.body, /sent the issues back to an earlier refinement stage 3 times for this milestone \(limit 3\), and readiness-review wants to send them back to technical-refinement again/);
   });
 
   it('does not count forward dispatches as send-backs', async () => {

@@ -630,7 +630,7 @@ stateDiagram-v2
   instead; a resume resets the counters.
 - **Send-back limit.** A dispatch to an earlier refinement stage (readiness review back to business or technical
   refinement, or technical refinement back to business refinement) is a send-back, counted as `send-backs=N` in the
-  same marker. Past `max-send-backs` (default `1`) the follow-up hands off to the requester to investigate why the
+  same marker. Past `max-send-backs` (default `3`) the follow-up hands off to the requester to investigate why the
   refinement did not fix it; a resume resets the counter.
 - **Requester.** `requested-by` (default `github.triggering_actor`) is stored in the milestone description as
   `<!-- ai-delivery requested-by=<login> -->` and passed on as `requested_by` to every dispatch. Runs started by the
@@ -1247,7 +1247,7 @@ Task parameters are the [`ai-task` action inputs](actions/ai-task/README.md#inpu
 | `chain` | `true` | Dispatch the next stage after the run. When false the follow-up only hands off. |
 | `stage-workflows` | `""` | Multiline `stage=file` overrides of the stage callers. Defaults: `business-refinement=ai-business-refinement.yml`, `technical-refinement=ai-technical-refinement.yml`, `readiness-review=ai-readiness-review.yml`, `orchestrate=ai-orchestrate.yml`, `implement=ai-implement.yml`, `pr-fix=pr-fix.yml`, `issue-intake=ai-issue-intake.yml`, `issue-resolve=ai-issue-resolve.yml`. |
 | `max-auto-dispatches` | `3` | Automatic dispatches of one stage per milestone before the follow-up hands off instead. |
-| `max-send-backs` | `1` | Send-backs per milestone to an earlier refinement stage (readiness review or technical refinement back to a refinement) before the follow-up hands off to the requester instead. |
+| `max-send-backs` | `3` | Send-backs per milestone to an earlier refinement stage (readiness review or technical refinement back to a refinement) before the follow-up hands off to the requester instead. |
 | `app-token-permission-issue-fields` | `""` | Set to `write` so the agent can set organization issue fields (Priority, Effort, dates). The agent App must have the Issue fields permission. |
 | `setup-command` | `""` | Runs after `install-command` and before the agent, for example to install browsers and start the test environment. |
 | `harness`, `opencode-model`, `opencode-variant`, `claude-model`, `claude-effort` | see [Variables](#variables) | Harness and model, like every AI workflow. |
