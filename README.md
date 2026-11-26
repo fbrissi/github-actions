@@ -155,7 +155,7 @@ already cancels an older review of the same pull request.
 | `prompt` | `""` | Overrides the generated prompt. |
 | `instructions` | `""` | Per-run instructions appended to the prompt under `Additional instructions for this run:`; with `opencode-command` they are part of the command arguments. |
 | `review-skill-source` | `ai-skills` | `ai-skills` (pinned `ai-skills-ref`), `base` (the PR base commit, for the skills repository itself), or `none`. |
-| `ai-skills-ref` | `v0.2.0` | `fbrissi/ai-skills` tag or SHA used with `ai-skills`. |
+| `ai-skills-ref` | `v0.11.0` | `fbrissi/ai-skills` tag or SHA used with `ai-skills`. |
 | `base-skills-path` | `.rulesync/skills` | Skills directory read from the base commit with `base`. |
 | `check-name` | `Code Review` | Check run name. |
 | `environment` | `code-review` | Environment of the review job; its secrets are visible to the job. |
@@ -391,7 +391,7 @@ The fixer GitHub App needs `Contents: Read and write`, `Pull requests: Read and 
 | `instructions` | `""` | Per-run instructions appended to the prompt under `Additional instructions for this run:`. |
 | `prompt-append` | `""` | Deprecated, use `instructions`. Appended to the prompt. |
 | `skill-source` | `ai-skills` | `ai-skills` (pinned `ai-skills-ref`), `base` (the PR base commit), or `none`. |
-| `ai-skills-ref` | `v0.4.0` | `fbrissi/ai-skills` tag or SHA used with `ai-skills`. |
+| `ai-skills-ref` | `v0.11.0` | `fbrissi/ai-skills` tag or SHA used with `ai-skills`. |
 | `base-skills-path` | `.rulesync/skills` | Skills directory read from the base commit with `base`. |
 | `check-name` | `PR Fix` | Check run name. |
 | `merge-workflow` | `""` | Workflow dispatched with `pr_number` after a successful pass, for example `merge-decision.yml`. Needs `Actions: Read and write` on the fixer App. Empty disables it. |

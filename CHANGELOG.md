@@ -27,11 +27,27 @@ Release order: `fbrissi/ai-skills` `v0.11.0` first, then this release.
 - **Release Note `exempt-paths`** (`release-note.yml`, default empty, so nothing changes until set): a pull request
   that only changes matching paths, for example `*.md docs/* .ai/* .github/*` (documentation, agent configuration,
   CI), and adds no release heading passes with an empty `version`.
-- **`ai-skills-ref` default `v0.11.0`** in `ai-task.yml`, the `ai-task` action (from `v0.10.1`), and
-  `merge-decision.yml` (from `v0.9.0`): every stage opens the issue's images itself, the fixer and reviewer resolve
-  their own fixed threads, and the milestone pull request is marked ready only with its required checks green.
-  `pr-fix.yml` (`v0.4.0`) and `code-review.yml` (`v0.2.0`) keep their defaults; pin `ai-skills-ref: v0.11.0` on them to
-  get the thread resolution.
+- **`ai-skills-ref` default `v0.11.0`** everywhere skills are loaded: `ai-task.yml` and the `ai-task` action (from
+  `v0.10.1`), `merge-decision.yml` (from `v0.9.0`), `pr-fix.yml` (from `v0.4.0`), `code-review.yml` (from `v0.2.0`),
+  and the `ai-harness` action's `skills-ref` (from `v0.2.0`). Every stage opens the issue's images itself, and the
+  milestone pull request is marked ready only with its required checks green. Pin the old ref to keep the old behavior.
+  Callers of `pr-fix.yml` (`v0.4.0` -> `v0.11.0`) will notice that the `pr-fix` skill:
+  - resolves a review thread that a bot (or its own review) started once its pushed commit fixes the finding; threads
+    people started stay open for them;
+  - downloads and opens images the feedback points at (ticket attachments, inline images, private GitHub
+    `user-attachments` with the job's token) and says so when one cannot be downloaded;
+  - runs in `auto` mode when the run is non-interactive (`CI` or `GITHUB_ACTIONS` set), and posts a blocker comment
+    on the pull request where it used to ask (for example uncommitted changes).
+
+  Callers of `code-review.yml` (`v0.2.0` -> `v0.11.0`) will notice that the `review-changes` skill:
+  - resolves its own earlier threads whose finding the current head fixes (people's threads stay open);
+  - reviews large pull requests across several passes: a partial pass publishes a `COMMENT` review with `Covered:` and
+    `Not covered:` lines and never approves, even at 5 stars; the review body gains a `Coverage:` line, and approval
+    comes once the passes together cover every changed file;
+  - adds a security and privacy pass when a change touches authentication, sessions, tokens, permissions, tenancy,
+    personal data, secrets, storage, or retention, so such changes can get new findings;
+  - downloads and opens the ticket's attachments and inline images instead of skipping them, and compares the change
+    against them.
 
 ## v1.13.1
 

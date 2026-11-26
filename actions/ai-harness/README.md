@@ -47,7 +47,7 @@ narrowest tokens that work.
 | `claude-effort` | `""` | Claude Code effort level. |
 | `skills` | `""` | Whitespace-separated skill names to install. Empty installs none. |
 | `skills-repository` | `fbrissi/ai-skills` | Repository the skills are downloaded from. |
-| `skills-ref` | `v0.2.0` | Tag or commit SHA of `skills-repository`. Pin it; never use a branch. |
+| `skills-ref` | `v0.11.0` | Tag or commit SHA of `skills-repository`. Pin it; never use a branch. |
 | `skills-path` | `.rulesync/skills` | Directory in `skills-repository` with one folder per skill. |
 | `skills-local-dir` | `""` | Local directory with one folder per skill; replaces the download when set. |
 | `agents` | `""` | Whitespace-separated agent names to install at `skills-ref`: from `agents-path` for Claude Code, from `opencode-agents-path` for OpenCode. |
