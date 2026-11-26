@@ -517,6 +517,7 @@ next stage or hands off to a human (see [How stages chain](#how-stages-chain)).
 | `orchestrate` | `delivery-orchestrator` | `milestone` | Creates the milestone and task branches and dispatches `implement` for each ready issue whose dependencies are done; opens the milestone PR when every issue is done. Never codes. |
 | `implement` | `task-implementer` | `issue`, `branch`, `base-branch` | Implements the issue, runs the review and QA cycle, and opens a PR into the milestone (release) branch. |
 | `issue-intake`, `issue-resolve` | `issue-resolver` | –, `issue` | See [Issue intake and resolve](#issue-intake-and-resolve). |
+| `dependency-update` | `dependency-updater` | – | See [Dependency updates](#dependency-updates). |
 
 Runs never wait for input: blocked tasks leave their questions on the ticket or issue and stop. Inputs left empty
 are not sent, so the repository profile (`docs/ai/delivery.md`) and then the skill defaults apply.
@@ -529,7 +530,7 @@ for the current one, and only the newest waiting run is kept.
 Do these once per repository, in this order:
 
 1. **Releases.** Tag `fbrissi/ai-skills` first (the agents and skills, pinned by `ai-skills-ref`, default
-   `v0.6.0`), then release this repository: the reusable workflows call `actions/ai-task@v1` and
+   `v0.8.0`), then release this repository: the reusable workflows call `actions/ai-task@v1` and
    `actions/ai-delivery@v1`, so a workflow only works once a `v1` release contains those actions. Callers then use
    `@v1` (or a pinned `@v1.8.0`).
 2. **GitHub App** for the agent, installed on the repository, with these repository permissions:
@@ -688,9 +689,9 @@ more instructions on the next lines
 ```
 
 The stage is optional. It is a stage name (`business-refinement`, `technical-refinement`, `readiness-review`,
-`orchestrate`, `implement`, `pr-fix`, `issue-intake`, `issue-resolve`) or a skill or agent name a blocker comment
+`orchestrate`, `implement`, `pr-fix`, `issue-intake`, `issue-resolve`, `dependency-update`) or a skill or agent name a blocker comment
 used as its stage (`delivery-orchestration` -> `orchestrate`; `dev`, `quality-cycle`, `task-implementer` ->
-`implement`; `issue-resolver` -> `issue-resolve`; and the other task agents); an unknown stage-like word gets a reply
+`implement`; `issue-resolver` -> `issue-resolve`; `dependency-updater` and `dependency-updates` -> `dependency-update`; and the other task agents); an unknown stage-like word gets a reply
 with the valid stages. Anything after it on the first line, plus the following lines, becomes the `instructions` of
 the resumed run (appended to its prompt for that run only). `.github/workflows/ai-resume.yml` runs on the
 `issue_comment` `created` event. Its job only starts for comments that begin with `/ai-resume`, are not written by
@@ -782,8 +783,8 @@ agent:
         docker compose up -d --wait
 ```
 
-The workflow passes the `setup-command` to the agent as `test-environment`, so the `implement` and `issue-resolve`
-prompts say the environment is already running and QA uses it instead of starting it. Without a `setup-command` and
+The workflow passes the `setup-command` to the agent as `test-environment`, so the `implement`, `issue-resolve`, and
+`dependency-update` prompts say the environment is already running and QA uses it instead of starting it. Without a `setup-command` and
 without a reachable environment, QA runs in tests-only mode: it relies on the automated tests that already run as PR
 checks, reports `browser QA skipped: no CI environment`, and never escalates for that reason. Either way the agent runs
 the reviewer and QA for every change, documentation included.
@@ -797,7 +798,7 @@ agent is scoped per task:
 |---|---|
 | `business-refinement`, `technical-refinement`, `readiness-review` | `contents: read`, `issues: write`, `pull-requests: read` |
 | `orchestrate` | `contents: write`, `issues: write`, `pull-requests: write`, `actions: write` |
-| `implement`, `issue-resolve` | `contents: write`, `issues: write`, `pull-requests: write` |
+| `implement`, `issue-resolve`, `dependency-update` | `contents: write`, `issues: write`, `pull-requests: write` |
 | `issue-intake` | `contents: read`, `issues: write`, `pull-requests: read` |
 | any, with `project` | adds `organization-projects: write` |
 | any, with `app-token-permission-issue-fields: write` | adds `issue-fields: write` |
@@ -829,6 +830,7 @@ job only needs `contents: read`; everything the agent does goes through the App 
 | `pr-fix` | `pr-fix.yml` | `pr_number` |
 | `issue-intake` | `ai-issue-intake.yml` | `requested_by` |
 | `issue-resolve` | `ai-issue-resolve.yml` | `issue`, `requested_by` |
+| `dependency-update` | `ai-dependency-update.yml` | `requested_by` |
 
 Declare an optional `instructions` input too and pass it to the reusable workflow (`instructions:
 ${{ inputs.instructions }}`): an `/ai-resume` command sends it, and a person can set it when running the caller by
@@ -1242,18 +1244,83 @@ jobs:
 
 Keep `timeout-minutes` at `50` or less (the default): the App token expires after one hour.
 
+### Dependency updates
+
+The `dependency-update` task runs the `dependency-updater` agent of fbrissi/ai-skills with the `dependency-updates`
+skill: it takes the open Dependabot (or Renovate) pull requests into the base branch, and outdated packages when the
+profile (`docs/ai/dependency-updates.md`) asks, reads each package's release notes and upgrade guide, adapts the code,
+holds back what cannot be adopted safely, runs the checks and the review and QA cycle (with the `setup-command`
+environment when given), and opens one pull request (default branch `chore/dependency-updates-{date}`) that lists
+the packages, the breaking changes and their handling, the held packages, and `Supersedes #<n>` for each bot pull
+request. A later run updates that pull request while it is open instead of opening another. It never closes, merges,
+or pushes to the bot pull requests; they close themselves once the updates reach the base branch.
+
+```mermaid
+flowchart LR
+  bots["Dependabot / Renovate<br/>pull requests"] --> cron["Weekly schedule after the bots<br/>or manual run"]
+  cron --> run["ai-dependency-update.yml<br/>task dependency-update"]
+  run --> pr["One pull request<br/>Supersedes #n"]
+  pr --> loop["PR Feedback Loop"]
+  run -. "failed run" .-> ho["Handoff with a resume"]
+```
+
+Like the other tasks it stops at the pull request: the [PR Feedback Loop](#pr-feedback-loop) takes over, so add the
+branch prefix (for example `chore/dependency-updates-`) to the `branch-prefixes` of the PR Fix and Merge Decision
+callers. A failed run hands off on a tracking issue with a `dependency-update` resume. Schedule it after the bots, and
+give it the same dependency setup as `implement` so checks and QA can run:
+
+```yaml
+# .github/workflows/ai-dependency-update.yml
+name: AI Dependency Update
+
+on:
+  schedule:
+    - cron: "0 12 * * 1"
+  workflow_dispatch:
+    inputs:
+      requested_by:
+        description: Person to mention when the flow needs a human
+        required: false
+        type: string
+      instructions:
+        description: Extra instructions for this run only
+        required: false
+        type: string
+
+permissions: {}
+
+jobs:
+  dependency-update:
+    uses: fbrissi/github-actions/.github/workflows/ai-task.yml@v1
+    permissions:
+      contents: read
+    with:
+      task: dependency-update
+      requested-by: ${{ inputs.requested_by }}
+      instructions: ${{ inputs.instructions }}
+      node-version: "24"
+      install-command: npm ci
+      setup-command: |
+        npx playwright install --with-deps chromium
+        docker compose up -d --wait
+    secrets:
+      AGENT_APP_PRIVATE_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+```
+
 ### Inputs
 
 Task parameters are the [`ai-task` action inputs](actions/ai-task/README.md#inputs) under the same names: `task`,
 `source`, `source-tracker`, `source-language`, `milestone`, `issue`, `branch`, `base-branch`, `milestone-template`,
 `output-language`, `status-labels`, `project`, `project-status-field`, `project-status-options`, `research-sources`, `instructions`, `context` (deprecated alias), `profile`,
-`implement-workflow`, `max-parallel`, `skills`, `agents`, and `ai-skills-ref` (default `v0.6.0`). The workflow adds:
+`implement-workflow`, `max-parallel`, `skills`, `agents`, and `ai-skills-ref` (default `v0.8.0`). The workflow adds:
 
 | Input | Default | Description |
 |---|---|---|
 | `requested-by` | `github.triggering_actor` | Person mentioned when the flow needs a human, stored in the milestone and passed on to every chained stage. Bots fall back to the milestone marker. |
 | `chain` | `true` | Dispatch the next stage after the run. When false the follow-up only hands off. |
-| `stage-workflows` | `""` | Multiline `stage=file` overrides of the stage callers. Defaults: `business-refinement=ai-business-refinement.yml`, `technical-refinement=ai-technical-refinement.yml`, `readiness-review=ai-readiness-review.yml`, `orchestrate=ai-orchestrate.yml`, `implement=ai-implement.yml`, `pr-fix=pr-fix.yml`, `issue-intake=ai-issue-intake.yml`, `issue-resolve=ai-issue-resolve.yml`. |
+| `stage-workflows` | `""` | Multiline `stage=file` overrides of the stage callers. Defaults: `business-refinement=ai-business-refinement.yml`, `technical-refinement=ai-technical-refinement.yml`, `readiness-review=ai-readiness-review.yml`, `orchestrate=ai-orchestrate.yml`, `implement=ai-implement.yml`, `pr-fix=pr-fix.yml`, `issue-intake=ai-issue-intake.yml`, `issue-resolve=ai-issue-resolve.yml`, `dependency-update=ai-dependency-update.yml`. |
 | `max-auto-dispatches` | `3` | Automatic dispatches of one stage per milestone before the follow-up hands off instead. |
 | `max-send-backs` | `3` | Send-backs per milestone to an earlier refinement stage (readiness review or technical refinement back to a refinement) before the follow-up hands off to the requester instead. |
 | `app-token-permission-issue-fields` | `""` | Set to `write` so the agent can set organization issue fields (Priority, Effort, dates). The agent App must have the Issue fields permission. |

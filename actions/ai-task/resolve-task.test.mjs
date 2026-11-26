@@ -141,7 +141,8 @@ describe('resolveAssets', () => {
       orchestrate: 'delivery-orchestrator',
       implement: 'task-implementer',
       'issue-intake': 'issue-resolver',
-      'issue-resolve': 'issue-resolver'
+      'issue-resolve': 'issue-resolver',
+      'dependency-update': 'dependency-updater'
     });
   });
 
@@ -212,6 +213,27 @@ describe('issue tasks', () => {
   });
 });
 
+describe('dependency-update task', () => {
+  it('needs no issue or milestone and runs the dependency-updater with the quality-cycle workers', () => {
+    assert.deepEqual(validate(inputsFor({ task: 'dependency-update' }), CREDENTIALS), []);
+    const assets = resolveAssets(inputsFor({ task: 'dependency-update' }));
+    assert.deepEqual(assets.agents, ['dependency-updater', 'developer', 'code-reviewer', 'qa-tester']);
+    assert.deepEqual(assets.skills.slice(0, 4), ['dependency-updates', 'dev', 'quality-cycle', 'pr-create']);
+  });
+
+  it('follows the dependency-updates skill with its own profile and stops at the pull request', () => {
+    const prompt = buildPrompt(inputsFor({ task: 'dependency-update', 'base-branch': 'main' }), { resultFile: true });
+    assert.match(prompt, /^You are the dependency-updater agent running the `dependency-update` task/);
+    assert.match(prompt, /Follow the `dependency-updates` skill \(available skills: dependency-updates, /);
+    assert.match(prompt, /repository profile \(`docs\/ai\/dependency-updates\.md`\)/);
+    assert.match(prompt, /- base-branch: main\n/);
+    assert.match(prompt, /Dependency update only: .* supersedes the open dependency-bot pull requests.* Never close, merge, approve, or push to the bot pull requests/);
+    assert.match(prompt, /reviewer and QA of the quality cycle for every change/);
+    assert.doesNotMatch(prompt, /AI_TASK_RESULT_FILE|delivery\.md|SENTRY_AUTH_TOKEN/);
+    assert.match(buildPrompt(inputsFor({ task: 'dependency-update', profile: 'docs/deps.md' })), /repository profile \(`docs\/deps\.md`\)/);
+  });
+});
+
 describe('flow rules', () => {
   it('mentions the requester, or the milestone marker without one', () => {
     const prompt = buildPrompt(inputsFor({ task: 'technical-refinement', milestone: 'M1', 'requested-by': 'alice' }));
@@ -226,7 +248,7 @@ describe('flow rules', () => {
   });
 
   it('tells implement and issue-resolve the test environment is running when the caller started it', () => {
-    for (const task of ['implement', 'issue-resolve']) {
+    for (const task of ['implement', 'issue-resolve', 'dependency-update']) {
       const prompt = buildPrompt(inputsFor({ task, issue: '1', branch: 'b', 'test-environment': 'scripts/e2e.sh --host-browser\nnpx playwright install' }));
       assert.match(prompt, /started the test environment before this run with `scripts\/e2e\.sh --host-browser; npx playwright install`, and it is running/);
       assert.doesNotMatch(prompt, /no CI environment/);

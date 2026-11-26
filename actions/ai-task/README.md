@@ -15,23 +15,26 @@ Claude Code, the agent as the main agent). With `opencode` the agents are the Op
 | `implement` | `task-implementer` (+ `developer`, `code-reviewer`, `qa-tester`) | `dev`, `quality-cycle`, `pr-create`, `review-changes`, `qa-e2e`, `bdd-scenarios`, `ticket-plan` | `issue`, `branch` |
 | `issue-intake` | `issue-resolver` (`intake` mode) | `sentry-issues`, `ticket-create` | – |
 | `issue-resolve` | `issue-resolver` (`resolve` mode, + `developer`, `code-reviewer`, `qa-tester`) | `sentry-issues`, `observability-triage`, `dev`, `quality-cycle`, `pr-create`, `review-changes`, `qa-e2e`, `bdd-scenarios`, `ticket-plan` | `issue` |
+| `dependency-update` | `dependency-updater` (+ `developer`, `code-reviewer`, `qa-tester`) | `dependency-updates`, `dev`, `quality-cycle`, `pr-create`, `review-changes`, `qa-e2e`, `bdd-scenarios` | – |
 
 `skills` and `agents` add to these defaults. Runs never wait for input: when a task is blocked, the agent writes its
 questions on the ticket or issue, sets the blocked status, and stops.
 
 Parameters left empty are not sent, so the repository profile (`profile`, default `docs/ai/delivery.md`) and then the
-skill defaults apply. Set an input only to override the profile.
+skill defaults apply (`dependency-update` reads `docs/ai/dependency-updates.md` instead). Set an input only to override the
+profile.
 
 ## What the caller owns
 
 The action does not check out, authenticate, or install anything for the project. Before it, the job must:
 
 - Create a GitHub App token and pass it as `github-token`. The agent uses it for `gh` and `git push`. Every task
-  needs `issues` write; `orchestrate`, `implement`, and `issue-resolve` also need `contents` and `pull-requests` write (the others only
+  needs `issues` write; `orchestrate`, `implement`, `issue-resolve`, and `dependency-update` also need `contents` and `pull-requests` write (the others only
   read); `orchestrate` needs `actions` write (it dispatches the implement workflow); and any task needs
   `organization-projects` write when `project` is set.
 - Check out the repository with full history (`fetch-depth: 0`) and push credentials (the App token, with
-  `persist-credentials` left on) for `orchestrate` and `implement`, which create and push branches.
+  `persist-credentials` left on) for `orchestrate`, `implement`, `issue-resolve`, and `dependency-update`, which create and
+  push branches.
 - Set the git identity the agent commits as (usually the App bot).
 - Install the project dependencies the agent needs to build and test.
 
@@ -63,7 +66,7 @@ Task parameters (see the [task table](#ai-task) for which are required):
 
 | Input | Empty means | Description |
 |---|---|---|
-| `task` | – (required) | `business-refinement`, `technical-refinement`, `readiness-review`, `orchestrate`, `implement`, `issue-intake`, or `issue-resolve`. |
+| `task` | – (required) | `business-refinement`, `technical-refinement`, `readiness-review`, `orchestrate`, `implement`, `issue-intake`, `issue-resolve`, or `dependency-update`. |
 | `source` | – | Source ticket: Jira key or URL, GitHub issue, or GitHub milestone. |
 | `source-tracker` | profile, then `github` | `github` or `jira`. |
 | `source-language` | profile, then `auto` | Language of comments on the source ticket; `auto` uses the source's language. |
@@ -78,10 +81,10 @@ Task parameters (see the [task table](#ai-task) for which are required):
 | `project-status-field` | profile, then `Status` | Single-select status field of `project`. |
 | `project-status-options` | profile, then Title Case of the state | Multiline `state=Option name` mapping to `project-status-field` options; several states may share one option, for example `needs-review=Technical Refinement`, `business-blocked=Blocked`. |
 | `research-sources` | profile | Multiline URLs or repository paths to consult when details are missing. |
-| `test-environment` | – | Command that started the test environment before this action (the `setup-command` of `ai-task.yml`). The `implement` and `issue-resolve` prompts then tell QA it is running. |
+| `test-environment` | – | Command that started the test environment before this action (the `setup-command` of `ai-task.yml`). The `implement`, `issue-resolve`, and `dependency-update` prompts then tell QA it is running. |
 | `instructions` | – | Per-run instructions appended to the prompt under `Additional instructions for this run:`. |
 | `context` | – | Deprecated, use `instructions`. Free text appended to the prompt. |
-| `profile` | `docs/ai/delivery.md` | Repository profile path. |
+| `profile` | `docs/ai/delivery.md` (`docs/ai/dependency-updates.md` for `dependency-update`) | Repository profile path. |
 | `implement-workflow` | profile, then `ai-implement.yml` | Workflow file `orchestrate` dispatches per issue. |
 | `max-parallel` | profile, then `3` | Implement runs `orchestrate` keeps in progress. |
 | `requested-by` | `github.triggering_actor` | Person who started the flow. The agent mentions them when it asks a question or stops for a human, and stores `<!-- ai-delivery requested-by=<login> -->` in a milestone it creates. Bots are dropped; the agent then uses that marker. |
@@ -97,7 +100,7 @@ Run settings and credentials:
 | `opencode-variant` | `""` | OpenCode model variant. |
 | `claude-model` | `""` | Claude Code model. |
 | `claude-effort` | `""` | Claude Code effort level. |
-| `ai-skills-ref` | `v0.6.0` | `fbrissi/ai-skills` tag or SHA the skills and agents come from. |
+| `ai-skills-ref` | `v0.8.0` | `fbrissi/ai-skills` tag or SHA the skills and agents come from. |
 | `timeout-minutes` | `50` | Harness run timeout. GitHub App installation tokens expire after one hour. |
 | `github-token` | – (required) | GitHub App token used for `gh` and `git push`. |
 | `openai-api-key` | `""` | OpenAI API key. Required by `opencode` with an `openai/` model. |
@@ -130,8 +133,8 @@ The `implement` prompt tells the agent to run browser QA when the profile's test
 before this action, for example with the `setup-command` input of [`ai-task.yml`](../../README.md#qa-in-ci)). When
 none is reachable, QA runs in tests-only mode: it relies on the automated tests that run as pull request checks,
 reports `browser QA skipped: no CI environment`, and never escalates for that reason. With `test-environment` set, the
-prompt says the environment is already running, so QA uses it instead. The `implement` and `issue-resolve` prompts
-always ask for the reviewer and QA, documentation-only changes included.
+prompt says the environment is already running, so QA uses it instead. The `implement`, `issue-resolve`, and
+`dependency-update` prompts always ask for the reviewer and QA, documentation-only changes included.
 
 ## Notes
 

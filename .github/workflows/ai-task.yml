@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       task:
-        description: Task to run, `business-refinement`, `technical-refinement`, `readiness-review`, `orchestrate`, `implement`, `issue-intake`, or `issue-resolve`.
+        description: Task to run, `business-refinement`, `technical-refinement`, `readiness-review`, `orchestrate`, `implement`, `issue-intake`, `issue-resolve`, or `dependency-update`.
         required: true
         type: string
       source:
@@ -113,7 +113,7 @@ on:
         type: boolean
         default: true
       stage-workflows:
-        description: Multiline `stage=workflow file` overrides of the stage callers the follow-up dispatches and the handoffs resume (defaults `ai-business-refinement.yml`, `ai-technical-refinement.yml`, `ai-readiness-review.yml`, `ai-orchestrate.yml`, `ai-implement.yml`, `pr-fix.yml`, `ai-issue-intake.yml`, `ai-issue-resolve.yml`).
+        description: Multiline `stage=workflow file` overrides of the stage callers the follow-up dispatches and the handoffs resume (defaults `ai-business-refinement.yml`, `ai-technical-refinement.yml`, `ai-readiness-review.yml`, `ai-orchestrate.yml`, `ai-implement.yml`, `pr-fix.yml`, `ai-issue-intake.yml`, `ai-issue-resolve.yml`, `ai-dependency-update.yml`).
         required: false
         type: string
         default: ""
@@ -176,7 +176,7 @@ on:
         description: Tag or commit SHA of fbrissi/ai-skills the skills and agents are installed from.
         required: false
         type: string
-        default: v0.6.0
+        default: v0.8.0
       jira-base-url:
         description: Jira base URL. Empty uses the `JIRA_BASE_URL` variable.
         required: false
@@ -322,10 +322,10 @@ jobs:
         with:
           client-id: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
           private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
-          # Only orchestrate, implement, and issue-resolve push branches and open pull requests; only orchestrate dispatches workflows.
-          permission-contents: ${{ (inputs.task == 'orchestrate' || inputs.task == 'implement' || inputs.task == 'issue-resolve') && 'write' || 'read' }}
+          # Only orchestrate, implement, issue-resolve, and dependency-update push branches and open pull requests; only orchestrate dispatches workflows.
+          permission-contents: ${{ (inputs.task == 'orchestrate' || inputs.task == 'implement' || inputs.task == 'issue-resolve' || inputs.task == 'dependency-update') && 'write' || 'read' }}
           permission-issues: write
-          permission-pull-requests: ${{ (inputs.task == 'orchestrate' || inputs.task == 'implement' || inputs.task == 'issue-resolve') && 'write' || 'read' }}
+          permission-pull-requests: ${{ (inputs.task == 'orchestrate' || inputs.task == 'implement' || inputs.task == 'issue-resolve' || inputs.task == 'dependency-update') && 'write' || 'read' }}
           permission-actions: ${{ inputs.task == 'orchestrate' && 'write' || '' }}
           permission-organization-projects: ${{ inputs.project != '' && 'write' || '' }}
           permission-issue-fields: ${{ inputs.app-token-permission-issue-fields }}

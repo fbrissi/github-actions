@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.10.0
+
+- **AI Task:** new `dependency-update` task, run by the ai-skills `dependency-updater` agent with the
+  `dependency-updates` skill (plus `developer`, `code-reviewer`, and `qa-tester`). It takes the open dependency-bot
+  pull requests (and outdated packages when the profile asks) into one branch, reads release notes and upgrade guides,
+  adapts the code, runs the checks and the review and QA cycle, and opens or updates one pull request that supersedes
+  the bot pull requests, then stops; the PR Feedback Loop takes over. It needs no `issue` or `milestone`, reads
+  `docs/ai/dependency-updates.md` by default, gets `contents` and `pull-requests` write on the App token, and is told
+  about the `setup-command` test environment like `implement`. Default caller `ai-dependency-update.yml` (dispatch
+  input `requested_by`); `/ai-resume dependency-update` (or `dependency-updater`) resumes it, and the follow-up hands
+  off a failed run on a tracking issue.
+- **AI Task:** `ai-skills-ref` defaults to `v0.8.0`, the ai-skills release with the `dependency-updater` agent.
+
 ## v1.9.0
 
 - **AI Task:** the `implement` and `issue-resolve` prompts say when the test environment is already running. The

@@ -193,6 +193,25 @@ describe('followUp', () => {
     assert.match(comment.body.body, /gh workflow run ai-tech\.yml -f issue=9 -f requested_by=alice/);
   });
 
+  it('hands off only a failed dependency-update run, on a tracking issue', async () => {
+    const api = fakeApi([
+      ['GET', /^\/repos\/octo\/app$/, { default_branch: 'main' }],
+      ['GET', /^\/repos\/octo\/app\/milestones\?state=all$/, []],
+      ['GET', /^\/repos\/octo\/app\/issues\?state=open$/, []],
+      ['POST', /^\/repos\/octo\/app\/issues$/, { number: 12 }],
+      ['GET', /^\/repos\/octo\/app\/issues\/12\/comments$/, []],
+      ['POST', /^\/repos\/octo\/app\/issues\/12\/comments$/, {}]
+    ]);
+    assert.match((await followUp(ctxFor({ task: 'dependency-update', 'requested-by': 'alice' }), api, silent)).join('\n'), /Nothing to do/);
+    assert.equal(posts(api, /issues$/).length, 0);
+    await followUp(ctxFor({ task: 'dependency-update', result: 'failure', 'requested-by': 'alice' }), api, silent);
+    assert.equal(posts(api, /dispatches$/).length, 0);
+    assert.equal(posts(api, /issues$/)[0].body.title, 'AI delivery - dependency-update');
+    const [comment] = posts(api, /issues\/12\/comments$/);
+    assert.match(comment.body.body, /stopped at \*\*dependency-update\*\*/);
+    assert.match(comment.body.body, /gh workflow run ai-tech\.yml -f requested_by=alice/);
+  });
+
   it('does not dispatch with chaining off', async () => {
     const api = milestoneRepo({ issues: [{ number: 4, labels: [label('status:ready')] }] });
     const summary = await followUp(ctxFor({ task: 'readiness-review', milestone: 'JIRA:DEV-1', chain: 'false' }), api, silent);

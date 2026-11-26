@@ -1,6 +1,6 @@
 // Pure helpers of the AI delivery flow: stages, markers, handoff comments, and the chaining decision.
 
-export const STAGES = ['business-refinement', 'technical-refinement', 'readiness-review', 'orchestrate', 'implement', 'pr-fix', 'issue-intake', 'issue-resolve'];
+export const STAGES = ['business-refinement', 'technical-refinement', 'readiness-review', 'orchestrate', 'implement', 'pr-fix', 'issue-intake', 'issue-resolve', 'dependency-update'];
 
 export const DEFAULT_STAGE_WORKFLOWS = {
   'business-refinement': 'ai-business-refinement.yml',
@@ -10,7 +10,8 @@ export const DEFAULT_STAGE_WORKFLOWS = {
   implement: 'ai-implement.yml',
   'pr-fix': 'pr-fix.yml',
   'issue-intake': 'ai-issue-intake.yml',
-  'issue-resolve': 'ai-issue-resolve.yml'
+  'issue-resolve': 'ai-issue-resolve.yml',
+  'dependency-update': 'ai-dependency-update.yml'
 };
 
 // What the flow does on its own once the stage is resumed.
@@ -22,7 +23,8 @@ export const NEXT_STEP = {
   implement: 'pull request review and merge decision',
   'pr-fix': 'merge decision',
   'issue-intake': 'issue-resolve for each issue it labels',
-  'issue-resolve': 'pull request review and merge decision'
+  'issue-resolve': 'pull request review and merge decision',
+  'dependency-update': 'pull request review and merge decision'
 };
 
 // workflow_dispatch inputs each stage caller declares. Only these are sent.
@@ -35,7 +37,8 @@ export const STAGE_INPUTS = {
   implement: ['issue', 'branch', 'base_branch', 'requested_by', 'instructions'],
   'pr-fix': ['pr_number', 'instructions'],
   'issue-intake': ['requested_by', 'instructions'],
-  'issue-resolve': ['issue', 'requested_by', 'instructions']
+  'issue-resolve': ['issue', 'requested_by', 'instructions'],
+  'dependency-update': ['requested_by', 'instructions']
 };
 
 export const STATES = [
@@ -249,7 +252,9 @@ export const STAGE_ALIASES = {
   dev: 'implement',
   'quality-cycle': 'implement',
   'task-implementer': 'implement',
-  'issue-resolver': 'issue-resolve'
+  'issue-resolver': 'issue-resolve',
+  'dependency-updater': 'dependency-update',
+  'dependency-updates': 'dependency-update'
 };
 
 // `/ai-resume [stage] [instructions]` on the first line; the following lines are more instructions. A first word that
