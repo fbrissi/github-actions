@@ -309,8 +309,9 @@ describe('merge-outcome', () => {
   });
 });
 
-function mergeRepo({ pr = pull(), runs = [], checks = [], status = { total_count: 0, state: 'pending' }, reviews = [], comments = [], threads = [], fixRuns = null } = {}) {
+function mergeRepo({ pr = pull(), runs = [], checks = [], status = { total_count: 0, state: 'pending' }, reviews = [], comments = [], threads = [], fixRuns = null, reviewComments = [] } = {}) {
   return fakeApi([
+    ['GET', /^\/repos\/octo\/app\/pulls\/7\/comments$/, reviewComments],
     ...(fixRuns ? [['GET', /^\/repos\/octo\/app\/actions\/workflows\/pr-fix\.yml\/runs\?/, { workflow_runs: fixRuns }]] : []),
     ['GET', /^\/repos\/octo\/app\/pulls\/7$/, pr],
     ['GET', /^\/repos\/octo\/app\/actions\/runs\?head_sha=/, { workflow_runs: runs }],
@@ -400,21 +401,30 @@ describe('merge-gate', () => {
     assert.match((await mergeGate(ctx, mergeRepo({ checks: sameStart }), noSleep)).summary[0], /cancelled/);
   });
 
-  it('hands off unresolved threads unless a fix run is queued', async () => {
+  it('hands off unresolved threads unless a fix run is queued for new feedback', async () => {
     const ctx = ctxFor({ ...base, 'human-approval-exempt-base-prefixes': 'feat/', 'fix-workflow': 'pr-fix.yml' });
     const threads = [{ isResolved: false }];
-    const idle = await mergeGate(ctx, mergeRepo({ threads, fixRuns: [{ status: 'completed' }, { status: 'in_progress' }] }), noSleep);
+    const round = bot(`<!-- pr-fix round=1 head=${OLD} -->`, '2026-01-02T00:00:00Z');
+    const newer = [{ user: { login: 'reviewer[bot]' }, created_at: '2026-01-03T00:00:00Z' }];
+    const older = [{ user: { login: 'reviewer[bot]' }, created_at: '2026-01-01T00:00:00Z' }];
+    const fixerReply = [{ user: { login: 'fixer[bot]' }, created_at: '2026-01-03T00:00:00Z' }];
+    const repo = (options) => mergeRepo({ threads, comments: [round], ...options });
+    const idle = await mergeGate(ctx, repo({ reviewComments: newer, fixRuns: [{ status: 'completed' }, { status: 'in_progress' }] }), noSleep);
     assert.equal(idle.outputs.action, 'skip');
     assert.equal(idle.outputs.handoff, 'true');
     assert.match(idle.summary[0], /1 unresolved/);
     for (const status of ['queued', 'pending', 'waiting']) {
-      const queued = await mergeGate(ctx, mergeRepo({ threads, fixRuns: [{ status }] }), noSleep);
+      const queued = await mergeGate(ctx, repo({ reviewComments: newer, fixRuns: [{ status }] }), noSleep);
       assert.equal(queued.outputs.handoff, undefined);
       assert.match(queued.summary[0], /pr-fix\.yml run is queued/);
     }
-    const missing = await mergeGate(ctx, mergeRepo({ threads }), noSleep);
+    // A queued run for another pull request: this one has nothing new since its last round.
+    for (const reviewComments of [older, fixerReply]) {
+      assert.equal((await mergeGate(ctx, repo({ reviewComments, fixRuns: [{ status: 'queued' }] }), noSleep)).outputs.handoff, 'true');
+    }
+    const missing = await mergeGate(ctx, repo({ reviewComments: newer }), noSleep);
     assert.equal(missing.outputs.handoff, 'true');
-    const noFixWorkflow = await mergeGate(ctxFor({ ...base, 'human-approval-exempt-base-prefixes': 'feat/' }), mergeRepo({ threads }), noSleep);
+    const noFixWorkflow = await mergeGate(ctxFor({ ...base, 'human-approval-exempt-base-prefixes': 'feat/' }), repo({ reviewComments: newer }), noSleep);
     assert.equal(noFixWorkflow.outputs.handoff, 'true');
   });
 

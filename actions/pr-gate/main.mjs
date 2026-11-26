@@ -204,11 +204,22 @@ export function newestByName(checkRuns) {
 
 // A fix pass that has not started yet (queued, waiting for the concurrency group or an environment) will answer the
 // open threads, and its follow-up dispatches the decision again. A running pass shows as the running PR Fix check.
+// Dispatched runs do not say which pull request they are for, so a queued run only counts when this pull request has
+// review feedback newer than its last fix round (by anyone but that round's fixer), which a queued pass would answer.
 const WAITING_RUN = new Set(['queued', 'pending', 'requested', 'waiting']);
 
-async function fixQueued(api, repo, workflow) {
+async function fixQueued(api, repo, workflow, number, reviews, comments) {
   if (!workflow) return false;
   if (!WORKFLOW_FILE.test(workflow)) throw new Error(`'fix-workflow' must be a workflow file name, got '${workflow}'.`);
+  const lastRound = comments.filter((comment) => comment.user?.type === 'Bot' && FIX_MARKER.test(comment.body ?? '')).at(-1);
+  const since = lastRound ? new Date(lastRound.created_at) : null;
+  const fixer = lastRound?.user?.login;
+  const reviewComments = await api.paginate(`/repos/${repo}/pulls/${number}/comments`);
+  const unanswered = [
+    ...reviews.map((item) => ({ login: item.user?.login, at: item.submitted_at })),
+    ...reviewComments.map((item) => ({ login: item.user?.login, at: item.created_at }))
+  ].some((item) => item.login && item.login !== fixer && item.at && (!since || new Date(item.at) > since));
+  if (!unanswered) return false;
   try {
     const { data } = await api.request('GET', `/repos/${repo}/actions/workflows/${workflow}/runs?per_page=50`);
     return (data?.workflow_runs ?? []).some((run) => WAITING_RUN.has(run.status));
@@ -284,8 +295,9 @@ export async function mergeGate(ctx, api, sleep = (ms) => new Promise((resolve) 
   }
 
   const unresolved = await unresolvedThreads(api, repo, number);
+  const comments = await api.paginate(`/repos/${repo}/issues/${number}/comments`);
   if (unresolved > 0) {
-    if (await fixQueued(api, repo, ctx['fix-workflow'])) {
+    if (await fixQueued(api, repo, ctx['fix-workflow'], number, reviews, comments)) {
       return { ...skip(`${unresolved} unresolved review thread(s); a ${ctx['fix-workflow']} run is queued.`), outputs };
     }
     // Nothing else will resolve them, so a person is told instead of the pull request waiting silently.
@@ -293,7 +305,6 @@ export async function mergeGate(ctx, api, sleep = (ms) => new Promise((resolve) 
     return { outputs: { ...outputs, handoff: 'true' }, summary: [`skipped: ${reason}`], notice: reason };
   }
 
-  const comments = await api.paginate(`/repos/${repo}/issues/${number}/comments`);
   const marker = `<!-- merge-decision head=${headSha} -->`;
   const decided = comments.filter((comment) => comment.user?.type === 'Bot' && comment.body?.includes(marker)).at(-1);
   // `/ai-resume merge-decision` leaves a redecide marker: one new decision on the current head, since the next decision

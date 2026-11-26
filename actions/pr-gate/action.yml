@@ -81,7 +81,7 @@ inputs:
     required: false
     default: ""
   fix-workflow:
-    description: "`feedback-dispatch`: workflow file dispatched with `pr_number` for review feedback. Empty dispatches nothing. `merge-gate`: while a run of it is queued, unresolved review threads only skip; otherwise they set `handoff`."
+    description: "`feedback-dispatch`: workflow file dispatched with `pr_number` for review feedback. Empty dispatches nothing. `merge-gate`: while a run of it is queued and the pull request has review feedback newer than its last fix round, unresolved review threads only skip; otherwise they set `handoff`."
     required: false
     default: ""
   ignore-authors:

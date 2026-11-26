@@ -61,7 +61,7 @@ jobs:
 | `result`, `check-run-id` | `""` | `fix-finish`: fix job result and the check run to complete. |
 | `merge-workflow` | `""` | `merge-dispatch` and `feedback-dispatch`: workflow file to dispatch, for example `merge-decision.yml`. |
 | `fix-workflow`, `ignore-authors`, `ignore-reply-authors`, `merge-check-name` | `""` | `feedback-dispatch`: as the inputs of the same name of `pr-feedback-dispatch.yml`. |
-| `fix-workflow` | `""` | `merge-gate`: the PR Fix caller; a queued run of it keeps unresolved threads from setting `handoff`. |
+| `fix-workflow` | `""` | `merge-gate`: the PR Fix caller; a queued run of it, while the pull request has review feedback newer than its last fix round, keeps unresolved threads from setting `handoff`. |
 
 Outputs: `action`, `pr_number`, `round`, `head_ref`, `head_sha`, `base_ref`, `base_sha`, `check_run_id`,
 `required_approvals`, `request_review`, `handoff`, and `result`.

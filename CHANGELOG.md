@@ -18,7 +18,8 @@ Release order: `fbrissi/ai-skills` `v0.11.0` first, then this release.
   `fix-workflow` run is queued, `merge-gate` sets the new `handoff` output and `merge-decision.yml` runs **Hand Off
   Unresolved Threads**, one `merge-decision` handoff to the requester (`<!-- merge-decision unresolved-threads -->`,
   not repeated while it is open). New `merge-decision.yml` and `pr-gate` input `fix-workflow` (default `pr-fix.yml` in
-  the workflow); while a run of it is queued, the decision only skips, since that pass dispatches it again.
+  the workflow); while a run of it is queued and the pull request has review feedback newer than its last fix round,
+  the decision only skips, since that pass dispatches it again.
 - **Clean grades never dispatch PR Fix** (`pr-gate` `feedback-dispatch`, used by `pr-feedback-dispatch.yml`): a
   `commented` review that is only a clean `★★★★★` grade with no inline comments now always goes to `merge-workflow`,
   even with unresolved threads (the merge gate hands those off). Before, two clean reviews of one head with a thread

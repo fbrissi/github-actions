@@ -416,7 +416,8 @@ The fixer GitHub App needs `Contents: Read and write`, `Pull requests: Read and 
    users (not bots or Apps; none when the base branch matches `human-approval-exempt-base-prefixes` and the author
    matches `human-approval-exempt-authors`), no unresolved review threads, and no decision recorded for the head
    commit yet. Of several check runs with one name (for example a cancelled run and the newer run that replaced it),
-   only the newest counts. When only unresolved threads remain and no `fix-workflow` run is queued, **Hand Off
+   only the newest counts. When only unresolved threads remain and no `fix-workflow` run is queued for review feedback newer than the last fix
+   round, **Hand Off
    Unresolved Threads** posts one `merge-decision` [handoff](#how-stages-chain) to the requester
    (`<!-- merge-decision unresolved-threads -->`, kept while it is open) instead of waiting silently; resume after
    resolving them. A queued fix run only skips, since its follow-up dispatches the decision again.
@@ -508,7 +509,7 @@ The review request uses the same App with `pull-requests: write`.
 | `human-approval-exempt-authors` | `""` (any GitHub App bot) | Authors that may skip human approval into an exempt base, for example the agent App bot `my-agent[bot]`. Pull requests by people always need `required-human-approvals`. |
 | `request-human-review` | `true` | Request a review from the flow's requester and mention them once while approvals are missing. |
 | `hold-labels` | `do-not-merge hold` | Labels that block a decision. |
-| `fix-workflow` | `pr-fix.yml` | PR Fix caller; while a run of it is queued, unresolved threads only skip, otherwise they hand off to the requester. Empty always hands off. |
+| `fix-workflow` | `pr-fix.yml` | PR Fix caller; while a run of it is queued and the pull request has review feedback newer than its last fix round, unresolved threads only skip, otherwise they hand off to the requester. Empty always hands off. |
 | `branch-prefixes` | `""` | Head branch prefixes a pull request must match (`startsWith`), for example `feature/ release/ hotfix/ bugfix/`; empty decides on every pull request. |
 | `skills` | `merge-risk` | Skills installed for the harness. |
 | `agents` | `""` | Agents installed for the harness (Claude Code or OpenCode agents of the same name). |

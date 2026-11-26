@@ -33,7 +33,7 @@ on:
         type: boolean
         default: true
       fix-workflow:
-        description: Fix workflow file (the PR Fix caller). While a run of it is queued, unresolved review threads only skip the decision; otherwise they hand the pull request off to the requester. Empty always hands off.
+        description: Fix workflow file (the PR Fix caller). While a run of it is queued and the pull request has review feedback newer than its last fix round, unresolved review threads only skip the decision; otherwise they hand the pull request off to the requester. Empty always hands off.
         required: false
         type: string
         default: pr-fix.yml
