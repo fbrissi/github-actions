@@ -222,7 +222,16 @@ describe('flow rules', () => {
 
   it('tells implement about tests-only QA and only implement', () => {
     assert.match(buildPrompt(inputsFor({ task: 'implement', issue: '1', branch: 'b' })), /tests-only mode: .*"browser QA skipped: no CI environment", and never escalate/);
-    assert.doesNotMatch(buildPrompt(inputsFor({ task: 'orchestrate', milestone: 'M1' })), /tests-only/);
+    assert.doesNotMatch(buildPrompt(inputsFor({ task: 'orchestrate', milestone: 'M1' })), /tests-only|quality cycle/);
+  });
+
+  it('tells implement and issue-resolve the test environment is running when the caller started it', () => {
+    for (const task of ['implement', 'issue-resolve']) {
+      const prompt = buildPrompt(inputsFor({ task, issue: '1', branch: 'b', 'test-environment': 'scripts/e2e.sh --host-browser\nnpx playwright install' }));
+      assert.match(prompt, /started the test environment before this run with `scripts\/e2e\.sh --host-browser; npx playwright install`, and it is running/);
+      assert.doesNotMatch(prompt, /no CI environment/);
+      assert.match(prompt, /reviewer and QA of the quality cycle for every change, also small or documentation-only ones/);
+    }
   });
 
   it('asks for the milestone in the result file only when it is not given', () => {

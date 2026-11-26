@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.9.0
+
+- **AI Task:** the `implement` and `issue-resolve` prompts say when the test environment is already running. The
+  workflow passes its `setup-command` to the `ai-task` action as the new `test-environment` input; before, the prompt
+  only described the no-environment case, and the agent reported `browser QA skipped: no CI environment` with the
+  stack up. Both prompts also ask for the reviewer and QA on every change, documentation-only ones included.
+- **AI Task follow-up:** mirrors each issue's final status label on the GitHub Project status field when `project`
+  is set, so label moves made by the follow-up (an implement issue back to `ready`) or by an agent that skipped the
+  Project show on the board. The field and option map come from the inputs or, when empty, from the delivery
+  profile's `Project status field` and `Project status options` lines. The follow-up token gets
+  `organization-projects: write` with `project`. New `project`, `project-status-field`, `project-status-options`, and
+  `profile` inputs on the `ai-delivery` action. Problems are warnings.
+
 ## v1.8.1
 
 - **AI Task:** new `max-send-backs` input (default `3`). The follow-up may send a milestone's issues back to an

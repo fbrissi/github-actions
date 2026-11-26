@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { buildHandoff, setHandoffState } from './delivery.mjs';
 import { createClient } from './github.mjs';
-import { dispatchWorkflow, envName, findHandoff, followUp, handoff, parseResumeEvent, readContext, requestReview, resume } from './main.mjs';
+import { dispatchWorkflow, envName, findHandoff, followUp, handoff, parseResumeEvent, readContext, requestReview, resume, syncProjectStatus } from './main.mjs';
 
 const REPO = 'octo/app';
 const silent = { info() {}, notice() {}, warning() {} };
@@ -399,5 +399,84 @@ describe('createClient', () => {
     const client = createClient({ token: 't', apiUrl: 'https://api.test', fetchImpl });
     assert.deepEqual(await client.paginate('/items'), [1, 2, 3]);
     await assert.rejects(client.request('GET', '/other'), (error) => error.status === 403 && /Nope/.test(error.message));
+  });
+});
+
+describe('followUp project status', () => {
+  it('mirrors the final status labels with the options from the profile', async () => {
+    const profile = ['- Project: octo/1', '- Project status options:', '  - ready=Ready', '  - needs-review=Readiness Review'].join('\n');
+    const api = milestoneRepo({
+      issues: [{ number: 4, labels: [label('status:needs-review')] }],
+      extra: [['GET', /^\/repos\/octo\/app\/contents\/docs\/ai\/delivery\.md\?ref=main$/, { content: Buffer.from(profile).toString('base64') }]]
+    });
+    const updates = [];
+    api.graphql = async (query, variables) => {
+      if (query.includes('organization(login')) return { organization: { projectV2: { id: 'P', field: { id: 'F', options: [{ id: 'o-rr', name: 'Readiness Review' }] } } } };
+      if (query.includes('repository(owner')) return { repository: { issue: { id: 'N4', projectItems: { nodes: [{ id: 'I4', project: { id: 'P' }, fieldValueByName: { name: 'Backlog' } }] } } } };
+      if (query.includes('updateProjectV2ItemFieldValue')) { updates.push(variables); return {}; }
+      throw new Error(`unexpected ${query}`);
+    };
+    const summary = await followUp(ctxFor({ task: 'technical-refinement', milestone: 'JIRA:DEV-1', 'requested-by': 'alice', project: 'octo/1' }), api, silent);
+    assert.deepEqual(updates, [{ project: 'P', item: 'I4', field: 'F', option: 'o-rr' }]);
+    assert.match(summary.join('\n'), /Set Status of #4 to Readiness Review\./);
+  });
+});
+
+describe('syncProjectStatus', () => {
+  // Routes GraphQL calls by operation and records them.
+  function projectApi({ items = {}, org = true } = {}) {
+    const calls = [];
+    const field = { id: 'F', options: [{ id: 'o-ready', name: 'Ready' }, { id: 'o-review', name: 'In review' }, { id: 'o-blocked', name: 'Blocked' }] };
+    return {
+      calls,
+      async graphql(query, variables) {
+        calls.push({ query, variables });
+        if (query.includes('organization(login')) {
+          if (!org) throw new Error("GraphQL failed: Could not resolve to an Organization with the login of 'alice'.");
+          return { organization: { projectV2: { id: 'P', field } } };
+        }
+        if (query.includes('user(login')) return { user: { projectV2: { id: 'P', field } } };
+        if (query.includes('repository(owner')) {
+          const nodes = items[variables.number] ? [{ id: `I${variables.number}`, project: { id: 'P' }, fieldValueByName: { name: items[variables.number] } }] : [];
+          return { repository: { issue: { id: `N${variables.number}`, projectItems: { nodes } } } };
+        }
+        if (query.includes('addProjectV2ItemById')) return { addProjectV2ItemById: { item: { id: `new-${variables.content}` } } };
+        if (query.includes('updateProjectV2ItemFieldValue')) return { updateProjectV2ItemFieldValue: { projectV2Item: { id: variables.item } } };
+        throw new Error(`unexpected query ${query}`);
+      }
+    };
+  }
+  const config = (options = {}) => ({
+    project: { owner: 'octo', number: 1 },
+    projectField: 'Status',
+    projectOptions: { ready: 'Ready', 'in-review': 'In review', 'technical-blocked': 'Blocked', done: 'Done', ...options }
+  });
+  const warnings = [];
+  const log = { ...silent, warning: (message) => warnings.push(message) };
+
+  it('sets the option of each issue state, adding missing items and skipping matching ones', async () => {
+    const api = projectApi({ items: { 4: 'Ready', 5: 'Ready' } });
+    const summary = await syncProjectStatus(api, REPO, config(), [{ number: 4, state: 'ready' }, { number: 5, state: 'in-review' }, { number: 6, state: 'technical-blocked' }], log);
+    const updates = api.calls.filter((call) => call.query.includes('updateProjectV2ItemFieldValue')).map((call) => call.variables);
+    assert.deepEqual(updates, [
+      { project: 'P', item: 'I5', field: 'F', option: 'o-review' },
+      { project: 'P', item: 'new-N6', field: 'F', option: 'o-blocked' }
+    ]);
+    assert.deepEqual(summary, ['Set Status of #5 to In review.', 'Set Status of #6 to Blocked.']);
+  });
+
+  it('falls back to a user project and warns about a missing option without failing', async () => {
+    warnings.length = 0;
+    const api = projectApi({ org: false });
+    const summary = await syncProjectStatus(api, REPO, config(), [{ number: 7, state: 'done' }], log);
+    assert.deepEqual(summary, []);
+    assert.match(warnings.join('\n'), /no option 'Done' for done; #7 not mirrored/);
+    assert.ok(api.calls.some((call) => call.query.includes('user(login')));
+  });
+
+  it('does nothing without a project', async () => {
+    const api = projectApi();
+    assert.deepEqual(await syncProjectStatus(api, REPO, { ...config(), project: null }, [{ number: 4, state: 'ready' }], log), []);
+    assert.equal(api.calls.length, 0);
   });
 });

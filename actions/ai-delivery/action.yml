@@ -79,6 +79,22 @@ inputs:
     description: Times per milestone `follow-up` may send issues back to an earlier refinement stage (for example readiness review back to technical refinement) before it hands off to the requester instead.
     required: false
     default: "3"
+  profile:
+    description: Delivery profile on the default branch that `follow-up` reads the `Project`, `Project status field`, and `Project status options` lines from when those inputs are empty.
+    required: false
+    default: docs/ai/delivery.md
+  project:
+    description: GitHub Project (`owner/number`) whose status field `follow-up` sets from each issue's status label. Empty uses the profile's `Project` line, else skips it. The token needs `organization-projects` (or user projects) write.
+    required: false
+    default: ""
+  project-status-field:
+    description: Single-select status field of `project`.
+    required: false
+    default: Status
+  project-status-options:
+    description: Multiline `state=Option name` overrides of the `project` status options (default the state in sentence case, `in-review` -> `In review`).
+    required: false
+    default: ""
   chain:
     description: Let `follow-up` dispatch the next stage. When false it only hands off.
     required: false
@@ -145,6 +161,10 @@ runs:
         AI_DELIVERY_STAGE_WORKFLOWS: ${{ inputs.stage-workflows }}
         AI_DELIVERY_MAX_AUTO_DISPATCHES: ${{ inputs.max-auto-dispatches }}
         AI_DELIVERY_MAX_SEND_BACKS: ${{ inputs.max-send-backs }}
+        AI_DELIVERY_PROJECT: ${{ inputs.project }}
+        AI_DELIVERY_PROFILE: ${{ inputs.profile }}
+        AI_DELIVERY_PROJECT_STATUS_FIELD: ${{ inputs.project-status-field }}
+        AI_DELIVERY_PROJECT_STATUS_OPTIONS: ${{ inputs.project-status-options }}
         AI_DELIVERY_CHAIN: ${{ inputs.chain }}
         AI_DELIVERY_ESCALATION_LABEL: ${{ inputs.escalation-label }}
         AI_DELIVERY_TRUSTED_BOTS: ${{ inputs.trusted-bots }}

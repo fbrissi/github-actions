@@ -399,6 +399,7 @@ jobs:
           research-sources: ${{ inputs.research-sources }}
           context: ${{ inputs.context }}
           instructions: ${{ inputs.instructions }}
+          test-environment: ${{ inputs.setup-command }}
           profile: ${{ inputs.profile }}
           implement-workflow: ${{ inputs.implement-workflow }}
           max-parallel: ${{ inputs.max-parallel }}
@@ -443,6 +444,7 @@ jobs:
           permission-actions: write
           permission-issues: write
           permission-pull-requests: read
+          permission-organization-projects: ${{ inputs.project != '' && 'write' || '' }}
 
       - name: Chain or hand off
         uses: fbrissi/github-actions/actions/ai-delivery@v1
@@ -463,5 +465,9 @@ jobs:
           stage-workflows: ${{ inputs.stage-workflows }}
           max-auto-dispatches: ${{ inputs.max-auto-dispatches }}
           max-send-backs: ${{ inputs.max-send-backs }}
+          project: ${{ inputs.project }}
+          project-status-field: ${{ inputs.project-status-field }}
+          project-status-options: ${{ inputs.project-status-options }}
+          profile: ${{ inputs.profile }}
           chain: ${{ inputs.chain }}
           jira-base-url: ${{ inputs.jira-base-url || vars.JIRA_BASE_URL }}

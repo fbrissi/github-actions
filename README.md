@@ -636,6 +636,11 @@ stateDiagram-v2
   `<!-- ai-delivery requested-by=<login> -->` and passed on as `requested_by` to every dispatch. Runs started by the
   App (whose triggering actor is the bot) use the marker instead, and bots are never mentioned. PR Fix and Merge
   Decision read the same marker from the PR's milestone, or the milestone of the issues it closes.
+- **Project status.** With `project` set, the follow-up mirrors each issue's final status label on the Project's
+  status field (`project-status-field`, default `Status`), adding the issue to the Project when needed. The field and
+  the `state=Option name` map come from the inputs, else from the `Project status field` and `Project status options`
+  lines of the delivery profile (`profile`, default `docs/ai/delivery.md`) on the default branch. Status moves made
+  through labels, by the follow-up or by an agent, then show on the board. Problems are warnings, never failures.
 - `chain: false` keeps the handoffs and only stops the dispatches.
 
 What the `follow-up` job decides after each run:
@@ -777,8 +782,11 @@ agent:
         docker compose up -d --wait
 ```
 
-Without a reachable environment, QA runs in tests-only mode: it relies on the automated tests that already run as PR
-checks, reports `browser QA skipped: no CI environment`, and never escalates for that reason.
+The workflow passes the `setup-command` to the agent as `test-environment`, so the `implement` and `issue-resolve`
+prompts say the environment is already running and QA uses it instead of starting it. Without a `setup-command` and
+without a reachable environment, QA runs in tests-only mode: it relies on the automated tests that already run as PR
+checks, reports `browser QA skipped: no CI environment`, and never escalates for that reason. Either way the agent runs
+the reviewer and QA for every change, documentation included.
 
 ### GitHub App
 
@@ -793,7 +801,7 @@ agent is scoped per task:
 | `issue-intake` | `contents: read`, `issues: write`, `pull-requests: read` |
 | any, with `project` | adds `organization-projects: write` |
 | any, with `app-token-permission-issue-fields: write` | adds `issue-fields: write` |
-| follow-up job | `actions: write`, `issues: write`, `pull-requests: read` |
+| follow-up job | `actions: write`, `issues: write`, `pull-requests: read`; with `project`, `organization-projects: write` |
 
 Organization issue field values (for example Priority, Effort, Start date, Target date) need the `issue-fields:
 write` token permission. Set `app-token-permission-issue-fields: write` when the profile uses issue fields and the

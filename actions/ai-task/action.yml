@@ -69,6 +69,10 @@ inputs:
     description: Per-run instructions appended to the prompt as "Additional instructions for this run".
     required: false
     default: ""
+  test-environment:
+    description: Command that started the test environment before this action (for example the `setup-command` of `ai-task.yml`). When set, the `implement` and `issue-resolve` prompts tell QA it is running. Empty when none was started.
+    required: false
+    default: ""
   context:
     description: Deprecated, use `instructions`. Free-text context appended to the prompt.
     required: false
@@ -238,6 +242,7 @@ runs:
         AI_TASK_RESEARCH_SOURCES: ${{ inputs.research-sources }}
         AI_TASK_CONTEXT: ${{ inputs.context }}
         AI_TASK_INSTRUCTIONS: ${{ inputs.instructions }}
+        AI_TASK_TEST_ENVIRONMENT: ${{ inputs.test-environment }}
         AI_TASK_PROFILE: ${{ inputs.profile }}
         AI_TASK_IMPLEMENT_WORKFLOW: ${{ inputs.implement-workflow }}
         AI_TASK_MAX_PARALLEL: ${{ inputs.max-parallel }}

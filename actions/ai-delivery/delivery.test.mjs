@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  parseProfileProject,
+  parseProject,
+  parseProjectStatusOptions,
   DEFAULT_STAGE_WORKFLOWS,
   buildHandoff,
   decideFailure,
@@ -231,5 +234,34 @@ describe('decideFailure', () => {
 
   it('targets no issue when the milestone has none', () => {
     assert.deepEqual(decideFailure({ task: 'business-refinement', issues: [] }).handoffs, [{ issue: null, stage: 'business-refinement', reason: 'failed' }]);
+  });
+});
+
+describe('project status options', () => {
+  it('maps states to options, defaulting to sentence case', () => {
+    const { options, errors } = parseProjectStatusOptions('business-blocked=Blocked\nneeds-review=Readiness Review');
+    assert.deepEqual(errors, []);
+    assert.equal(options['business-blocked'], 'Blocked');
+    assert.equal(options['needs-review'], 'Readiness Review');
+    assert.equal(options['in-review'], 'In review');
+    assert.match(parseProjectStatusOptions('shipped=Done').errors[0], /Unknown state 'shipped' in 'project-status-options'/);
+  });
+
+  it('parses owner/number projects', () => {
+    assert.deepEqual(parseProject('oliblish-dev/1'), { owner: 'oliblish-dev', number: 1 });
+    assert.equal(parseProject('octo'), null);
+  });
+});
+
+describe('profile project', () => {
+  it('reads the project, field, and indented options of a delivery profile', () => {
+    const text = ['## Status', '- Status labels: defaults', '- Project: oliblish-dev/1', '- Project status field: Status', '- Project status options:',
+      '    - needs-business-refinement=Backlog', '  - in-review=In review', '', '## Triage', '- Priority field: Priority'].join('\n');
+    assert.deepEqual(parseProfileProject(text), { project: 'oliblish-dev/1', field: 'Status', options: 'needs-business-refinement=Backlog\nin-review=In review' });
+  });
+
+  it('ignores template placeholders', () => {
+    assert.deepEqual(parseProfileProject('- Project: <owner/number | none>\n- Project status field: <Status>\n- Project status options: <state=Option name lines>'),
+      { project: '', field: '', options: '' });
   });
 });
