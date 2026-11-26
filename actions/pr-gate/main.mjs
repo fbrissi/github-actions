@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Deterministic gates and markers of the PR follow-up: whether pr-fix may run a pass or must escalate, whether a merge
-// decision may run, and the bot comments that record each pass and decision. Every GitHub call goes through the
+// decision may run, the bot comments that record each pass and decision, and the merge decision dispatch after a pass. Every GitHub call goes through the
 // injected client so the commands are testable.
 import { appendFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -9,7 +9,7 @@ import { createClient } from '../ai-delivery/github.mjs';
 const NAMES = [
   'command', 'pr-number', 'opt-in-label', 'branch-prefixes', 'max-rounds', 'escalation-label', 'check-name',
   'required-human-approvals', 'human-approval-exempt-base-prefixes', 'human-approval-exempt-authors', 'hold-labels', 'round', 'start-sha', 'outcome',
-  'head-sha', 'result', 'check-run-id'
+  'head-sha', 'result', 'check-run-id', 'merge-workflow'
 ];
 
 export const envName = (name) => `PR_GATE_${name.toUpperCase().replaceAll('-', '_')}`;
@@ -138,6 +138,28 @@ export async function fixFinish(ctx, api) {
   return { outputs: {}, summary: [`${checkName} ${conclusion}.`] };
 }
 
+// After a successful fix pass, starts the merge decision again: a decision skipped while the pass was running is never
+// retried otherwise. Bounded by the fix rounds, since a merge decision never dispatches a fix.
+export async function mergeDispatch(ctx, api) {
+  const { repo } = ctx;
+  const number = prNumber(ctx);
+  const workflow = ctx['merge-workflow'];
+  if (!workflow) return { outputs: {}, summary: ['No merge workflow to dispatch.'] };
+  if (!/^[A-Za-z0-9_.-]+\.ya?ml$/.test(workflow)) throw new Error(`'merge-workflow' must be a workflow file name, got '${workflow}'.`);
+  const { data: repository } = await api.request('GET', `/repos/${repo}`);
+  try {
+    await api.request('POST', `/repos/${repo}/actions/workflows/${workflow}/dispatches`, {
+      ref: repository.default_branch,
+      inputs: { pr_number: String(number) }
+    });
+  } catch (error) {
+    if (error.status !== 404) throw error;
+    const reason = `${workflow} is not on ${repository.default_branch}; PR #${number} was not dispatched.`;
+    return { outputs: {}, summary: [reason], notice: reason };
+  }
+  return { outputs: {}, summary: [`Dispatched ${workflow} for PR #${number}.`] };
+}
+
 const REVIEW_THREADS = `query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
@@ -246,7 +268,14 @@ export async function mergeRecord(ctx, api) {
   return { outputs: {}, summary: [`Recorded the merge decision on PR #${number}.`] };
 }
 
-const COMMANDS = { 'fix-gate': fixGate, 'fix-record': fixRecord, 'fix-finish': fixFinish, 'merge-gate': mergeGate, 'merge-record': mergeRecord };
+const COMMANDS = {
+  'fix-gate': fixGate,
+  'fix-record': fixRecord,
+  'fix-finish': fixFinish,
+  'merge-dispatch': mergeDispatch,
+  'merge-gate': mergeGate,
+  'merge-record': mergeRecord
+};
 
 export async function main(env = process.env, api = null) {
   const ctx = readContext(env);

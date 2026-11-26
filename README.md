@@ -203,7 +203,9 @@ another organization must pass each secret explicitly, or organization secrets a
 Three workflows follow a pull request up event by event instead of one agent that blocks on CI:
 
 1. A review arrives. [`pr-feedback-dispatch.yml`](#pr-feedback-dispatch) dispatches the fix workflow for
-   `changes_requested` (or `commented` with a body or inline comments) and the merge workflow for `approved`.
+   `changes_requested` (or `commented` with a body or inline comments) and the merge workflow for `approved`, or for a
+   `commented` review that is only a clean `★★★★★` grade with no inline comments and no unresolved thread (a reviewer
+   that cannot approve, for example on its own pull request, leaves its approval that way).
 2. [`pr-fix.yml`](#pr-fix) runs one fix pass and pushes with a GitHub App token. Unlike `GITHUB_TOKEN` pushes, App
    pushes trigger CI, so the code review runs again and its review closes the loop.
 3. [`merge-decision.yml`](#merge-decision) checks the merge gates without AI and, when they pass, rates the risk
@@ -215,11 +217,13 @@ flowchart TD
   push --> ci["CI checks"]
   cr --> disp{"pr-feedback-dispatch.yml<br/>review state"}
   disp -- "changes_requested<br/>or commented" --> fix["pr-fix.yml"]
-  disp -- "approved" --> merge["merge-decision.yml"]
+  disp -- "approved<br/>or clean ★★★★★ comment" --> merge["merge-decision.yml"]
   fix --> fgate{"pr-gate<br/>fix gate"}
   fgate -- "skip" --> idle["No pass"]
   fgate -- "fix" --> pass["One pr-fix pass<br/>push with the fix App token"]
   pass --> push
+  pass -. "merge-workflow set" .-> merge
+  pass -- "failed" --> failed["Handoff to the requester<br/>with the run link"]
   fgate -- "escalate<br/>after max-rounds" --> esc["Label ai:needs-human<br/>handoff to the requester"]
   esc -. "/ai-resume pr-fix<br/>or label removed" .-> fix
   merge --> mgate{"pr-gate<br/>merge gate"}
@@ -272,8 +276,8 @@ jobs:
 
 | Input | Default | Description |
 |---|---|---|
-| `fix-workflow` | `pr-fix.yml` | Dispatched with `pr_number` on a `changes_requested` review, or a `commented` one with a body or inline comments. Empty disables it. |
-| `merge-workflow` | `merge-decision.yml` | Dispatched with `pr_number` on an `approved` review or a successful `merge-check-name` check run. Empty disables it. |
+| `fix-workflow` | `pr-fix.yml` | Dispatched with `pr_number` on a `changes_requested` review, or a `commented` one with a body or inline comments that is not a clean grade. Empty disables it. |
+| `merge-workflow` | `merge-decision.yml` | Dispatched with `pr_number` on an `approved` review, a clean-grade `commented` review (only `★★★★★`, plus `Ticket:` lines, no inline comments, no unresolved thread on the pull request), or a successful `merge-check-name` check run. Empty disables it. The merge gates, human approvals included, still apply. |
 | `ignore-authors` | `""` | Logins whose reviews never dispatch a fix, for example the fixer App bot, whose thread replies also emit review events. |
 | `ignore-reply-authors` | `""` | Logins whose reply-only reviews (no body, every inline comment a reply) never dispatch a fix. Use it instead of `ignore-authors` when one App both reviews and fixes, so its new reviews still dispatch fixes. |
 | `merge-check-name` | `Code Review` | Successful check run that dispatches `merge-workflow` for each pull request in `check_run.pull_requests` (same repository only). Empty disables it. |
@@ -322,7 +326,12 @@ merge workflow from the Code Review caller once the review succeeds:
 2. **Run PR Fix** checks out the head branch with the App token, commits as the App bot, installs dependencies, and
    runs the harness. It never watches CI or waits for comments: the next review dispatches the next pass. It then
    records the round and fails if the branch was rewritten.
-3. **Finish PR Fix** completes the check run.
+3. **Finish PR Fix** completes the check run. When the pass failed (for example a runner or credential problem),
+   it posts a `pr-fix` [handoff](#how-stages-chain) that mentions the requester and links the run, so the pull request
+   does not wait silently; `/ai-resume` runs the pass again. After a successful pass with `merge-workflow` set, it
+   dispatches that workflow, so a merge decision skipped while the pass was running (`checks still running: PR Fix`)
+   is decided again. Each pass dispatches it at most once, so `max-rounds` bounds it, and a merge decision never
+   dispatches a fix. The job uses `environment` too, for the App key.
 
 ```yaml
 # .github/workflows/pr-fix.yml
@@ -360,7 +369,7 @@ jobs:
 ```
 
 The fixer GitHub App needs `Contents: Read and write`, `Pull requests: Read and write`, `Issues: Read`,
-`Actions: Read`, and `Checks: Read`. When it is not the agent App, add its bot to `trusted-bots` of the
+`Actions: Read` (`Read and write` with `merge-workflow`), and `Checks: Read`. When it is not the agent App, add its bot to `trusted-bots` of the
 [resume caller](#resume) so its handoffs can be resumed. Do not grant it `Workflows`: GitHub then rejects any push that changes
 `.github/workflows/**`.
 
@@ -380,7 +389,8 @@ The fixer GitHub App needs `Contents: Read and write`, `Pull requests: Read and 
 | `ai-skills-ref` | `v0.4.0` | `fbrissi/ai-skills` tag or SHA used with `ai-skills`. |
 | `base-skills-path` | `.rulesync/skills` | Skills directory read from the base commit with `base`. |
 | `check-name` | `PR Fix` | Check run name. |
-| `environment` | `pr-fix` | Environment of the fix job; its secrets are visible to the job. |
+| `merge-workflow` | `""` | Workflow dispatched with `pr_number` after a successful pass, for example `merge-decision.yml`. Needs `Actions: Read and write` on the fixer App. Empty disables it. |
+| `environment` | `pr-fix` | Environment of the fix and finish jobs; its secrets are visible to them. |
 | `agent-client-id` | `AGENT_APP_CLIENT_ID` | Client ID of the fixer GitHub App. |
 
 `harness`, `opencode-plugins` (default `""`), `opencode-model`, `opencode-variant`, `claude-model`, `claude-effort`,
@@ -530,7 +540,7 @@ for the current one, and only the newest waiting run is kept.
 Do these once per repository, in this order:
 
 1. **Releases.** Tag `fbrissi/ai-skills` first (the agents and skills, pinned by `ai-skills-ref`, default
-   `v0.8.0`), then release this repository: the reusable workflows call `actions/ai-task@v1` and
+   `v0.8.1`), then release this repository: the reusable workflows call `actions/ai-task@v1` and
    `actions/ai-delivery@v1`, so a workflow only works once a `v1` release contains those actions. Callers then use
    `@v1` (or a pinned `@v1.8.0`).
 2. **GitHub App** for the agent, installed on the repository, with these repository permissions:
@@ -1321,7 +1331,7 @@ jobs:
 Task parameters are the [`ai-task` action inputs](actions/ai-task/README.md#inputs) under the same names: `task`,
 `source`, `source-tracker`, `source-language`, `milestone`, `issue`, `branch`, `base-branch`, `milestone-template`,
 `output-language`, `status-labels`, `project`, `project-status-field`, `project-status-options`, `research-sources`, `instructions`, `context` (deprecated alias), `profile`,
-`implement-workflow`, `max-parallel`, `skills`, `agents`, and `ai-skills-ref` (default `v0.8.0`). The workflow adds:
+`implement-workflow`, `max-parallel`, `skills`, `agents`, and `ai-skills-ref` (default `v0.8.1`). The workflow adds:
 
 | Input | Default | Description |
 |---|---|---|

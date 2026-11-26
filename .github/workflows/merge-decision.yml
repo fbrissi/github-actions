@@ -268,7 +268,7 @@ jobs:
             skills=''
           fi
 
-          delimiter="PROMPT_$(uuidgen)"
+          delimiter="PROMPT_$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
           {
             echo "harness=$harness"
             echo "skills=$skills"

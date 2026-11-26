@@ -10,6 +10,7 @@ from a secret store instead of GitHub secrets (a reusable workflow only accepts 
 | `fix-gate` | `checks: write`, `issues: read`, `pull-requests: read` (the job's `GITHUB_TOKEN` is enough) | Outputs `action` `fix`, `escalate`, or `skip` with the rules of [PR Fix](../../README.md#pr-fix), and creates the `check-name` check run for a `fix`. |
 | `fix-record` | GitHub App token with `pull-requests: write` | Posts the `<!-- pr-fix round=N head=<sha> -->` comment `fix-gate` counts. |
 | `fix-finish` | `checks: write` | Completes the check run from `result`. |
+| `merge-dispatch` | `actions: write` (a GitHub App token, or the job's `GITHUB_TOKEN`) | Dispatches `merge-workflow` with `pr_number` on the default branch, so a merge decision skipped while a fix pass ran is decided again; nothing without `merge-workflow`, a notice when the workflow is not on the default branch. |
 | `merge-gate` | `actions`, `checks`, `issues`, `pull-requests`, and `statuses` read | Outputs `action` `decide` or `skip` with the rules of [Merge Decision](../../README.md#merge-decision); `request_review` is `true` when human approvals are missing. |
 | `merge-record` | GitHub App token with `pull-requests: write` | Posts the `<!-- merge-decision head=<sha> -->` comment, so each head commit is decided once. |
 
@@ -41,7 +42,7 @@ jobs:
 
 | Input | Default | Description |
 |---|---|---|
-| `command` | – (required) | `fix-gate`, `fix-record`, `fix-finish`, `merge-gate`, or `merge-record`. |
+| `command` | – (required) | `fix-gate`, `fix-record`, `fix-finish`, `merge-dispatch`, `merge-gate`, or `merge-record`. |
 | `github-token` | `github.token` | Token for the GitHub API (see the table above). |
 | `pr-number` | `""` | Pull request number. |
 | `opt-in-label` | `ai:auto-fix` | `fix-gate`: opt-in label. |
@@ -56,6 +57,7 @@ jobs:
 | `round`, `start-sha`, `outcome` | `""` | `fix-record`: round, starting head commit, and harness outcome. |
 | `head-sha` | `""` | `merge-record`: decided head commit. |
 | `result`, `check-run-id` | `""` | `fix-finish`: fix job result and the check run to complete. |
+| `merge-workflow` | `""` | `merge-dispatch`: workflow file to dispatch, for example `merge-decision.yml`. |
 
 Outputs: `action`, `pr_number`, `round`, `head_ref`, `head_sha`, `base_ref`, `base_sha`, `check_run_id`,
 `required_approvals`, and `request_review`.

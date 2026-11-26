@@ -4,12 +4,15 @@ on:
   workflow_call:
     inputs:
       fix-workflow:
-        description: Workflow dispatched with `pr_number` when a review asks for changes or comments. Empty disables it.
+        description: Workflow dispatched with `pr_number` when a review asks for changes or comments (except a clean grade, which goes to `merge-workflow`). Empty disables it.
         required: false
         type: string
         default: pr-fix.yml
       merge-workflow:
-        description: Workflow dispatched with `pr_number` when a review approves, or when `merge-check-name` completes successfully. Empty disables it.
+        description: >-
+          Workflow dispatched with `pr_number` when a review approves, when a `commented` review is a clean grade (only
+          `★★★★★`, plus `Ticket:` lines, with no inline comments and no unresolved thread on the pull request), or when
+          `merge-check-name` completes successfully. Empty disables it.
         required: false
         type: string
         default: merge-decision.yml
@@ -87,6 +90,27 @@ jobs:
               }
             }
 
+            async function unresolvedThreads(prNumber) {
+              let count = 0;
+              let cursor = null;
+              do {
+                const result = await github.graphql(
+                  `query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+                    repository(owner: $owner, name: $repo) {
+                      pullRequest(number: $number) {
+                        reviewThreads(first: 100, after: $cursor) { nodes { isResolved } pageInfo { hasNextPage endCursor } }
+                      }
+                    }
+                  }`,
+                  { owner, repo, number: prNumber, cursor },
+                );
+                const threads = result.repository.pullRequest.reviewThreads;
+                count += threads.nodes.filter((thread) => !thread.isResolved).length;
+                cursor = threads.pageInfo.hasNextPage ? threads.pageInfo.endCursor : null;
+              } while (cursor);
+              return count;
+            }
+
             if (context.eventName === 'pull_request_review') {
               const { review, pull_request: pullRequest } = context.payload;
               const author = review.user?.login ?? '';
@@ -100,20 +124,31 @@ jobs:
                   summary.push('Skipped: merge-workflow is empty.');
                 }
               } else if (state === 'changes_requested' || state === 'commented') {
-                let actionable = state === 'changes_requested' || Boolean(review.body?.trim());
-                let replyOnly = false;
-                if (!actionable) {
-                  const comments = await github.paginate(github.rest.pulls.listCommentsForReview, {
-                    owner,
-                    repo,
-                    pull_number: pullRequest.number,
-                    review_id: review.id,
-                    per_page: 100,
-                  });
-                  actionable = comments.length > 0;
-                  replyOnly = actionable && comments.every((comment) => comment.in_reply_to_id);
-                }
-                if (!fixWorkflow) {
+                const comments = await github.paginate(github.rest.pulls.listCommentsForReview, {
+                  owner,
+                  repo,
+                  pull_number: pullRequest.number,
+                  review_id: review.id,
+                  per_page: 100,
+                });
+                const hasBody = Boolean(review.body?.trim());
+                const actionable = state === 'changes_requested' || hasBody || comments.length > 0;
+                const replyOnly = state === 'commented' && !hasBody && comments.length > 0 && comments.every((comment) => comment.in_reply_to_id);
+                // A reviewer that cannot approve (for example its own pull request) leaves a clean grade as a comment:
+                // the top grade alone (plus `Ticket:` lines), no inline comments, and no unresolved thread on the PR.
+                const lines = (review.body ?? '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+                const cleanGrade = state === 'commented'
+                  && comments.length === 0
+                  && lines[0] === '★★★★★'
+                  && lines.slice(1).every((line) => /^Ticket:/i.test(line))
+                  && (await unresolvedThreads(pullRequest.number)) === 0;
+                if (cleanGrade) {
+                  if (mergeWorkflow) {
+                    await dispatch(mergeWorkflow, pullRequest.number);
+                  } else {
+                    summary.push('Skipped: the review is a clean grade and merge-workflow is empty.');
+                  }
+                } else if (!fixWorkflow) {
                   summary.push('Skipped: fix-workflow is empty.');
                 } else if (ignored.has(author.toLowerCase())) {
                   summary.push(`Skipped: reviews by ${author} are ignored.`);

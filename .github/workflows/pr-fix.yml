@@ -102,6 +102,14 @@ on:
         required: false
         type: string
         default: ""
+      merge-workflow:
+        description: >-
+          Workflow dispatched with `pr_number` on the default branch after a successful pass, for example
+          `merge-decision.yml`, so a merge decision skipped while the pass ran is decided again. The fixer App then needs
+          `Actions: Read and write`. Empty disables it.
+        required: false
+        type: string
+        default: ""
       check-name:
         description: Name of the check run reported on the PR head commit.
         required: false
@@ -284,7 +292,7 @@ jobs:
             skills=''
           fi
 
-          delimiter="PROMPT_$(uuidgen)"
+          delimiter="PROMPT_$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
           {
             echo "harness=$harness"
             echo "skills=$skills"
@@ -464,6 +472,8 @@ jobs:
     runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
     permissions:
       checks: write
+    environment:
+      name: ${{ inputs.environment }}
     steps:
       - name: Complete check run
         uses: fbrissi/github-actions/actions/pr-gate@v1
@@ -472,3 +482,39 @@ jobs:
           result: ${{ needs.fix.result }}
           check-run-id: ${{ needs.gate.outputs.check_run_id }}
           check-name: ${{ inputs.check-name }}
+
+      - name: Generate GitHub App token
+        id: app-token
+        if: ${{ needs.fix.result != 'success' || inputs.merge-workflow != '' }}
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+          permission-actions: ${{ inputs.merge-workflow != '' && 'write' || '' }}
+          permission-issues: read
+          permission-pull-requests: write
+
+      # Runs after the check run is complete, so the merge gate no longer sees this pass as a running check.
+      - name: Dispatch the merge decision
+        if: ${{ needs.fix.result == 'success' && inputs.merge-workflow != '' }}
+        uses: fbrissi/github-actions/actions/pr-gate@v1
+        with:
+          command: merge-dispatch
+          github-token: ${{ steps.app-token.outputs.token }}
+          pr-number: ${{ needs.gate.outputs.pr_number }}
+          merge-workflow: ${{ inputs.merge-workflow }}
+
+      # A failed pass would otherwise leave the pull request waiting with no sign of it.
+      - name: Hand off a failed pass
+        if: ${{ needs.fix.result != 'success' }}
+        uses: fbrissi/github-actions/actions/ai-delivery@v1
+        with:
+          command: handoff
+          github-token: ${{ steps.app-token.outputs.token }}
+          task: pr-fix
+          pr: ${{ needs.gate.outputs.pr_number }}
+          marker: "<!-- pr-fix failed -->"
+          escalation-label: ${{ inputs.escalation-label }}
+          blocker: >-
+            The automatic fix pass failed before it finished, so review feedback may still be unanswered; read the run
+            linked below, fix its cause (for example a runner or credential problem), then resume.

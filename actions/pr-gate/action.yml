@@ -6,10 +6,10 @@ author: Filipe Bojikian Rissi
 
 inputs:
   command:
-    description: "`fix-gate`, `fix-record`, `fix-finish`, `merge-gate`, or `merge-record`."
+    description: "`fix-gate`, `fix-record`, `fix-finish`, `merge-dispatch`, `merge-gate`, or `merge-record`."
     required: true
   github-token:
-    description: Token for the GitHub API. `fix-gate` needs `checks` write and `issues` and `pull-requests` read; `fix-finish` needs `checks` write; `merge-gate` needs `actions`, `checks`, `issues`, `pull-requests`, and `statuses` read; the record commands need a GitHub App token with `pull-requests` write, because only bot comments count as markers.
+    description: Token for the GitHub API. `fix-gate` needs `checks` write and `issues` and `pull-requests` read; `fix-finish` needs `checks` write; `merge-dispatch` needs `actions` write; `merge-gate` needs `actions`, `checks`, `issues`, `pull-requests`, and `statuses` read; the record commands need a GitHub App token with `pull-requests` write, because only bot comments count as markers.
     required: false
     default: ${{ github.token }}
   pr-number:
@@ -74,6 +74,10 @@ inputs:
     default: ""
   check-run-id:
     description: "`fix-finish`: check run to complete (the `check_run_id` output of `fix-gate`)."
+    required: false
+    default: ""
+  merge-workflow:
+    description: "`merge-dispatch`: workflow file dispatched with `pr_number` on the default branch, for example `merge-decision.yml`. Empty dispatches nothing."
     required: false
     default: ""
 
@@ -150,6 +154,7 @@ runs:
         PR_GATE_HEAD_SHA: ${{ inputs.head-sha }}
         PR_GATE_RESULT: ${{ inputs.result }}
         PR_GATE_CHECK_RUN_ID: ${{ inputs.check-run-id }}
+        PR_GATE_MERGE_WORKFLOW: ${{ inputs.merge-workflow }}
       run: node "$GITHUB_ACTION_PATH/main.mjs"
 
 branding:

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { envName, fixFinish, fixGate, fixRecord, mergeGate, mergeRecord, readContext } from './main.mjs';
+import { envName, fixFinish, fixGate, fixRecord, mergeDispatch, mergeGate, mergeRecord, readContext } from './main.mjs';
 
 const REPO = 'octo/app';
 const HEAD = 'a'.repeat(40);
@@ -150,6 +150,37 @@ describe('fix-record and fix-finish', () => {
     assert.equal(api.calls.at(-1).body.conclusion, 'failure');
     await fixFinish(ctxFor({ result: 'success', 'check-run-id': '99' }), api);
     assert.equal(api.calls.at(-1).body.conclusion, 'success');
+  });
+});
+
+describe('merge-dispatch', () => {
+  const dispatchRepo = (dispatch = {}) => fakeApi([
+    ['GET', /^\/repos\/octo\/app$/, { default_branch: 'main' }],
+    ['POST', /^\/repos\/octo\/app\/actions\/workflows\/merge-decision\.yml\/dispatches$/, dispatch]
+  ]);
+
+  it('dispatches the merge workflow on the default branch', async () => {
+    const api = dispatchRepo();
+    const result = await mergeDispatch(ctxFor({ 'pr-number': '#7', 'merge-workflow': 'merge-decision.yml' }), api);
+    assert.deepEqual(api.calls.at(-1).body, { ref: 'main', inputs: { pr_number: '7' } });
+    assert.match(result.summary[0], /Dispatched merge-decision\.yml for PR #7/);
+  });
+
+  it('dispatches nothing without a merge workflow', async () => {
+    const api = dispatchRepo();
+    const result = await mergeDispatch(ctxFor({ 'pr-number': '7' }), api);
+    assert.equal(api.calls.length, 0);
+    assert.match(result.summary[0], /No merge workflow/);
+  });
+
+  it('skips with a notice when the workflow is not on the default branch', async () => {
+    const api = fakeApi([['GET', /^\/repos\/octo\/app$/, { default_branch: 'main' }]]);
+    const result = await mergeDispatch(ctxFor({ 'pr-number': '7', 'merge-workflow': 'merge-decision.yml' }), api);
+    assert.match(result.notice, /not on main/);
+  });
+
+  it('refuses a workflow that is not a file name', async () => {
+    await assert.rejects(mergeDispatch(ctxFor({ 'pr-number': '7', 'merge-workflow': '../x.yml' }), dispatchRepo()), /workflow file name/);
   });
 });
 

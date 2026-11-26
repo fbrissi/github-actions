@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.11.0
+
+Release order: `fbrissi/ai-skills` `v0.8.1` first, then this release.
+
+- **Portable heredoc delimiters:** `pr-fix.yml`, `merge-decision.yml`, `code-review.yml`, and `release.yml` built
+  their `GITHUB_OUTPUT` delimiters with `uuidgen`, which self-hosted runners without util-linux lack (`uuidgen: command
+  not found` failed the step). They now read 16 random bytes with `od` from `/dev/urandom`.
+- **PR Fix:** a failed pass posts a `pr-fix` handoff on the pull request (marker `<!-- pr-fix failed -->`) that
+  mentions the requester and links the run, instead of only failing the check run. New input `merge-workflow`
+  (default empty): after a successful pass, **Finish PR Fix** dispatches it with `pr_number` once the check run is
+  complete, so a merge decision skipped with `checks still running: PR Fix` is decided again. It needs `Actions: Read
+  and write` on the fixer App; one dispatch per pass, so `max-rounds` bounds it. The finish job now uses
+  `environment` (for the App key) like the fix job.
+- **pr-gate:** new `merge-dispatch` command and `merge-workflow` input.
+- **PR Feedback Dispatch:** a `commented` review that is only a clean `★★★★★` grade (plus `Ticket:` lines), with no
+  inline comments and no unresolved thread on the pull request, dispatches `merge-workflow` instead of
+  `fix-workflow`. A reviewer that cannot approve its own pull request leaves its approval that way, and the fix pass
+  it used to start had nothing to do. Merge gates and human approval rules are unchanged.
+- **AI Task:** `app-token-permission-issue-fields` reaches create-github-app-token through the step environment
+  (`INPUT_PERMISSION-ISSUE-FIELDS`, which the action reads for every permission) instead of an undeclared input, so
+  the runner no longer warns `Unexpected input(s) 'permission-issue-fields'`. `ai-skills-ref` defaults to `v0.8.1`,
+  whose refinement skills fill empty Start and Target dates.
+
 ## v1.10.0
 
 - **AI Task:** new `dependency-update` task, run by the ai-skills `dependency-updater` agent with the
