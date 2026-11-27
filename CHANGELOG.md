@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.16.1
+
+Requires `fbrissi/ai-skills` `v0.13.1`.
+
+- **Social content:** the default `skills-ref` of `social-content-generate.yml`, `social-content-adjust.yml`,
+  `social-content-publish.yml` and the `social-content` action moves to `v0.13.1`: `copy-guard` rejects unsourced
+  numbers and relative days in cron-published items and reads the text drawn in media, `video-shorts` draws the
+  profile's `video.screen_disclaimer` under product screens and refuses focus boxes that cut UI text, and the review
+  issue shows each item's link. Non-breaking: `video.screen_disclaimer` is optional, and profiles without it keep
+  rendering with a warning.
+
 ## v1.16.0
 
 Requires `fbrissi/ai-skills` `v0.13.0` (platform-policy fixes and the LinkedIn publisher).
