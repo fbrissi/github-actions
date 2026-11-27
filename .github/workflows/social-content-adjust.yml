@@ -1,0 +1,328 @@
+name: Social Content Adjust
+
+on:
+  workflow_call:
+    inputs:
+      command:
+        description: Slash command that asks for an adjust; keep it equal to the profile's `review.commands.adjust`.
+        required: false
+        type: string
+        default: /adjust
+      profile:
+        description: Social content profile in the calling repository.
+        required: false
+        type: string
+        default: docs/ai/social-content.md
+      label:
+        description: Label of the review issues; keep it equal to the profile's `review.label`.
+        required: false
+        type: string
+        default: marketing-content
+      drive-root:
+        description: Google Drive root folder of the batches. Empty uses the profile's `review.drive_root`.
+        required: false
+        type: string
+        default: ""
+      instructions:
+        description: Extra instructions for every adjust run, appended to the agent instructions.
+        required: false
+        type: string
+        default: ""
+      video:
+        description: Install the video tools (ffmpeg, Piper TTS) and the `video-shorts` skill for Facebook and Instagram. YouTube always gets them.
+        required: false
+        type: boolean
+        default: true
+      extra-skills:
+        description: Whitespace-separated optional skills the agents use when installed.
+        required: false
+        type: string
+        default: ""
+      skills-ref:
+        description: Tag or commit SHA of fbrissi/ai-skills with the social content agents and skills.
+        required: false
+        type: string
+        default: v0.12.0
+      harness:
+        description: AI harness, `opencode` or `claude`. Empty uses the `AI_HARNESS` variable, then `claude`.
+        required: false
+        type: string
+        default: ""
+      opencode-model:
+        description: OpenCode model in `provider/model` form. Empty uses the `OPENCODE_MODEL` variable; required by the `opencode` harness.
+        required: false
+        type: string
+        default: ""
+      opencode-variant:
+        description: OpenCode model variant. Empty uses the `OPENCODE_VARIANT` variable.
+        required: false
+        type: string
+        default: ""
+      claude-model:
+        description: Claude Code model alias or full model ID. Empty uses the `CLAUDE_MODEL` variable.
+        required: false
+        type: string
+        default: ""
+      claude-effort:
+        description: Claude Code effort level. Empty uses the `CLAUDE_EFFORT` variable.
+        required: false
+        type: string
+        default: ""
+      timeout-minutes:
+        description: Maximum agent run time in minutes.
+        required: false
+        type: number
+        default: 60
+      job-timeout-minutes:
+        description: Timeout of the adjust job; keep it above `timeout-minutes`.
+        required: false
+        type: number
+        default: 90
+      agent-client-id:
+        description: Client ID of an optional GitHub App that edits the issue. Empty uses the `AGENT_APP_CLIENT_ID` variable; without an App (or its key) the job uses `GITHUB_TOKEN`.
+        required: false
+        type: string
+        default: ""
+      google-drive-client-id:
+        description: Google OAuth client ID of the Drive app. Empty uses the `GOOGLE_DRIVE_CLIENT_ID` variable, then secret.
+        required: false
+        type: string
+        default: ""
+      environment:
+        description: GitHub environment of the adjust job. Empty runs without one.
+        required: false
+        type: string
+        default: ""
+      runs-on:
+        description: Runner label. Empty uses the `CI_RUNNER` variable, then `ubuntu-latest`. Needs Docker, apt, and Python 3.10+.
+        required: false
+        type: string
+        default: ""
+    secrets:
+      AGENT_APP_PRIVATE_KEY:
+        description: Private key of the optional GitHub App.
+        required: false
+      OPEN_AI_TOKEN:
+        description: OpenAI API key for the `opencode` harness.
+        required: false
+      ANTHROPIC_API_KEY:
+        description: Anthropic API key for the `claude` harness.
+        required: false
+      CLAUDE_CODE_OAUTH_TOKEN:
+        description: Claude Code OAuth token for the `claude` harness, used when `ANTHROPIC_API_KEY` is empty.
+        required: false
+      GOOGLE_DRIVE_CLIENT_ID:
+        description: Google OAuth client ID, when it is kept as a secret instead of an input or variable.
+        required: false
+      GOOGLE_DRIVE_CLIENT_SECRET:
+        description: Google OAuth client secret of the Drive app.
+        required: true
+      GOOGLE_DRIVE_REFRESH_TOKEN:
+        description: OAuth refresh token with the `drive.file` scope.
+        required: true
+      GOOGLE_API_KEY:
+        description: Optional Google API key that lists a public Drive music folder.
+        required: false
+
+permissions: {}
+
+jobs:
+  adjust:
+    name: Social Content Adjust
+    # Cheap pre-filter; the gate checks the real permission, the label, and the batch markers.
+    if: >-
+      ${{ github.event_name == 'issue_comment' && github.event.action == 'created'
+      && !github.event.issue.pull_request
+      && startsWith(github.event.comment.body, inputs.command)
+      && github.event.comment.user.type != 'Bot' }}
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      issues: write
+    timeout-minutes: ${{ inputs.job-timeout-minutes }}
+    environment:
+      name: ${{ inputs.environment }}
+    # Shared with Social Content Publish: one run reads and writes an issue body at a time. The gate runs inside the
+    # group, so a queued command is checked again against the issue as it is when the run starts.
+    concurrency:
+      group: fbrissi-social-content-${{ github.repository }}-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    steps:
+      - name: Check settings
+        id: settings
+        env:
+          HARNESS: ${{ inputs.harness || vars.AI_HARNESS }}
+          OPENCODE_MODEL: ${{ inputs.opencode-model || vars.OPENCODE_MODEL }}
+          APP_CLIENT_ID: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          HAS_APP_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY != '' }}
+          HAS_CLAUDE_CREDENTIAL: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+          HAS_DRIVE_CLIENT_ID: ${{ inputs.google-drive-client-id != '' || vars.GOOGLE_DRIVE_CLIENT_ID != '' || secrets.GOOGLE_DRIVE_CLIENT_ID != '' }}
+        run: |
+          set -euo pipefail
+          harness="${HARNESS:-claude}"
+          case "$harness" in
+            opencode | claude) ;;
+            *)
+              echo "::error::Unsupported harness '${harness}'. Use 'opencode' or 'claude'."
+              exit 1
+              ;;
+          esac
+          if [ "$harness" = 'opencode' ] && [ -z "$OPENCODE_MODEL" ]; then
+            echo '::error::The opencode harness requires the opencode-model input or the OPENCODE_MODEL variable.'
+            exit 1
+          fi
+          if [ "$harness" = 'claude' ] && [ "$HAS_CLAUDE_CREDENTIAL" != 'true' ]; then
+            echo '::error::The claude harness requires the ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN secret.'
+            exit 1
+          fi
+          if [ "$HAS_DRIVE_CLIENT_ID" != 'true' ]; then
+            echo '::error::The google-drive-client-id input, or the GOOGLE_DRIVE_CLIENT_ID variable or secret, is required.'
+            exit 1
+          fi
+          app=false
+          if [ -n "$APP_CLIENT_ID" ] && [ "$HAS_APP_KEY" = 'true' ]; then
+            app=true
+          fi
+          {
+            echo "harness=$harness"
+            echo "app=$app"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Generate GitHub App token
+        id: app-token
+        if: ${{ steps.settings.outputs.app == 'true' }}
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-issues: write
+
+      - name: Check command
+        id: gate
+        uses: fbrissi/github-actions/actions/social-content@v1
+        with:
+          command: gate
+          github-token: ${{ steps.app-token.outputs.token || github.token }}
+          issue: ${{ github.event.issue.number }}
+          comment-id: ${{ github.event.comment.id }}
+          slash-command: ${{ inputs.command }}
+          label: ${{ inputs.label }}
+          # Inside the issue group, so no approval can land between this check and the agent run.
+          mode: adjust
+
+      - name: Resolve agent settings
+        id: agent-settings
+        if: ${{ steps.gate.outputs.allowed == 'true' }}
+        env:
+          PLATFORM: ${{ steps.gate.outputs.platform }}
+          VIDEO: ${{ inputs.video }}
+          EXTRA_SKILLS: ${{ inputs.extra-skills }}
+        run: |
+          set -euo pipefail
+          video=false
+          skills='social-content-plan copy-guard image-cards social-review'
+          if [ "$PLATFORM" = 'youtube' ] || [ "$VIDEO" = 'true' ]; then
+            video=true
+            skills="$skills video-shorts"
+          fi
+          for skill in $EXTRA_SKILLS; do
+            skills="$skills $skill"
+          done
+          {
+            echo "video=$video"
+            echo "skills=$skills"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        if: ${{ steps.gate.outputs.allowed == 'true' }}
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        if: ${{ steps.gate.outputs.allowed == 'true' }}
+        with:
+          node-version: 24
+
+      - name: Build agent prompt
+        id: prompt
+        if: ${{ steps.gate.outputs.allowed == 'true' }}
+        uses: fbrissi/github-actions/actions/social-content@v1
+        with:
+          command: prompt
+          mode: adjust
+          platform: ${{ steps.gate.outputs.platform }}
+          issue: ${{ github.event.issue.number }}
+          profile: ${{ inputs.profile }}
+          label: ${{ inputs.label }}
+          drive-root: ${{ inputs.drive-root }}
+          instructions: ${{ inputs.instructions }}
+
+      - name: Install media tools
+        if: ${{ steps.gate.outputs.allowed == 'true' && steps.agent-settings.outputs.video == 'true' }}
+        uses: fbrissi/github-actions/actions/social-content@v1
+        with:
+          command: setup-media-tools
+
+      - name: Restore media cache
+        id: media-cache
+        if: ${{ steps.gate.outputs.allowed == 'true' }}
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            .cache/image-cards
+            .cache/video-shorts
+          key: social-content-media-${{ runner.os }}-${{ runner.arch }}-${{ inputs.skills-ref }}-${{ steps.agent-settings.outputs.video }}
+
+      - name: Run ${{ steps.gate.outputs.platform }}-content agent
+        id: agent
+        if: ${{ steps.gate.outputs.allowed == 'true' }}
+        continue-on-error: true
+        uses: fbrissi/github-actions/actions/ai-harness@v1
+        env:
+          GOOGLE_DRIVE_CLIENT_ID: ${{ inputs.google-drive-client-id || vars.GOOGLE_DRIVE_CLIENT_ID || secrets.GOOGLE_DRIVE_CLIENT_ID }}
+          GOOGLE_DRIVE_CLIENT_SECRET: ${{ secrets.GOOGLE_DRIVE_CLIENT_SECRET }}
+          GOOGLE_DRIVE_REFRESH_TOKEN: ${{ secrets.GOOGLE_DRIVE_REFRESH_TOKEN }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        with:
+          harness: ${{ steps.settings.outputs.harness }}
+          agent: ${{ steps.gate.outputs.platform }}-content
+          agents: ${{ steps.gate.outputs.platform }}-content
+          skills: ${{ steps.agent-settings.outputs.skills }}
+          skills-ref: ${{ inputs.skills-ref }}
+          prompt: ${{ steps.prompt.outputs.prompt }}
+          instructions: ${{ steps.prompt.outputs.instructions }}
+          opencode-model: ${{ inputs.opencode-model || vars.OPENCODE_MODEL }}
+          opencode-variant: ${{ inputs.opencode-variant || vars.OPENCODE_VARIANT }}
+          claude-model: ${{ inputs.claude-model || vars.CLAUDE_MODEL }}
+          claude-effort: ${{ inputs.claude-effort || vars.CLAUDE_EFFORT }}
+          timeout-minutes: ${{ inputs.timeout-minutes }}
+          openai-api-key: ${{ secrets.OPEN_AI_TOKEN }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github-token: ${{ steps.app-token.outputs.token || github.token }}
+
+      - name: Save media cache
+        if: ${{ steps.agent.outcome == 'success' && steps.media-cache.outputs.cache-hit != 'true' && hashFiles('.cache/image-cards/**', '.cache/video-shorts/**') != '' }}
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            .cache/image-cards
+            .cache/video-shorts
+          key: ${{ steps.media-cache.outputs.cache-primary-key }}
+
+      - name: Report adjust
+        if: ${{ !cancelled() && steps.gate.outputs.allowed == 'true' }}
+        uses: fbrissi/github-actions/actions/social-content@v1
+        with:
+          command: adjust-report
+          github-token: ${{ steps.app-token.outputs.token || github.token }}
+          issue: ${{ github.event.issue.number }}
+          before-revision: ${{ steps.gate.outputs.revision }}
+          outcome: ${{ steps.agent.outcome || 'failure' }}
+
+      - name: Fail on agent error
+        if: ${{ steps.agent.outcome == 'failure' }}
+        run: |
+          echo '::error::The adjust agent failed; the issue has a comment with the run link.'
+          exit 1

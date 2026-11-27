@@ -21,9 +21,13 @@ deploys, credential rotation) stays in each project.
 | [`release-note.yml`](#release-note) | Reusable workflow | Requires each pull request to add one changelog release. |
 | [`release.yml`](#release) | Reusable workflow | Tags and publishes the changelog release, then optionally deploys it. |
 | [`terraform-permissions.yml`](#terraform-permissions) | Reusable workflow | Fails before merge when the Cloudflare Terraform token lacks a permission. |
+| [`social-content-generate.yml`](#generate) | Reusable workflow | Generates a Facebook, Instagram, or YouTube content batch per platform with its fbrissi/ai-skills agent and opens the review issue (deterministic fallback when the agent does not). |
+| [`social-content-adjust.yml`](#adjust) | Reusable workflow | Reworks the items a writer's `/adjust` comment names on a review issue with the platform agent. |
+| [`social-content-publish.yml`](#publish) | Reusable workflow | Deterministic publishing of an approved batch: `/aprove` schedules Facebook and YouTube natively; scheduled runs publish Instagram items. |
 | [`ai-harness`](actions/ai-harness/README.md) | Composite action | Installs OpenCode or Claude Code (pinned) and runs one prompt. |
 | [`ai-task`](actions/ai-task/README.md) | Composite action | Validates an AI delivery task, installs its agents and skills, and runs it with `ai-harness`. |
 | [`ai-delivery`](actions/ai-delivery/README.md) | Composite action | Deterministic delivery steps: chain or hand off after a stage, handoff comments, resume, review requests. |
+| [`social-content`](actions/social-content/README.md) | Composite action | Deterministic social content steps: comment gate, prompt, review issue fallback, publisher runs, state, and reports. |
 | [`setup-gh`](actions/setup-gh/README.md) | Composite action | Makes `gh` available on any Linux runner: keeps the installed one, else installs a pinned, checksum-verified release without root. |
 | [`pr-gate`](actions/pr-gate/README.md) | Composite action | Deterministic PR follow-up gates and markers of `pr-fix.yml` and `merge-decision.yml`, for wrappers that load secrets at run time. |
 | [`terraform-cloud-wait`](actions/terraform-cloud-wait/README.md) | Composite action | Waits for the HCP Terraform apply of a commit. |
@@ -39,6 +43,9 @@ flowchart LR
   C4["pr-fix.yml and<br/>merge-decision.yml callers"] --> W4["pr-fix.yml<br/>merge-decision.yml"]
   C5["code-review.yml caller"] --> W6["code-review.yml"]
   C6["branch-sync.yml caller"] --> W7["branch-sync.yml"]
+  C7["social content callers"] --> W8["social-content-*.yml"]
+  W8 --> A5["social-content action"]
+  W8 --> A4
   W1 --> A1["ai-task action"]
   W1 --> A2["ai-delivery action"]
   W2 --> A2
@@ -1599,12 +1606,270 @@ and make it required: do not merge while it is red, because the release apply wo
 |---|---|
 | `CLOUDFLARE_API_TOKEN` | The Terraform Cloudflare token. Fork and Dependabot pull requests have none and get a "not checked" warning; any other run without it fails. |
 
+## Social Content
+
+Three reusable workflows run the social content flow of `fbrissi/ai-skills` (`v0.12.0`, `docs/social-content.md`
+there): an agent per platform (`facebook-content`, `instagram-content`, `youtube-content`) generates a batch and opens
+a review issue, writers ask for changes with `/adjust` or approve with `/aprove`, and deterministic publishers (no
+LLM) schedule or publish the approved batch. Everything project-specific lives in the caller's profile
+(`docs/ai/social-content.md`, from the ai-skills `social-profile-template.md`) and its secrets.
+
+```mermaid
+flowchart LR
+  C["weekly cron"] --> G["social-content-generate.yml<br/>one job per platform"]
+  G --> A["agent generate:<br/>plan, copy, media, guard,<br/>Drive upload, review issue"]
+  A -. "no issue opened" .-> F["open-review fallback:<br/>guard, validate, upload, issue"]
+  A --> I{"review issue<br/>label + manifest marker"}
+  F --> I
+  I -->|"/adjust id: change"| J["social-content-adjust.yml<br/>agent adjust issue"]
+  J --> I
+  I -->|"/aprove"| P["social-content-publish.yml"]
+  P -->|"Facebook, YouTube"| S["schedule natively now"]
+  P -->|"Instagram"| M["mark approved"]
+  K["Instagram cron"] --> P2["social-content-publish.yml<br/>sweep"] --> Q["publish due items,<br/>save state, close when done"]
+```
+
+The review issue is the batch's durable record: its first line is `<!-- social-content:batch platform=<p>
+batch=<id> revision=<n> -->` and its last line the gzip and base64 manifest marker, which holds the publishing state
+after every run (Drive holds the media). Only comments that start with the command and then a space or the end count,
+from people (never bots) whose `GET /repos/{owner}/{repo}/collaborators/{user}/permission` is `write`, `maintain`, or
+`admin`, on an open issue with the label and a consistent header and marker. Permission is the API's `role_name` (or
+`permission`), as in the ai-skills scripts, so a custom repository role does not count as write access.
+
+Concurrency and the issue body:
+
+- Adjust, approve, and manual publish runs of one issue share the group `fbrissi-social-content-<repo>-<issue>` with
+  `cancel-in-progress: false`, so human commands run one at a time and the gate checks each one again when it starts.
+- Scheduled Instagram sweeps use their own group, `fbrissi-social-content-sweep-<repo>-<issue>`, so a sweep never
+  displaces a waiting command; a missed sweep is picked up by the next one.
+- Because a sweep can overlap an adjust or approve, the publish workflow re-reads the body just before writing its
+  state. On the same batch revision it merges per item id, keeping entries another run wrote and taking only those this
+  run changed. When the revision moved (an adjust bumped it) it writes nothing and comments this run's results as a
+  note, so nothing published is lost; check those items before approving the new revision.
+- An adjust never overlaps a publisher run: its gate, inside the issue group, refuses `/adjust` on a batch that is
+  approved or has an item `scheduled`, `published`, or `unknown`, and replies that the changes belong in a new batch.
+  Sweeps publish only approved batches, and an approval cannot land while an adjust runs (same group), so the agent
+  never rewrites a body a publisher may be writing.
+- GitHub keeps one waiting job per group, and a newer one cancels it without a comment. Two quick commands on one issue
+  can therefore drop the first. A dropped `/adjust` is not lost: the next adjust reads every `/adjust` comment since the
+  last revision. A dropped `/aprove` must be repeated (an `/adjust` after it starts a new revision anyway).
+
+### Generate
+
+`social-content-generate.yml` runs one job per platform. Each job installs Node.js 24, ffmpeg and Piper TTS (`video`,
+always for YouTube; image cards render in Docker), restores the `.cache/image-cards` and `.cache/video-shorts` cache,
+and runs the platform agent through `ai-harness` in `generate` mode with the skills `social-content-plan copy-guard
+image-cards social-review` (plus `video-shorts`, and `extra-skills`). The agent uploads to Drive under
+`<drive root>/<Platform>/<date>/` and opens the issue. The agent step has `continue-on-error`: a deterministic step
+then opens the issue for each batch the agent wrote in this run that no open issue tracks, only after the copy guard
+and validation pass. The job fails when the agent failed and left no batch, or when a batch cannot be opened.
+
+```yaml
+# .github/workflows/social-content.yml
+name: Social Content
+
+on:
+  schedule:
+    - cron: "0 12 * * 5" # Friday 9:00 in America/Sao_Paulo
+  workflow_dispatch:
+    inputs:
+      start:
+        description: First date of the batch (YYYY-MM-DD); empty takes next week.
+        required: false
+        type: string
+      platforms:
+        description: Platforms to generate.
+        required: false
+        type: string
+        default: facebook instagram youtube
+
+permissions: {}
+
+jobs:
+  generate:
+    uses: fbrissi/github-actions/.github/workflows/social-content-generate.yml@v1
+    permissions:
+      contents: read
+      issues: write
+    with:
+      platforms: ${{ inputs.platforms || 'facebook instagram youtube' }}
+      start: ${{ inputs.start }}
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      GOOGLE_DRIVE_CLIENT_SECRET: ${{ secrets.GOOGLE_DRIVE_CLIENT_SECRET }}
+      GOOGLE_DRIVE_REFRESH_TOKEN: ${{ secrets.GOOGLE_DRIVE_REFRESH_TOKEN }}
+```
+
+| Input | Default | Description |
+|---|---|---|
+| `platforms` | `facebook instagram youtube` | Platforms, one job each (spaces or commas). |
+| `start` | `""` | First date of the batch, `YYYY-MM-DD`; empty takes the next week in the profile time zone. |
+| `profile` | `docs/ai/social-content.md` | Profile with the context and the `## Parameters` block. |
+| `label` | `marketing-content` | Review issue label; keep it equal to the profile's `review.label`. |
+| `drive-root` | `""` | Drive root folder; empty uses the profile's `review.drive_root`. |
+| `instructions` | `""` | Extra instructions for this run. |
+| `video` | `true` | Video tools and `video-shorts` for Facebook and Instagram; YouTube always gets them. |
+| `extra-skills` | `""` | Optional skills the agents use when installed, for example `copywriting social remotion-best-practices ffmpeg dev`. |
+| `skills-ref` | `v0.12.0` | fbrissi/ai-skills tag or SHA. |
+| `harness`, `opencode-model`, `opencode-variant`, `claude-model`, `claude-effort` | variables | See [Variables](#variables). |
+| `timeout-minutes` / `job-timeout-minutes` | `90` / `120` | Agent and job timeouts. |
+| `agent-client-id` | `AGENT_APP_CLIENT_ID` | Optional GitHub App; without it (or its key) the job uses `GITHUB_TOKEN`. |
+| `google-drive-client-id` | `GOOGLE_DRIVE_CLIENT_ID` variable, then secret | Google OAuth client ID of the Drive app. |
+| `environment` | `""` | Environment of the platform jobs. |
+| `runs-on` | `CI_RUNNER`, then `ubuntu-latest` | Runner label; needs Docker, apt, and Python 3.10+. |
+
+Secrets: `GOOGLE_DRIVE_CLIENT_SECRET` and `GOOGLE_DRIVE_REFRESH_TOKEN` (scope `drive.file`, required); `ANTHROPIC_API_KEY`
+or `CLAUDE_CODE_OAUTH_TOKEN` for `claude`, `OPEN_AI_TOKEN` for an `openai/` OpenCode model; optional
+`GOOGLE_DRIVE_CLIENT_ID`, `GOOGLE_API_KEY` (public music folder), and `AGENT_APP_PRIVATE_KEY`.
+
+### Adjust
+
+`social-content-adjust.yml` runs on the `issue_comment` `created` event. Inside the issue's concurrency group it runs
+the gate (which also refuses an approved or partly published batch, with a reply), then the platform agent of the issue's header in `adjust <issue>` mode, which regenerates only the items the
+writers' `/adjust <id>: <request>` comments name, bumps the revision, uploads, edits the body, and posts a revision
+comment. The workflow then comments whether a new revision came out, none did, or the run failed (the job fails too).
+
+```yaml
+# .github/workflows/social-content-adjust.yml
+name: Social Content Adjust
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  adjust:
+    if: >-
+      ${{ !github.event.issue.pull_request
+      && startsWith(github.event.comment.body, '/adjust')
+      && contains(github.event.issue.labels.*.name, 'marketing-content')
+      && github.event.comment.user.type != 'Bot'
+      && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) }}
+    uses: fbrissi/github-actions/.github/workflows/social-content-adjust.yml@v1
+    permissions:
+      contents: read
+      issues: write
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      GOOGLE_DRIVE_CLIENT_SECRET: ${{ secrets.GOOGLE_DRIVE_CLIENT_SECRET }}
+      GOOGLE_DRIVE_REFRESH_TOKEN: ${{ secrets.GOOGLE_DRIVE_REFRESH_TOKEN }}
+```
+
+Inputs: `command` (default `/adjust`, keep it equal to `review.commands.adjust`), and `profile`, `label`, `drive-root`,
+`instructions`, `video`, `extra-skills`, `skills-ref`, the harness and model inputs, `timeout-minutes` (60),
+`job-timeout-minutes` (90), `agent-client-id`, `google-drive-client-id`, `environment`, and `runs-on`, as in Generate.
+Secrets: the same as Generate.
+
+### Publish
+
+`social-content-publish.yml` has no LLM step. It runs the `facebook-publish`, `instagram-publish`, and
+`youtube-publish` scripts of `skills-ref` against the manifest in the issue marker, and writes the state back to the
+body after every run, even a failed one (published items are never redone; `failed` Instagram items are retried by the
+next scheduled run, Facebook and YouTube ones by a manual run or a new `/aprove`). The write merges with what other
+runs wrote, as described above. When it fails, or the batch moved to a new revision, the report says the state was not
+saved and neither confirms an approval nor closes the issue; fix it before publishing again. Scheduled runs download the batch media from Drive before the publisher decides what is due, so keep video
+batches and the sweep frequency within `job-timeout-minutes`.
+It has three entry points:
+
+- **Approval** (`issue_comment` starting with `command`, default `/aprove`): the gate, then
+  `review-batch.mjs approve`, which also requires the comment to be newer than the last revision comment and the body
+  to be at that revision. Facebook and YouTube download the media from Drive and schedule natively at once. Instagram
+  has no scheduling API: the approved batch is validated and recorded, and the scheduled runs publish it.
+- **Scheduled runs** (no comment, no `issue`): every open, approved `scheduled-platform` (`instagram`) batch with
+  items left, oldest first and one at a time, publishes up to `instagram-max` (1) due items per batch and run (an item
+  is due on its `date`). Run it several times a day when a batch has more than one item per day.
+- **Manual runs** (`issue` set): publish an approved issue again, with `retry` for Facebook or YouTube items left
+  `unknown` once you checked they are not live.
+
+Each run comments the item table on the issue (scheduled runs only when something changed or failed) and closes the
+issue when every item is scheduled, published, or stale (`publish_at` already passed; move it to a new batch).
+
+```yaml
+# .github/workflows/social-content-publish.yml
+name: Social Content Publish
+
+on:
+  issue_comment:
+    types: [created]
+  schedule:
+    - cron: "0 12,15,21 * * *" # Instagram: 9:00, 12:00, and 18:00 in America/Sao_Paulo
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Approved review issue to publish again.
+        required: true
+        type: string
+      retry:
+        description: Facebook or YouTube item ids to retry after a manual check.
+        required: false
+        type: string
+
+permissions: {}
+
+jobs:
+  publish:
+    if: >-
+      ${{ github.event_name != 'issue_comment'
+      || (!github.event.issue.pull_request
+      && startsWith(github.event.comment.body, '/aprove')
+      && contains(github.event.issue.labels.*.name, 'marketing-content')
+      && github.event.comment.user.type != 'Bot'
+      && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)) }}
+    uses: fbrissi/github-actions/.github/workflows/social-content-publish.yml@v1
+    permissions:
+      contents: read
+      issues: write
+    with:
+      issue: ${{ inputs.issue }}
+      retry: ${{ inputs.retry }}
+    secrets:
+      GOOGLE_DRIVE_CLIENT_SECRET: ${{ secrets.GOOGLE_DRIVE_CLIENT_SECRET }}
+      GOOGLE_DRIVE_REFRESH_TOKEN: ${{ secrets.GOOGLE_DRIVE_REFRESH_TOKEN }}
+      FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
+      YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+      YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+```
+
+| Input | Default | Description |
+|---|---|---|
+| `command` | `/aprove` | Approve command; keep it equal to `review.commands.approve`. |
+| `issue` | `""` | Manual run: the approved issue to publish again. |
+| `retry` | `""` | Manual run: comma-separated Facebook or YouTube item ids passed as `--retry`. |
+| `scheduled-platform` | `instagram` | Platform the scheduled runs sweep. |
+| `instagram-max` | `1` | Instagram items per batch and run. |
+| `instagram-media-prefix` | `marketing/instagram/{date}/{id}/` | R2 key prefix of the Instagram media. |
+| `profile`, `label`, `skills-ref` | as in Generate | Profile, label, and ai-skills ref. |
+| `facebook-page-id` | `FACEBOOK_PAGE_ID` | Page of the Facebook posts and of the linked Instagram account. |
+| `facebook-graph-version` | `FACEBOOK_GRAPH_VERSION`, then `v24.0` | Graph API version. |
+| `instagram-user-id` | `INSTAGRAM_USER_ID`, then the Page's account | Instagram professional account. |
+| `youtube-client-id` | `YOUTUBE_CLIENT_ID` | Google OAuth client ID of the YouTube app. |
+| `youtube-daily-upload-limit` | `YOUTUBE_DAILY_UPLOAD_LIMIT`, then `100` | Uploads per 24 hours. |
+| `google-drive-client-id` | `GOOGLE_DRIVE_CLIENT_ID` variable, then secret | Drive app that holds the approved media. |
+| `agent-client-id`, `environment`, `runs-on` | as in Generate | App, environment, runner. |
+| `job-timeout-minutes` | `60` | Timeout of each publish job. |
+
+Secrets, all optional so a caller passes only its platforms': `GOOGLE_DRIVE_CLIENT_SECRET`,
+`GOOGLE_DRIVE_REFRESH_TOKEN` (and `GOOGLE_DRIVE_CLIENT_ID`); `FACEBOOK_PAGE_ACCESS_TOKEN` (Facebook:
+`pages_manage_posts`, `pages_read_engagement`, `pages_show_list`; Instagram also `instagram_basic` and
+`instagram_content_publish`); `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REFRESH_TOKEN` (`youtube.upload`, `youtube.force-ssl`
+for captions, `youtube` for playlists); for Instagram media, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and
+`R2_ACCOUNT_ID` or `R2_ENDPOINT`, `R2_BUCKET`, `R2_PUBLIC_BASE_URL` (these four also read from variables of the same
+name); and `AGENT_APP_PRIVATE_KEY`.
+
+All three workflows need `contents: read` and `issues: write` on the caller job. With a GitHub App
+(`agent-client-id` and `AGENT_APP_PRIVATE_KEY`, `Contents` read and `Issues` read and write) the comments and issues
+come from the App; without one, `GITHUB_TOKEN` writes them, whose comments trigger no further workflows.
+
 ## Variables
 
 Reusable workflows read the `vars` context of the calling repository, so these configuration variables (repository,
 organization, or, for the review job, its `environment`) are used whenever the matching input is empty.
 
-The AI workflows (`code-review.yml`, `pr-fix.yml`, `merge-decision.yml`, and `ai-task.yml`) all take the inputs
+The AI workflows (`code-review.yml`, `pr-fix.yml`, `merge-decision.yml`, `ai-task.yml`, and the social content generate and adjust workflows) all take the inputs
 `harness`, `opencode-model`, `opencode-variant`, `claude-model`, and `claude-effort`, and resolve each one as the input,
 then the variable below, then the default (`claude` for the harness). Agents run with both harnesses. The
 `ai-harness` and `ai-task` actions take the same values as inputs only. Credentials: `opencode` needs
@@ -1618,10 +1883,14 @@ then the variable below, then the default (`claude` for the harness). Agents run
 | `OPENCODE_MODEL` | AI workflows | OpenCode model in `provider/model` form; required with `opencode`. |
 | `OPENCODE_VARIANT` | AI workflows | OpenCode model variant (provider-specific reasoning effort). |
 | `CLAUDE_MODEL`, `CLAUDE_EFFORT` | AI workflows | Claude Code model and effort. |
-| `AGENT_APP_CLIENT_ID` | AI workflows, `ai-resume.yml` | Client ID of the GitHub App the workflow acts as (set it per `environment` to use one App per role). |
+| `AGENT_APP_CLIENT_ID` | AI workflows, `ai-resume.yml`, social content workflows (optional) | Client ID of the GitHub App the workflow acts as (set it per `environment` to use one App per role). |
 | `JIRA_BASE_URL` | `ai-task.yml` | Jira base URL. |
 | `SENTRY_ORG`, `SENTRY_BASE_URL` | `ai-task.yml` | Sentry organization and base URL for the issue tasks. |
 | `AGENT_APP_ID` | `code-review.yml` | Deprecated fallback for `AGENT_APP_CLIENT_ID`. |
+| `GOOGLE_DRIVE_CLIENT_ID` | social content workflows | Google OAuth client ID of the Drive app. |
+| `FACEBOOK_PAGE_ID`, `FACEBOOK_GRAPH_VERSION`, `INSTAGRAM_USER_ID` | `social-content-publish.yml` | Facebook Page, Graph API version, Instagram account. |
+| `YOUTUBE_CLIENT_ID`, `YOUTUBE_DAILY_UPLOAD_LIMIT` | `social-content-publish.yml` | YouTube OAuth client ID and upload limit. |
+| `R2_ACCOUNT_ID`, `R2_ENDPOINT`, `R2_BUCKET`, `R2_PUBLIC_BASE_URL` | `social-content-publish.yml` | Public bucket of the Instagram media, when not kept as secrets. |
 
 ## Permissions
 
@@ -1640,6 +1909,7 @@ and grant per job:
 | `release-note.yml` | `contents: read` |
 | `release.yml` | `actions: write`, `contents: write` |
 | `terraform-permissions.yml` | `contents: read` |
+| `social-content-generate.yml`, `social-content-adjust.yml`, `social-content-publish.yml` | `contents: read`, `issues: write` |
 
 ## Security
 
@@ -1664,6 +1934,10 @@ and grant per job:
 - **Resume.** `ai-resume.yml` only acts on comments posted by the agent App bot (or `trusted-bots`), only when a
   person with write, maintain, or admin permission checks the box, and validates every marker value before it
   dispatches; anyone who can edit the comment could already run the same `gh workflow run` command.
+- **Social content.** `/adjust` and `/aprove` count only for people (never bots) with write, maintain, or admin
+  permission, checked through the API, on an open issue with the content label and matching markers. Publishing runs
+  no LLM; publisher tokens reach only the publish step, never the agents, and the Drive token is scoped to
+  `drive.file`.
 - The harnesses run with permission prompts disabled. Only review pull requests from trusted contributors, and do
   not run these workflows on `pull_request_target` with untrusted code.
 
