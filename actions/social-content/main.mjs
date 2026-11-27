@@ -106,7 +106,7 @@ export async function gate(ctx, api, log) {
     ? await getOrNull(api, `/repos/${repo}/collaborators/${encodeURIComponent(login)}/permission`)
     : null;
   const issueData = await getOrNull(api, `/repos/${repo}/issues/${issue}`);
-  const decision = gateDecision({ comment: data, issue: issueData, permission, command, label: ctx.label, issueNumber: issue });
+  const decision = gateDecision({ comment: data, issue: issueData, permission, command, label: ctx.label, issueNumber: issue, adjust: ctx.mode === 'adjust' });
   if (!decision.allowed) {
     log.notice(`${command} ignored: ${decision.reason}`);
     if (decision.kind === 'issue' && issueData && !issueData.pull_request) {

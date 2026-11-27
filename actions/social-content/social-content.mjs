@@ -67,7 +67,7 @@ export const isBot = (user) => user?.type === 'Bot' || /\[bot\]$/i.test(user?.lo
  * that agree. Returns the first failure with its kind (`commenter`, `unrelated`, or `issue`), so the caller stays
  * quiet for strangers and unrelated issues and answers writers on a review issue.
  */
-export function gateDecision({ comment, issue, permission, command, label, issueNumber }) {
+export function gateDecision({ comment, issue, permission, command, label, issueNumber, adjust = false }) {
   const reject = (kind, reason) => ({ allowed: false, kind, reason });
   if (!comment) return reject('commenter', 'The comment was not found.');
   if (!isCommand(comment.body, command)) return reject('commenter', `The comment does not start with ${command}.`);
@@ -75,7 +75,25 @@ export function gateDecision({ comment, issue, permission, command, label, issue
   if (!canWrite(permission)) return reject('commenter', `${comment.user?.login ?? 'The commenter'} has no write, maintain, or admin permission.`);
   const commentIssue = /\/issues\/(\d+)$/.exec(comment.issue_url ?? '')?.[1];
   if (commentIssue && Number(commentIssue) !== Number(issueNumber)) return reject('issue', `The comment is not on issue #${issueNumber}.`);
-  return issueDecision({ issue, label, issueNumber });
+  const decision = issueDecision({ issue, label, issueNumber });
+  if (!decision.allowed || !adjust) return decision;
+  const locked = adjustLock(decodeMarker(issue.body));
+  return locked ? reject('issue', locked) : decision;
+}
+
+export const LOCKED_STATUSES = ['scheduled', 'published', 'unknown'];
+
+/**
+ * Why a batch can no longer be adjusted, or null. Scheduled runs publish only approved batches, and an approval shares
+ * the issue's concurrency group with adjust, so refusing adjusts on approved or partly published batches means an
+ * adjust never rewrites a body that a publisher run may be writing at the same time.
+ */
+export function adjustLock(manifest) {
+  if (!manifest) return null;
+  const items = Object.entries(manifest.state ?? {}).filter(([, entry]) => LOCKED_STATUSES.includes(entry?.status)).map(([id, entry]) => `${id} (${entry.status})`);
+  if (items.length) return `the batch is already being published (${items.join(', ')}), so it cannot be adjusted. Plan the changes in a new batch; check unknown items on the platform first.`;
+  if (manifest.approval?.status === 'approved') return `revision ${manifest.approval.revision ?? manifest.review?.revision ?? 1} is already approved by ${manifest.approval.by ?? 'a writer'} and may be publishing, so it cannot be adjusted. Plan the changes in a new batch.`;
+  return null;
 }
 
 /** The issue half of the gate: an open review issue with the label, a known platform, and a matching marker. */

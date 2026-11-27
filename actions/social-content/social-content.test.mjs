@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  adjustLock,
   buildPrompt,
   canWrite,
   decodeMarker,
@@ -98,6 +99,27 @@ describe('gateDecision', () => {
     assert.match(gateDecision({ ...base, issue: { ...issue, pull_request: {} } }).reason, /pull request/);
     assert.match(gateDecision({ ...base, comment: { ...comment, issue_url: 'https://api.github.com/repos/o/r/issues/8' } }).reason, /not on issue #7/);
     assert.match(gateDecision({ ...base, issue: null }).reason, /not found/);
+  });
+
+  it('refuses an adjust on an approved or partly published batch, and allows it otherwise', () => {
+    const adjust = { ...base, command: '/adjust', comment: { ...comment, body: '/adjust a: shorter' }, adjust: true };
+    assert.equal(gateDecision(adjust).allowed, true);
+    const approved = manifestOf({ approval: { status: 'approved', by: 'ana', revision: 1 } });
+    const refused = gateDecision({ ...adjust, issue: { ...issue, body: bodyOf(approved) } });
+    assert.equal(refused.kind, 'issue');
+    assert.match(refused.reason, /revision 1 is already approved by ana/);
+    for (const status of ['scheduled', 'published', 'unknown']) {
+      const started = manifestOf({ state: { a: { status } } });
+      assert.match(gateDecision({ ...adjust, issue: { ...issue, body: bodyOf(started) } }).reason, new RegExp(`already being published \\(a \\(${status}\\)\\)`));
+    }
+    const failed = manifestOf({ state: { a: { status: 'failed', error: 'x' } } });
+    assert.equal(gateDecision({ ...adjust, issue: { ...issue, body: bodyOf(failed) } }).allowed, true);
+    assert.equal(gateDecision({ ...base, issue: { ...issue, body: bodyOf(approved) } }).allowed, true);
+  });
+
+  it('names no lock for a pending batch', () => {
+    assert.equal(adjustLock(manifestOf()), null);
+    assert.equal(adjustLock(null), null);
   });
 
   it('matches the label case-insensitively', () => {

@@ -133,6 +133,16 @@ describe('gate', () => {
     assert.match(reply.body.body, /actions\/runs\/99/);
   });
 
+  it('answers an adjust on an approved batch without running it', async () => {
+    const approved = { ...issue, body: bodyOf(manifestOf({ approval: { status: 'approved', by: 'ana', revision: 1 } })) };
+    const api = fakeApi(routes({ comment: commentOf('ana', '/adjust a: shorter'), issueData: approved }));
+    const result = await gate(ctxFor({ issue: '7', 'comment-id': '55', 'slash-command': '/adjust', mode: 'adjust' }), api, silent);
+    assert.equal(result.allowed, 'false');
+    const [reply] = posted(api, /\/issues\/7\/comments$/);
+    assert.match(reply.body.body, /`\/adjust` was not run: revision 1 is already approved by ana/);
+    assert.equal(posted(api, /\/reactions$/).length, 0);
+  });
+
   it('stays quiet on an unrelated issue', async () => {
     const api = fakeApi(routes({ issueData: { ...issue, labels: [], body: 'Feature request' } }));
     assert.equal((await gate(ctx, api, silent)).allowed, 'false');

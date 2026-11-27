@@ -26,7 +26,8 @@ Requires `fbrissi/ai-skills` `v0.12.0` (social content agents and skills), alrea
   - Adjust, approve, and manual runs of one issue share the `fbrissi-social-content-<repo>-<issue>` concurrency
     group; scheduled sweeps use `fbrissi-social-content-sweep-<repo>-<issue>`, so they never cancel a waiting command.
     The state write re-reads the issue body, merges per item on the same revision, and writes nothing (commenting the
-    run's results instead) when an adjust moved the batch to another revision. The GitHub App is optional (`agent-client-id`, `AGENT_APP_PRIVATE_KEY`); without it the jobs use
+    run's results instead) when an adjust moved the batch to another revision. `/adjust` is refused, with a reply, on
+    an approved batch or one with a scheduled, published, or unknown item, so an adjust never overlaps publishing. The GitHub App is optional (`agent-client-id`, `AGENT_APP_PRIVATE_KEY`); without it the jobs use
     `GITHUB_TOKEN`. Callers grant `contents: read` and `issues: write`.
 - **New `social-content` composite action** with the deterministic steps of those workflows (`fetch-skills`,
   `setup-media-tools`, `matrix`, `prompt`, `gate`, `target`, `pending`, `publish`, `save-state`, `report`,

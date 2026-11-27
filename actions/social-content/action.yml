@@ -46,7 +46,7 @@ inputs:
     required: false
     default: ""
   mode:
-    description: "`generate` or `adjust` (`prompt`); `approve`, `resume`, or `sweep` (`publish`); `publish` or `approved` (`report`)."
+    description: "`generate` or `adjust` (`prompt`); `adjust` also makes `gate` refuse an approved batch or one with a scheduled, published, or unknown item; `approve`, `resume`, or `sweep` (`publish`); `publish` or `approved` (`report`)."
     required: false
     default: ""
   start:

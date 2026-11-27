@@ -208,6 +208,8 @@ jobs:
           comment-id: ${{ github.event.comment.id }}
           slash-command: ${{ inputs.command }}
           label: ${{ inputs.label }}
+          # Inside the issue group, so no approval can land between this check and the agent run.
+          mode: adjust
 
       - name: Resolve agent settings
         id: agent-settings

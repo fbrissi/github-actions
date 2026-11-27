@@ -1645,9 +1645,11 @@ Concurrency and the issue body:
 - Because a sweep can overlap an adjust or approve, the publish workflow re-reads the body just before writing its
   state. On the same batch revision it merges per item id, keeping entries another run wrote and taking only those this
   run changed. When the revision moved (an adjust bumped it) it writes nothing and comments this run's results as a
-  note, so nothing published is lost; check those items before approving the new revision. An adjust agent that
-  finishes after an overlapping sweep writes the body from the batch it restored, so a sweep result can then only be
-  found in the sweep's comment; keep the sweep schedule away from the times people usually adjust.
+  note, so nothing published is lost; check those items before approving the new revision.
+- An adjust never overlaps a publisher run: its gate, inside the issue group, refuses `/adjust` on a batch that is
+  approved or has an item `scheduled`, `published`, or `unknown`, and replies that the changes belong in a new batch.
+  Sweeps publish only approved batches, and an approval cannot land while an adjust runs (same group), so the agent
+  never rewrites a body a publisher may be writing.
 - GitHub keeps one waiting job per group, and a newer one cancels it without a comment. Two quick commands on one issue
   can therefore drop the first. A dropped `/adjust` is not lost: the next adjust reads every `/adjust` comment since the
   last revision. A dropped `/aprove` must be repeated (an `/adjust` after it starts a new revision anyway).
@@ -1723,7 +1725,7 @@ or `CLAUDE_CODE_OAUTH_TOKEN` for `claude`, `OPEN_AI_TOKEN` for an `openai/` Open
 ### Adjust
 
 `social-content-adjust.yml` runs on the `issue_comment` `created` event. Inside the issue's concurrency group it runs
-the gate, then the platform agent of the issue's header in `adjust <issue>` mode, which regenerates only the items the
+the gate (which also refuses an approved or partly published batch, with a reply), then the platform agent of the issue's header in `adjust <issue>` mode, which regenerates only the items the
 writers' `/adjust <id>: <request>` comments name, bumps the revision, uploads, edits the body, and posts a revision
 comment. The workflow then comments whether a new revision came out, none did, or the run failed (the job fails too).
 
