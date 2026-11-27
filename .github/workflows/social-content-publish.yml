@@ -14,17 +14,22 @@ on:
         type: string
         default: ""
       retry:
-        description: Comma-separated Facebook or YouTube item ids left `unknown`, retried with `--retry` once you confirmed they are not live (manual run with `issue`).
+        description: Comma-separated Facebook or YouTube item ids left `unknown`, retried with `--retry` once you confirmed they are not live (manual run with `issue`). Instagram and LinkedIn resolve unknown items on their own.
         required: false
         type: string
         default: ""
       scheduled-platform:
-        description: Platform a run without a comment or `issue` publishes from every approved open batch. Only `instagram` needs it, since it has no scheduling API.
+        description: Platform a run without a comment or `issue` publishes from every approved open batch, `instagram` or `linkedin` (the platforms without a scheduling API). Use one scheduled caller per platform.
         required: false
         type: string
         default: instagram
       instagram-max:
         description: Instagram items published per batch and run.
+        required: false
+        type: string
+        default: "1"
+      linkedin-max:
+        description: LinkedIn items published per batch and run.
         required: false
         type: string
         default: "1"
@@ -47,7 +52,7 @@ on:
         description: Tag or commit SHA of fbrissi/ai-skills with the publisher scripts.
         required: false
         type: string
-        default: v0.12.0
+        default: v0.13.0
       facebook-page-id:
         description: Facebook Page ID (Facebook and Instagram). Empty uses the `FACEBOOK_PAGE_ID` variable.
         required: false
@@ -60,6 +65,26 @@ on:
         default: ""
       instagram-user-id:
         description: Instagram professional account ID. Empty uses the `INSTAGRAM_USER_ID` variable, then the account linked to the Page.
+        required: false
+        type: string
+        default: ""
+      linkedin-organization-id:
+        description: LinkedIn organization (Page) ID. Empty uses the `LINKEDIN_ORGANIZATION_ID` variable, then secret.
+        required: false
+        type: string
+        default: ""
+      linkedin-client-id:
+        description: Client ID of the LinkedIn app. Empty uses the `LINKEDIN_CLIENT_ID` variable, then secret.
+        required: false
+        type: string
+        default: ""
+      linkedin-api-version:
+        description: LinkedIn API version (`YYYYMM`). Empty uses the `LINKEDIN_API_VERSION` variable, then the publisher default.
+        required: false
+        type: string
+        default: ""
+      linkedin-daily-calls:
+        description: LinkedIn API calls allowed per 24 hours for these batches. Empty uses the `LINKEDIN_DAILY_CALLS` variable, then 500 (the Development tier limit).
         required: false
         type: string
         default: ""
@@ -119,6 +144,18 @@ on:
         required: false
       YOUTUBE_REFRESH_TOKEN:
         description: OAuth refresh token with the `youtube.upload` scope (`youtube.force-ssl` for captions, `youtube` for playlists).
+        required: false
+      LINKEDIN_ORGANIZATION_ID:
+        description: LinkedIn organization ID, when it is kept as a secret instead of an input or variable.
+        required: false
+      LINKEDIN_CLIENT_ID:
+        description: LinkedIn app client ID, when it is kept as a secret instead of an input or variable.
+        required: false
+      LINKEDIN_CLIENT_SECRET:
+        description: LinkedIn app client secret.
+        required: false
+      LINKEDIN_REFRESH_TOKEN:
+        description: LinkedIn refresh token of a Page admin (`w_organization_social`, `r_organization_social`).
         required: false
       R2_ACCESS_KEY_ID:
         description: R2 (S3-compatible) access key ID for the public Instagram media.
@@ -302,7 +339,7 @@ jobs:
         uses: fbrissi/github-actions/actions/social-content@v1
         with:
           command: fetch-skills
-          skills: social-review facebook-publish instagram-publish youtube-publish
+          skills: social-review facebook-publish instagram-publish youtube-publish linkedin-publish
           skills-ref: ${{ inputs.skills-ref }}
 
       - name: Publish
@@ -328,6 +365,12 @@ jobs:
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT || vars.R2_ENDPOINT }}
           R2_BUCKET: ${{ secrets.R2_BUCKET || vars.R2_BUCKET }}
           R2_PUBLIC_BASE_URL: ${{ secrets.R2_PUBLIC_BASE_URL || vars.R2_PUBLIC_BASE_URL }}
+          LINKEDIN_ORGANIZATION_ID: ${{ inputs.linkedin-organization-id || vars.LINKEDIN_ORGANIZATION_ID || secrets.LINKEDIN_ORGANIZATION_ID }}
+          LINKEDIN_CLIENT_ID: ${{ inputs.linkedin-client-id || vars.LINKEDIN_CLIENT_ID || secrets.LINKEDIN_CLIENT_ID }}
+          LINKEDIN_CLIENT_SECRET: ${{ secrets.LINKEDIN_CLIENT_SECRET }}
+          LINKEDIN_REFRESH_TOKEN: ${{ secrets.LINKEDIN_REFRESH_TOKEN }}
+          LINKEDIN_API_VERSION: ${{ inputs.linkedin-api-version || vars.LINKEDIN_API_VERSION }}
+          LINKEDIN_DAILY_CALLS: ${{ inputs.linkedin-daily-calls || vars.LINKEDIN_DAILY_CALLS }}
         with:
           command: publish
           github-token: ${{ steps.app-token.outputs.token || github.token }}
@@ -339,6 +382,7 @@ jobs:
           skills-dir: ${{ steps.skills.outputs.skills-dir }}
           retry: ${{ inputs.retry }}
           instagram-max: ${{ inputs.instagram-max }}
+          linkedin-max: ${{ inputs.linkedin-max }}
 
       # Always, even after a failed publisher: it saves each success before moving on, so dropping the state would
       # publish those items again on the next run. The paths are the fixed ones publish.sh writes, not outputs of a
@@ -363,7 +407,7 @@ jobs:
           command: report
           github-token: ${{ steps.app-token.outputs.token || github.token }}
           issue: ${{ matrix.issue }}
-          mode: ${{ (needs.select.outputs.mode == 'approve' && steps.resolved.outputs.platform == 'instagram') && 'approved' || 'publish' }}
+          mode: ${{ (needs.select.outputs.mode == 'approve' && (steps.resolved.outputs.platform == 'instagram' || steps.resolved.outputs.platform == 'linkedin')) && 'approved' || 'publish' }}
           manifest: ${{ runner.temp }}/social-batch/${{ matrix.issue }}/manifest.json
           before: ${{ runner.temp }}/social-batch/${{ matrix.issue }}/before.json
           log: ${{ runner.temp }}/social-batch/${{ matrix.issue }}/publisher.log

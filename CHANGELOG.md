@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.16.0
+
+Requires `fbrissi/ai-skills` `v0.13.0` (platform-policy fixes and the LinkedIn publisher).
+
+- **LinkedIn:** `linkedin` joins the social content platforms. `social-content-generate.yml` and
+  `social-content-adjust.yml` run the `linkedin-content` agent when `platforms` names it (not in the default list). In
+  `social-content-publish.yml` an `/aprove` on a LinkedIn batch only validates and records it, like Instagram, and a
+  scheduled caller with `scheduled-platform: linkedin` publishes up to `linkedin-max` (1) due items per batch and run
+  with `linkedin-publish`. New inputs `linkedin-max`, `linkedin-organization-id`, `linkedin-client-id`,
+  `linkedin-api-version`, `linkedin-daily-calls`; new optional secrets `LINKEDIN_ORGANIZATION_ID`, `LINKEDIN_CLIENT_ID`,
+  `LINKEDIN_CLIENT_SECRET`, `LINKEDIN_REFRESH_TOKEN`; the `social-content` action takes `linkedin-max`.
+- **Expired OAuth tokens:** a publisher failure with `invalid_grant` adds a workflow error and an issue-report line
+  that the refresh token expired or was revoked (Google consent screens in Testing mode issue 7-day tokens) and must be
+  renewed.
+- `skills-ref` defaults to `v0.13.0` in the three social content workflows and the action. The publisher notes in the
+  issue report also show LinkedIn's call budget, a pending YouTube thumbnail, and a LinkedIn refresh token rotation.
+
 ## v1.15.0
 
 Requires `fbrissi/ai-skills` `v0.12.0` (social content agents and skills), already released.

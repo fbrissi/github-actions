@@ -19,13 +19,13 @@ if (fail.includes(args[0]) || fail.includes(name.split('/')[0])) { process.stder
 const manifest = { platform: process.env.STUB_PLATFORM, items: [{ id: 'a' }], state: {} };
 if (args[0] === 'approve') writeFileSync(flag('--out'), JSON.stringify({ ...manifest, approval: { status: 'approved' } }));
 if (args[0] === 'marker') { readFileSync(args[1], 'utf8'); writeFileSync(flag('--out'), JSON.stringify(manifest)); }
-if (name.includes('-publish/')) { console.log('scheduled: a 1'); appendFileSync(process.env.STUB_CALLS + '.env', JSON.stringify({ prefix: process.env.INSTAGRAM_MEDIA_PREFIX ?? null, limit: process.env.YOUTUBE_DAILY_UPLOAD_LIMIT ?? null }) + '\\n'); process.exit(Number(process.env.STUB_PUBLISH ?? 0)); }
+if (name.includes('-publish/')) { console.log(process.env.STUB_OUTPUT ?? 'scheduled: a 1'); appendFileSync(process.env.STUB_CALLS + '.env', JSON.stringify({ prefix: process.env.INSTAGRAM_MEDIA_PREFIX ?? null, limit: process.env.YOUTUBE_DAILY_UPLOAD_LIMIT ?? null }) + '\\n'); process.exit(Number(process.env.STUB_PUBLISH ?? 0)); }
 `;
 
 function setup(platform) {
   const dir = mkdtempSync(join(tmpdir(), 'social-publish-'));
   const skills = join(dir, 'skills');
-  const files = ['social-review/scripts/review-batch.mjs', 'social-review/scripts/social-manifest.mjs', 'facebook-publish/scripts/publish-facebook.mjs', 'instagram-publish/scripts/publish-instagram.mjs', 'youtube-publish/scripts/publish-youtube.mjs'];
+  const files = ['social-review/scripts/review-batch.mjs', 'social-review/scripts/social-manifest.mjs', 'facebook-publish/scripts/publish-facebook.mjs', 'instagram-publish/scripts/publish-instagram.mjs', 'youtube-publish/scripts/publish-youtube.mjs', 'linkedin-publish/scripts/publish-linkedin.mjs'];
   for (const file of files) {
     mkdirSync(join(skills, file, '..'), { recursive: true });
     writeFileSync(join(skills, file), STUB);
@@ -99,6 +99,25 @@ describe('publish.sh', () => {
     assert.match(result.stdout, /retry is ignored/);
   });
 
+  it('only validates and records a LinkedIn approval, then publishes one item per sweep', () => {
+    const approve = setup('linkedin').run({ SOCIAL_MODE: 'approve', SOCIAL_COMMENT_ID: '55' });
+    assert.equal(approve.status, 0, approve.stderr);
+    assert.deepEqual(approve.calls.map(([name, command]) => `${name} ${command}`), ['social-review/scripts/review-batch.mjs approve', 'social-review/scripts/social-manifest.mjs validate']);
+    assert.match(approve.stdout, /LinkedIn batch approved/);
+    const sweep = setup('linkedin').run({ SOCIAL_MODE: 'sweep', SOCIAL_LINKEDIN_MAX: '2', SOCIAL_RETRY: 'a', LINKEDIN_API_VERSION: '', LINKEDIN_DAILY_CALLS: '' });
+    assert.equal(sweep.status, 0, sweep.stderr);
+    assert.equal(sweep.calls[2][0], 'linkedin-publish/scripts/publish-linkedin.mjs');
+    assert.deepEqual(sweep.calls[2].slice(2), ['--execute', '--max', '2']);
+    assert.match(sweep.stdout, /LinkedIn resolves unknown items on its own; retry is ignored/);
+  });
+
+  it('explains a rejected refresh token (invalid_grant)', () => {
+    const { run } = setup('youtube');
+    const result = run({ SOCIAL_MODE: 'resume', STUB_PUBLISH: '1', STUB_OUTPUT: 'Google OAuth 400: invalid_grant (Token has been expired or revoked.)' });
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /::error::The OAuth refresh token was rejected \(invalid_grant\)/);
+  });
+
   it('passes retry ids to Facebook and keeps the publisher exit code', () => {
     const { run } = setup('facebook');
     const result = run({ SOCIAL_MODE: 'resume', SOCIAL_RETRY: 'a,b', STUB_PUBLISH: '1' });
@@ -109,7 +128,7 @@ describe('publish.sh', () => {
 
   it('rejects unsafe values before doing anything', () => {
     const { run } = setup('facebook');
-    for (const env of [{ SOCIAL_MODE: 'publish' }, { SOCIAL_MODE: 'resume', SOCIAL_RETRY: 'a;b' }, { SOCIAL_MODE: 'resume', SOCIAL_ISSUE: '7x' }, { SOCIAL_MODE: 'approve', SOCIAL_COMMENT_ID: 'x' }, { SOCIAL_MODE: 'sweep', SOCIAL_INSTAGRAM_MAX: '0' }]) {
+    for (const env of [{ SOCIAL_MODE: 'publish' }, { SOCIAL_MODE: 'resume', SOCIAL_RETRY: 'a;b' }, { SOCIAL_MODE: 'resume', SOCIAL_ISSUE: '7x' }, { SOCIAL_MODE: 'approve', SOCIAL_COMMENT_ID: 'x' }, { SOCIAL_MODE: 'sweep', SOCIAL_INSTAGRAM_MAX: '0' }, { SOCIAL_MODE: 'sweep', SOCIAL_LINKEDIN_MAX: 'x' }]) {
       const result = run(env);
       assert.equal(result.status, 1, JSON.stringify(env));
       assert.equal(result.calls.length, 0);

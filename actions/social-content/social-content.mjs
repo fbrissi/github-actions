@@ -2,8 +2,10 @@
 // the comment gate, the Instagram schedule sweep, and the publishing report. No I/O, so every rule is testable.
 import { gunzipSync } from 'node:zlib';
 
-export const PLATFORMS = ['facebook', 'instagram', 'youtube'];
-export const PLATFORM_NAMES = { facebook: 'Facebook', instagram: 'Instagram', youtube: 'YouTube' };
+export const PLATFORMS = ['facebook', 'instagram', 'youtube', 'linkedin'];
+export const PLATFORM_NAMES = { facebook: 'Facebook', instagram: 'Instagram', youtube: 'YouTube', linkedin: 'LinkedIn' };
+/** Platforms without a scheduling API: approval only records the batch and a scheduled sweep publishes it. */
+export const UNSCHEDULED_PLATFORMS = ['instagram', 'linkedin'];
 export const WRITE_ROLES = ['admin', 'maintain', 'write'];
 export const DONE_STATUSES = ['scheduled', 'published', 'skipped'];
 export const HEADER = /<!-- social-content:batch platform=(\S+) batch=(\S+) revision=(\d+) -->/;
@@ -187,7 +189,15 @@ export function pendingIssues(issues, { platform, label }) {
     .sort((a, b) => a - b);
 }
 
-const NOTE_LINES = /^(nothing due|publishing limit reached|daily upload limit reached|quota exceeded)\b.*$/gim;
+const NOTE_LINES = /^(nothing due|publishing limit reached|daily upload limit reached|quota exceeded|call budget reached|thumbnail still pending|warning: LinkedIn returned a new refresh token)\b.*$/gim;
+
+/** An expired or revoked OAuth refresh token (Google `invalid_grant`, also LinkedIn's), explained for the issue. */
+export function oauthHint(log) {
+  const text = String(log ?? '');
+  if (!/invalid_grant/.test(text)) return '';
+  const which = /LinkedIn OAuth/.test(text) ? 'LinkedIn' : /YouTube|youtube/.test(text) ? 'YouTube' : 'Google';
+  return `The ${which} refresh token was rejected (\`invalid_grant\`): it expired or was revoked. Google tokens from an OAuth consent screen in Testing mode expire after 7 days; publish the app to production, authorize again, and update the secret.`;
+}
 const cell = (text, max = 160) => {
   const line = String(text ?? '').replace(/\s+/g, ' ').replace(/\|/g, '\\|').trim();
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
@@ -236,10 +246,12 @@ export function summarize({ manifest, before = null, log = '', outcome = 'succes
   lines.push('');
   if (complete) lines.push('Every item is scheduled, published, or stale, so this issue is closed.');
   else if (outcome !== 'success') {
-    lines.push(manifest?.platform === 'instagram'
+    lines.push(UNSCHEDULED_PLATFORMS.includes(manifest?.platform)
       ? 'The publisher stopped with an error; the state of finished items is saved in the issue body. The next scheduled run retries failed items.'
       : 'The publisher stopped with an error; the state of finished items is saved in the issue body. Retry failed items with a manual run of the publish workflow for this issue, or comment the approve command again.');
   }
+  const hint = oauthHint(log);
+  if (hint) lines.push(hint);
   if (manual.size) lines.push(`Check ${[...manual].map((id) => `\`${cell(id)}\``).join(', ')} on the platform before retrying, since the last call got no response.`);
   if (runUrl) lines.push('', `[Workflow run](${runUrl})`);
   return { items, complete, changed, stale: [...stale], manual: [...manual], body: `${lines.join('\n').trim()}\n` };

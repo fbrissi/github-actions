@@ -1608,8 +1608,8 @@ and make it required: do not merge while it is red, because the release apply wo
 
 ## Social Content
 
-Three reusable workflows run the social content flow of `fbrissi/ai-skills` (`v0.12.0`, `docs/social-content.md`
-there): an agent per platform (`facebook-content`, `instagram-content`, `youtube-content`) generates a batch and opens
+Three reusable workflows run the social content flow of `fbrissi/ai-skills` (`v0.13.0`, `docs/social-content.md`
+there): an agent per platform (`facebook-content`, `instagram-content`, `youtube-content`, `linkedin-content`) generates a batch and opens
 a review issue, writers ask for changes with `/adjust` or approve with `/aprove`, and deterministic publishers (no
 LLM) schedule or publish the approved batch. Everything project-specific lives in the caller's profile
 (`docs/ai/social-content.md`, from the ai-skills `social-profile-template.md`) and its secrets.
@@ -1702,7 +1702,7 @@ jobs:
 
 | Input | Default | Description |
 |---|---|---|
-| `platforms` | `facebook instagram youtube` | Platforms, one job each (spaces or commas). |
+| `platforms` | `facebook instagram youtube` | Platforms, one job each (spaces or commas): `facebook`, `instagram`, `youtube`, `linkedin`. Add `linkedin` once the LinkedIn app has the Community Management API. |
 | `start` | `""` | First date of the batch, `YYYY-MM-DD`; empty takes the next week in the profile time zone. |
 | `profile` | `docs/ai/social-content.md` | Profile with the context and the `## Parameters` block. |
 | `label` | `marketing-content` | Review issue label; keep it equal to the profile's `review.label`. |
@@ -1710,7 +1710,7 @@ jobs:
 | `instructions` | `""` | Extra instructions for this run. |
 | `video` | `true` | Video tools and `video-shorts` for Facebook and Instagram; YouTube always gets them. |
 | `extra-skills` | `""` | Optional skills the agents use when installed, for example `copywriting social remotion-best-practices ffmpeg dev`. |
-| `skills-ref` | `v0.12.0` | fbrissi/ai-skills tag or SHA. |
+| `skills-ref` | `v0.13.0` | fbrissi/ai-skills tag or SHA. |
 | `harness`, `opencode-model`, `opencode-variant`, `claude-model`, `claude-effort` | variables | See [Variables](#variables). |
 | `timeout-minutes` / `job-timeout-minutes` | `90` / `120` | Agent and job timeouts. |
 | `agent-client-id` | `AGENT_APP_CLIENT_ID` | Optional GitHub App; without it (or its key) the job uses `GITHUB_TOKEN`. |
@@ -1776,10 +1776,11 @@ It has three entry points:
 - **Approval** (`issue_comment` starting with `command`, default `/aprove`): the gate, then
   `review-batch.mjs approve`, which also requires the comment to be newer than the last revision comment and the body
   to be at that revision. Facebook and YouTube download the media from Drive and schedule natively at once. Instagram
-  has no scheduling API: the approved batch is validated and recorded, and the scheduled runs publish it.
-- **Scheduled runs** (no comment, no `issue`): every open, approved `scheduled-platform` (`instagram`) batch with
-  items left, oldest first and one at a time, publishes up to `instagram-max` (1) due items per batch and run (an item
-  is due on its `date`). Run it several times a day when a batch has more than one item per day.
+  and LinkedIn have no scheduling API: the approved batch is validated and recorded, and the scheduled runs publish it.
+- **Scheduled runs** (no comment, no `issue`): every open, approved `scheduled-platform` (`instagram`, or `linkedin`
+  in a second scheduled caller) batch with items left, oldest first and one at a time, publishes up to `instagram-max`
+  or `linkedin-max` (1) due items per batch and run (an item is due on its `date`). Run it several times a day when a
+  batch has more than one item per day.
 - **Manual runs** (`issue` set): publish an approved issue again, with `retry` for Facebook or YouTube items left
   `unknown` once you checked they are not live.
 
@@ -1839,8 +1840,9 @@ jobs:
 | `command` | `/aprove` | Approve command; keep it equal to `review.commands.approve`. |
 | `issue` | `""` | Manual run: the approved issue to publish again. |
 | `retry` | `""` | Manual run: comma-separated Facebook or YouTube item ids passed as `--retry`. |
-| `scheduled-platform` | `instagram` | Platform the scheduled runs sweep. |
+| `scheduled-platform` | `instagram` | Platform the scheduled runs sweep: `instagram` or `linkedin` (one scheduled caller each). |
 | `instagram-max` | `1` | Instagram items per batch and run. |
+| `linkedin-max` | `1` | LinkedIn items per batch and run. |
 | `instagram-media-prefix` | `marketing/instagram/{date}/{id}/` | R2 key prefix of the Instagram media. |
 | `profile`, `label`, `skills-ref` | as in Generate | Profile, label, and ai-skills ref. |
 | `facebook-page-id` | `FACEBOOK_PAGE_ID` | Page of the Facebook posts and of the linked Instagram account. |
@@ -1848,6 +1850,10 @@ jobs:
 | `instagram-user-id` | `INSTAGRAM_USER_ID`, then the Page's account | Instagram professional account. |
 | `youtube-client-id` | `YOUTUBE_CLIENT_ID` | Google OAuth client ID of the YouTube app. |
 | `youtube-daily-upload-limit` | `YOUTUBE_DAILY_UPLOAD_LIMIT`, then `100` | Uploads per 24 hours. |
+| `linkedin-organization-id` | `LINKEDIN_ORGANIZATION_ID` variable, then secret | LinkedIn Page (organization) ID. |
+| `linkedin-client-id` | `LINKEDIN_CLIENT_ID` variable, then secret | LinkedIn app client ID. |
+| `linkedin-api-version` | `LINKEDIN_API_VERSION`, then the publisher's | LinkedIn API version (`YYYYMM`). |
+| `linkedin-daily-calls` | `LINKEDIN_DAILY_CALLS`, then `500` | LinkedIn API calls per 24 hours (Development tier: 500 per app). |
 | `google-drive-client-id` | `GOOGLE_DRIVE_CLIENT_ID` variable, then secret | Drive app that holds the approved media. |
 | `agent-client-id`, `environment`, `runs-on` | as in Generate | App, environment, runner. |
 | `job-timeout-minutes` | `60` | Timeout of each publish job. |
@@ -1856,9 +1862,42 @@ Secrets, all optional so a caller passes only its platforms': `GOOGLE_DRIVE_CLIE
 `GOOGLE_DRIVE_REFRESH_TOKEN` (and `GOOGLE_DRIVE_CLIENT_ID`); `FACEBOOK_PAGE_ACCESS_TOKEN` (Facebook:
 `pages_manage_posts`, `pages_read_engagement`, `pages_show_list`; Instagram also `instagram_basic` and
 `instagram_content_publish`); `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REFRESH_TOKEN` (`youtube.upload`, `youtube.force-ssl`
-for captions, `youtube` for playlists); for Instagram media, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and
+for captions, `youtube` for playlists; ask only for `youtube.upload` when you need neither); `LINKEDIN_CLIENT_SECRET`,
+`LINKEDIN_REFRESH_TOKEN` (a Page admin's token for an app with the Community Management API: `w_organization_social`,
+`r_organization_social`; `LINKEDIN_ORGANIZATION_ID` and `LINKEDIN_CLIENT_ID` may also be secrets); for Instagram media, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and
 `R2_ACCOUNT_ID` or `R2_ENDPOINT`, `R2_BUCKET`, `R2_PUBLIC_BASE_URL` (these four also read from variables of the same
 name); and `AGENT_APP_PRIVATE_KEY`.
+
+A rejected OAuth refresh token (`invalid_grant`: expired or revoked; Google tokens from a consent screen in Testing
+mode expire after 7 days) fails the run with an error that says to authorize again and update the secret, and the
+issue report explains it. Meta apps must be in Live mode with App Review, Instagram needs Page Publishing
+Authorization, and a system-user Page token is better than a user token.
+
+For LinkedIn, add a second scheduled caller with `scheduled-platform: linkedin` and pass its secrets:
+
+```yaml
+# .github/workflows/social-content-linkedin.yml
+on:
+  schedule:
+    - cron: "0 12 * * 2,4" # LinkedIn: Tuesday and Thursday, 9:00 in America/Sao_Paulo
+jobs:
+  publish:
+    uses: fbrissi/github-actions/.github/workflows/social-content-publish.yml@v1
+    permissions:
+      contents: read
+      issues: write
+    with:
+      scheduled-platform: linkedin
+    secrets:
+      GOOGLE_DRIVE_CLIENT_SECRET: ${{ secrets.GOOGLE_DRIVE_CLIENT_SECRET }}
+      GOOGLE_DRIVE_REFRESH_TOKEN: ${{ secrets.GOOGLE_DRIVE_REFRESH_TOKEN }}
+      LINKEDIN_ORGANIZATION_ID: ${{ secrets.LINKEDIN_ORGANIZATION_ID }}
+      LINKEDIN_CLIENT_ID: ${{ secrets.LINKEDIN_CLIENT_ID }}
+      LINKEDIN_CLIENT_SECRET: ${{ secrets.LINKEDIN_CLIENT_SECRET }}
+      LINKEDIN_REFRESH_TOKEN: ${{ secrets.LINKEDIN_REFRESH_TOKEN }}
+```
+
+The approval comment caller above handles LinkedIn batches too when it passes the LinkedIn secrets.
 
 All three workflows need `contents: read` and `issues: write` on the caller job. With a GitHub App
 (`agent-client-id` and `AGENT_APP_PRIVATE_KEY`, `Contents` read and `Issues` read and write) the comments and issues
@@ -1891,6 +1930,7 @@ then the variable below, then the default (`claude` for the harness). Agents run
 | `FACEBOOK_PAGE_ID`, `FACEBOOK_GRAPH_VERSION`, `INSTAGRAM_USER_ID` | `social-content-publish.yml` | Facebook Page, Graph API version, Instagram account. |
 | `YOUTUBE_CLIENT_ID`, `YOUTUBE_DAILY_UPLOAD_LIMIT` | `social-content-publish.yml` | YouTube OAuth client ID and upload limit. |
 | `R2_ACCOUNT_ID`, `R2_ENDPOINT`, `R2_BUCKET`, `R2_PUBLIC_BASE_URL` | `social-content-publish.yml` | Public bucket of the Instagram media, when not kept as secrets. |
+| `LINKEDIN_ORGANIZATION_ID`, `LINKEDIN_CLIENT_ID`, `LINKEDIN_API_VERSION`, `LINKEDIN_DAILY_CALLS` | `social-content-publish.yml` | LinkedIn Page, app client ID, API version, and daily call budget. |
 
 ## Permissions
 
