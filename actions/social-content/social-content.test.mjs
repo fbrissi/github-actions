@@ -10,6 +10,7 @@ import {
   isDate,
   isPublishable,
   isRepoPath,
+  oauthHint,
   loggedIds,
   mergeState,
   parseHeader,
@@ -22,6 +23,10 @@ import { bodyOf, header, manifestOf, marker } from './test-helpers.mjs';
 describe('parsePlatforms', () => {
   it('accepts spaces and commas, lowercases, and removes duplicates', () => {
     assert.deepEqual(parsePlatforms('YouTube, facebook  instagram,facebook'), { platforms: ['youtube', 'facebook', 'instagram'], errors: [] });
+  });
+
+  it('accepts linkedin', () => {
+    assert.deepEqual(parsePlatforms('linkedin facebook'), { platforms: ['linkedin', 'facebook'], errors: [] });
   });
 
   it('rejects unknown and empty lists', () => {
@@ -229,6 +234,15 @@ describe('summarize', () => {
     assert.deepEqual(result.manual, ['a']);
     assert.equal(result.complete, false);
     assert.match(result.body, /Check `a` on the platform/);
+  });
+
+  it('explains an invalid_grant and keeps LinkedIn notes', () => {
+    const result = summarize({ manifest: { ...manifest, platform: 'linkedin' }, log: 'LinkedIn OAuth 400: invalid_grant (expired)\ncall budget reached (run 98/100, 24 h 98/500): a waits for the next run', outcome: 'failure' });
+    assert.match(result.body, /^### LinkedIn publishing failed/);
+    assert.match(result.body, /The LinkedIn refresh token was rejected \(`invalid_grant`\)/);
+    assert.match(result.body, /- call budget reached/);
+    assert.match(result.body, /The next scheduled run retries failed items/);
+    assert.equal(oauthHint('all good'), '');
   });
 
   it('reads ids after a log prefix', () => {

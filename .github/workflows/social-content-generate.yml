@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       platforms:
-        description: Whitespace- or comma-separated platforms, one job each, from `facebook`, `instagram`, and `youtube`.
+        description: Whitespace- or comma-separated platforms, one job each, from `facebook`, `instagram`, `youtube`, and `linkedin` (add `linkedin` once the LinkedIn app has the Community Management API).
         required: false
         type: string
         default: facebook instagram youtube
@@ -47,7 +47,7 @@ on:
         description: Tag or commit SHA of fbrissi/ai-skills with the social content agents and skills.
         required: false
         type: string
-        default: v0.12.0
+        default: v0.13.0
       harness:
         description: AI harness, `opencode` or `claude`. Empty uses the `AI_HARNESS` variable, then `claude`.
         required: false

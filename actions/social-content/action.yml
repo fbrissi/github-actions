@@ -24,7 +24,7 @@ inputs:
   skills-ref:
     description: Tag or commit SHA of `skills-repository` (`fetch-skills`). Pin it; never use a branch.
     required: false
-    default: v0.12.0
+    default: v0.13.0
   skills-path:
     description: Directory, inside `skills-repository`, with one folder per skill (`fetch-skills`).
     required: false
@@ -38,7 +38,7 @@ inputs:
     required: false
     default: 1.8.0
   platforms:
-    description: Whitespace- or comma-separated platforms (`matrix`), from `facebook`, `instagram`, and `youtube`.
+    description: Whitespace- or comma-separated platforms (`matrix`), from `facebook`, `instagram`, `youtube`, and `linkedin`.
     required: false
     default: ""
   platform:
@@ -119,6 +119,10 @@ inputs:
     default: ""
   instagram-max:
     description: Instagram items published per batch and run, `--max` (`publish`).
+    required: false
+    default: "1"
+  linkedin-max:
+    description: LinkedIn items published per batch and run, `--max` (`publish`).
     required: false
     default: "1"
   since:
@@ -245,6 +249,7 @@ runs:
         SOCIAL_SKILLS_DIR: ${{ inputs.skills-dir }}
         SOCIAL_RETRY: ${{ inputs.retry }}
         SOCIAL_INSTAGRAM_MAX: ${{ inputs.instagram-max }}
+        SOCIAL_LINKEDIN_MAX: ${{ inputs.linkedin-max }}
       run: bash "$GITHUB_ACTION_PATH/publish.sh"
 
     - name: Run ${{ inputs.command }}
