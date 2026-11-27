@@ -625,6 +625,7 @@ After every run, the `follow-up` job takes a fresh App token (the task's token m
 | `readiness-review` | an issue is `business-blocked` or `technical-blocked` | `business-refinement`, else `technical-refinement`, else `orchestrate` when an issue is `ready` |
 | `orchestrate` | – | nothing: it dispatches `implement` itself, and the orchestrate-on-merge caller re-runs it |
 | `implement` | the issue is blocked, its PR or issue has `ai:needs-human`, or the run ended without a PR | nothing: the [PR follow-up](#pr-follow-up-for-task-branches) takes the PR from here |
+| `issue-resolve` | the run failed, or it left the issue open with no open pull request referencing it and no `ai-delivery blocker` comment since the run was created | nothing: the PR follow-up takes the PR from here |
 
 The stages and the labels that move a milestone between them:
 
@@ -840,7 +841,7 @@ agent is scoped per task:
 | `issue-intake` | `contents: read`, `issues: write`, `pull-requests: read` |
 | any, with `project` | adds `organization-projects: write` |
 | any, with `app-token-permission-issue-fields: write` | adds `issue-fields: write` |
-| follow-up job | `actions: write`, `issues: write`, `pull-requests: read`; with `project`, `organization-projects: write` |
+| follow-up job | `actions: write`, `contents: read` (the delivery profile), `issues: write`, `pull-requests: read`; with `project`, `organization-projects: write` |
 
 Organization issue field values (for example Priority, Effort, Start date, Target date) need the `issue-fields:
 write` token permission. Set `app-token-permission-issue-fields: write` when the profile uses issue fields and the
@@ -1192,7 +1193,9 @@ flowchart LR
 
 Neither waits for anything: the pull request it opens goes through the [PR Feedback Loop](#pr-feedback-loop)
 (`pr-fix.yml` and `merge-decision.yml`, triggered by review and check events). A failed or timed-out run hands off on
-the issue (or a tracking issue for the intake) with an `issue-intake` or `issue-resolve` resume. Sentry credentials
+the issue (or a tracking issue for the intake) with an `issue-intake` or `issue-resolve` resume, and so does an
+`issue-resolve` run that left its issue open with no open pull request referencing it and no `ai-delivery blocker`
+comment since it was created. Sentry credentials
 are optional: the `SENTRY_AUTH_TOKEN` secret, plus `SENTRY_ORG` and `SENTRY_BASE_URL` (variables or the
 `sentry-org` and `sentry-base-url` inputs). Create the `ai:resolve` label once:
 `gh label create ai:resolve --force`.

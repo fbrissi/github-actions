@@ -450,6 +450,8 @@ jobs:
           client-id: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
           private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
           permission-actions: write
+          # Reads the delivery profile (status labels, Project status field and options) from the default branch.
+          permission-contents: read
           permission-issues: write
           permission-pull-requests: read
           permission-organization-projects: ${{ inputs.project != '' && 'write' || '' }}

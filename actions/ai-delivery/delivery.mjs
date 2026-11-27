@@ -389,7 +389,7 @@ function blockedHandoffs(issues, states) {
 }
 
 // What to do after a successful stage run, from the status labels of the issues in scope.
-export function decideSuccess({ task, issues, pr = null, escalated = false }) {
+export function decideSuccess({ task, issues, pr = null, escalated = false, resolved = null }) {
   const decision = { handoffs: [], dispatch: null, release: [] };
   const dispatch = (stage, state) => {
     decision.dispatch = { stage, issues: statesOf(issues, state).map((issue) => issue.number) };
@@ -421,6 +421,9 @@ export function decideSuccess({ task, issues, pr = null, escalated = false }) {
       decision.handoffs.push({ issue: issue.number, stage: 'implement', reason: 'no-pr' });
       decision.release.push(issue.number);
     }
+  } else if (task === 'issue-resolve') {
+    const [issue] = issues;
+    if (issue && resolved === false) decision.handoffs.push({ issue: issue.number, stage: 'issue-resolve', reason: 'no-pr' });
   }
   return decision;
 }
@@ -443,6 +446,7 @@ export function blockerText(reason, { stage, task, issue, labels, runUrl, limit,
     return `Issue #${issue} is labeled \`${labels[state]}\`: ${stage} needs answers before the flow can continue.`;
   }
   if (reason === 'escalated') return `The implementation of issue #${issue} was escalated to a human (${runUrl}).`;
+  if (reason === 'no-pr' && task === 'issue-resolve') return `The issue-resolve run of issue #${issue} ended without a pull request or a blocker comment (${runUrl}).`;
   if (reason === 'no-pr') return `The implement run of issue #${issue} ended without a pull request (${runUrl}); the issue was moved back to \`${labels.ready}\`.`;
   if (reason === 'loop') return `The flow already dispatched ${stage} automatically ${count} times for this milestone (limit ${limit}); check the issues before resuming.`;
   if (reason === 'send-back') return `The flow already sent the issues back to an earlier refinement stage ${count} ${count === 1 ? 'time' : 'times'} for this milestone (limit ${limit}), and ${task} wants to send them back to ${stage} again: ${runUrl}. Investigate why the refinement did not fix it before resuming.`;

@@ -42,7 +42,8 @@ import { createClient } from './github.mjs';
 
 export const REDECIDE_MARKER = '<!-- merge-decision redecide -->';
 const TASKS = ['business-refinement', 'technical-refinement', 'readiness-review', 'orchestrate', 'implement', 'issue-intake', 'issue-resolve', 'dependency-update'];
-// Issue and dependency tasks are not part of a milestone's delivery: their follow-up only hands off a failed run.
+// Issue and dependency tasks are not part of a milestone's delivery: their follow-up hands off a failed run, and an
+// issue-resolve run that left no pull request or blocker comment.
 const ISSUE_TASKS = ['issue-intake', 'issue-resolve', 'dependency-update'];
 const NAMES = [
   'command', 'task', 'result', 'milestone', 'result-milestone', 'issue', 'pr', 'branch', 'base-branch', 'source',
@@ -57,6 +58,7 @@ export function readContext(env = process.env) {
   ctx.repo = env.GITHUB_REPOSITORY ?? '';
   ctx.serverUrl = env.GITHUB_SERVER_URL || 'https://github.com';
   ctx.runUrl = env.GITHUB_RUN_ID ? `${ctx.serverUrl}/${ctx.repo}/actions/runs/${env.GITHUB_RUN_ID}` : '';
+  ctx.runId = env.GITHUB_RUN_ID ?? '';
   ctx.ownWorkflow = /\/\.github\/workflows\/([^@/]+)@/.exec(env.GITHUB_WORKFLOW_REF ?? '')?.[1] ?? '';
   ctx.issue = ctx.issue.replace(/^#/, '');
   ctx.pr = ctx.pr.replace(/^#/, '');
@@ -165,6 +167,26 @@ async function setMilestoneDescription(api, repo, milestone, description) {
   if (!milestone || description === (milestone.description ?? '')) return;
   await api.request('PATCH', `/repos/${repo}/milestones/${milestone.number}`, { description });
   milestone.description = description;
+}
+
+const BLOCKER_COMMENT = /<!--\s*ai-delivery blocker\b/;
+
+// Whether an issue-resolve run left something for its issue: the issue closed, an open pull request that references it,
+// or a blocker comment (`<!-- ai-delivery blocker`) posted since this run was created. Other comments (a resume reply,
+// a person) do not count. A run that left none of them ended without doing its job.
+export async function issueResolveLeftOutcome(api, repo, issue, runId) {
+  if (issue.state === 'closed') return true;
+  const timeline = await api.paginate(`/repos/${repo}/issues/${issue.number}/timeline`);
+  if (timeline.some((event) => event.event === 'cross-referenced' && event.source?.issue?.pull_request && event.source.issue.state === 'open')) {
+    return true;
+  }
+  if (!runId) return false;
+  const { data: run } = await api.request('GET', `/repos/${repo}/actions/runs/${runId}`);
+  // created_at is the first attempt: a re-run of the follow-up must still see the blocker of the original attempt.
+  const started = Date.parse(run.created_at ?? run.run_started_at ?? '');
+  if (Number.isNaN(started)) return false;
+  const comments = await api.paginate(`/repos/${repo}/issues/${issue.number}/comments`);
+  return comments.some((comment) => BLOCKER_COMMENT.test(comment.body ?? '') && Date.parse(comment.created_at) >= started);
 }
 
 async function openPullRequest(api, repo, branch) {
@@ -307,8 +329,11 @@ export async function followUp(input, api, log) {
   const escalated = Boolean(escalationLabel) && ctx.task === 'implement'
     && [...(issues[0]?.labels ?? []), ...(pr?.labels ?? []).map((label) => label.name)].includes(escalationLabel);
 
+  const resolved = ctx.task === 'issue-resolve' && result === 'success' && scopeIssue
+    ? await issueResolveLeftOutcome(api, repo, scopeIssue, ctx.runId)
+    : null;
   const decision = result === 'success'
-    ? decideSuccess({ task: ctx.task, issues, pr, escalated })
+    ? decideSuccess({ task: ctx.task, issues, pr, escalated, resolved })
     : decideFailure({ task: ctx.task, issues, pr });
 
   for (const issueNumber of decision.release) {
