@@ -1611,7 +1611,7 @@ and make it required: do not merge while it is red, because the release apply wo
 
 ## Social Content
 
-Three reusable workflows run the social content flow of `fbrissi/ai-skills` (`v0.13.1`, `docs/social-content.md`
+Three reusable workflows run the social content flow of `fbrissi/ai-skills` (`v0.14.0`, `docs/social-content.md`
 there): an agent per platform (`facebook-content`, `instagram-content`, `youtube-content`, `linkedin-content`) generates a batch and opens
 a review issue, writers ask for changes with `/adjust` or approve with `/aprove`, and deterministic publishers (no
 LLM) schedule or publish the approved batch. Everything project-specific lives in the caller's profile
@@ -1713,7 +1713,7 @@ jobs:
 | `instructions` | `""` | Extra instructions for this run. |
 | `video` | `true` | Video tools and `video-shorts` for Facebook and Instagram; YouTube always gets them. |
 | `extra-skills` | `""` | Optional skills the agents use when installed, for example `copywriting social remotion-best-practices ffmpeg dev`. |
-| `skills-ref` | `v0.13.1` | fbrissi/ai-skills tag or SHA. |
+| `skills-ref` | `v0.14.0` | fbrissi/ai-skills tag or SHA. |
 | `harness`, `opencode-model`, `opencode-variant`, `claude-model`, `claude-effort` | variables | See [Variables](#variables). |
 | `timeout-minutes` / `job-timeout-minutes` | `90` / `120` | Agent and job timeouts. |
 | `agent-client-id` | `AGENT_APP_CLIENT_ID` | Optional GitHub App; without it (or its key) the job uses `GITHUB_TOKEN`. |

@@ -24,7 +24,7 @@ inputs:
   skills-ref:
     description: Tag or commit SHA of `skills-repository` (`fetch-skills`). Pin it; never use a branch.
     required: false
-    default: v0.13.1
+    default: v0.14.0
   skills-path:
     description: Directory, inside `skills-repository`, with one folder per skill (`fetch-skills`).
     required: false
