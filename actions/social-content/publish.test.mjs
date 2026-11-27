@@ -6,8 +6,7 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-const here = fileURLToPath(new URL('.', import.meta.url));
-const script = join(here, 'publish.sh');
+const script = join(fileURLToPath(new URL('.', import.meta.url)), 'publish.sh');
 
 // Stub ai-skills scripts and gh: each records its arguments, and STUB_* variables choose their results.
 const STUB = `#!/usr/bin/env node
@@ -19,7 +18,6 @@ const fail = (process.env.STUB_FAIL ?? '').split(',');
 if (fail.includes(args[0]) || fail.includes(name.split('/')[0])) { process.stderr.write(\`\${args[0]} failed: reason\\n\`); process.exit(1); }
 const manifest = { platform: process.env.STUB_PLATFORM, items: [{ id: 'a' }], state: {} };
 if (args[0] === 'approve') writeFileSync(flag('--out'), JSON.stringify({ ...manifest, approval: { status: 'approved' } }));
-if (args[0] === 'issue-body') console.log('BODY ' + args[1]);
 if (args[0] === 'marker') { readFileSync(args[1], 'utf8'); writeFileSync(flag('--out'), JSON.stringify(manifest)); }
 if (name.includes('-publish/')) { console.log('scheduled: a 1'); appendFileSync(process.env.STUB_CALLS + '.env', JSON.stringify({ prefix: process.env.INSTAGRAM_MEDIA_PREFIX ?? null, limit: process.env.YOUTUBE_DAILY_UPLOAD_LIMIT ?? null }) + '\\n'); process.exit(Number(process.env.STUB_PUBLISH ?? 0)); }
 `;
@@ -38,8 +36,8 @@ function setup(platform) {
   chmodSync(join(bin, 'gh'), 0o755);
   const calls = join(dir, 'calls');
   writeFileSync(calls, '');
-  const run = (env, file = script) => {
-    const result = spawnSync('bash', [file], {
+  const run = (env) => {
+    const result = spawnSync('bash', [script], {
       cwd: dir,
       encoding: 'utf8',
       env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, STUB_CALLS: calls, STUB_PLATFORM: platform, SOCIAL_PLATFORM: platform, SOCIAL_ISSUE: '7', SOCIAL_SKILLS_DIR: skills, SOCIAL_WORK_DIR: join(dir, 'work'), GITHUB_OUTPUT: join(dir, 'output'), ...env }
@@ -116,21 +114,5 @@ describe('publish.sh', () => {
       assert.equal(result.status, 1, JSON.stringify(env));
       assert.equal(result.calls.length, 0);
     }
-  });
-
-  it('saves the state into the issue body, and skips a batch that was never restored', () => {
-    const { dir, run } = setup('youtube');
-    const saveScript = join(here, 'save-state.sh');
-    const manifest = join(dir, 'manifest.json');
-    writeFileSync(manifest, '{}');
-    const saved = run({ SOCIAL_MANIFEST: manifest }, saveScript);
-    assert.equal(saved.status, 0, saved.stderr);
-    assert.deepEqual(saved.calls[0].slice(1), ['issue-body', manifest]);
-    assert.equal(readFileSync(join(dir, 'issue-body.md'), 'utf8'), `BODY ${manifest}\n`);
-    assert.match(readFileSync(join(dir, 'calls.gh'), 'utf8'), /gh issue edit 7 --body-file .*issue-body\.md/);
-    const skipped = run({ SOCIAL_MANIFEST: join(dir, 'missing.json') }, saveScript);
-    assert.equal(skipped.status, 0);
-    assert.match(skipped.stdout, /issue body is unchanged/);
-    assert.equal(skipped.calls.length, 1);
   });
 });

@@ -23,8 +23,10 @@ Requires `fbrissi/ai-skills` `v0.12.0` (social content agents and skills), alrea
     natively at once, Instagram is recorded for the scheduled runs, which publish due items of every approved
     Instagram batch. Manual runs (`issue`, `retry`) publish an approved issue again. The state is written back to the
     issue body after every run, the outcome is commented, and the issue is closed when every item is done or stale.
-  - Adjust, approve, and the scheduled runs of one issue share the `fbrissi-social-content-<repo>-<issue>`
-    concurrency group. The GitHub App is optional (`agent-client-id`, `AGENT_APP_PRIVATE_KEY`); without it the jobs use
+  - Adjust, approve, and manual runs of one issue share the `fbrissi-social-content-<repo>-<issue>` concurrency
+    group; scheduled sweeps use `fbrissi-social-content-sweep-<repo>-<issue>`, so they never cancel a waiting command.
+    The state write re-reads the issue body, merges per item on the same revision, and writes nothing (commenting the
+    run's results instead) when an adjust moved the batch to another revision. The GitHub App is optional (`agent-client-id`, `AGENT_APP_PRIVATE_KEY`); without it the jobs use
     `GITHUB_TOKEN`. Callers grant `contents: read` and `issues: write`.
 - **New `social-content` composite action** with the deterministic steps of those workflows (`fetch-skills`,
   `setup-media-tools`, `matrix`, `prompt`, `gate`, `target`, `pending`, `publish`, `save-state`, `report`,

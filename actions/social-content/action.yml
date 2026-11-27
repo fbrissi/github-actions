@@ -86,7 +86,7 @@ inputs:
     required: false
     default: ""
   before:
-    description: Copy of the manifest before the publisher run (`report`); the state difference decides whether to comment.
+    description: Copy of the manifest restored at the start of the run (`save-state`, `report`); `save-state` keeps only the state this run changed, and `report` comments only when it changed.
     required: false
     default: ""
   log:
@@ -98,9 +98,13 @@ inputs:
     required: false
     default: success
   save-outcome:
-    description: Outcome of the save-state step (`report`); on `failure` the report warns that the state was not saved and neither confirms an approval nor closes the issue.
+    description: Result of the save-state step (`report`). `failure` warns that the state was not saved; `conflict` leaves this run's results as a note. Neither confirms an approval nor closes the issue.
     required: false
     default: skipped
+  save-reason:
+    description: Why save-state did not write (`report`), its `reason` output.
+    required: false
+    default: ""
   always-comment:
     description: Comment even when nothing changed (`report`), for example after an approval.
     required: false
@@ -152,7 +156,7 @@ outputs:
     description: "`true` when the comment may run its command (`gate`) or the issue is a review issue (`target`)."
     value: ${{ steps.run.outputs.allowed }}
   reason:
-    description: Why the issue or comment was refused (`gate`, `target`).
+    description: Why the issue or comment was refused (`gate`, `target`), or why the state was not written (`save-state`).
     value: ${{ steps.run.outputs.reason }}
   actor:
     description: Login of the commenter (`gate`).
@@ -169,6 +173,9 @@ outputs:
   count:
     description: Number of `issues` (`pending`).
     value: ${{ steps.run.outputs.count }}
+  saved:
+    description: "`true`, `unchanged`, `skipped` (nothing restored), or `conflict` (the batch changed; nothing written) (`save-state`)."
+    value: ${{ steps.run.outputs.saved }}
   complete:
     description: "`true` when every item is done or stale and the issue was closed (`report`)."
     value: ${{ steps.run.outputs.complete }}
@@ -219,7 +226,7 @@ runs:
 
     # Same repository ref as this action; keeps an installed gh, else installs a pinned one.
     - name: Setup GitHub CLI
-      if: ${{ inputs.command == 'publish' || inputs.command == 'save-state' }}
+      if: ${{ inputs.command == 'publish' }}
       shell: bash
       run: bash "$GITHUB_ACTION_PATH/../setup-gh/setup-gh.sh"
 
@@ -240,21 +247,9 @@ runs:
         SOCIAL_INSTAGRAM_MAX: ${{ inputs.instagram-max }}
       run: bash "$GITHUB_ACTION_PATH/publish.sh"
 
-    - name: Save state
-      if: ${{ inputs.command == 'save-state' }}
-      shell: bash
-      env:
-        GH_TOKEN: ${{ inputs.github-token }}
-        GH_REPO: ${{ github.repository }}
-        SOCIAL_MANIFEST: ${{ inputs.manifest }}
-        SOCIAL_ISSUE: ${{ inputs.issue }}
-        SOCIAL_PROFILE: ${{ inputs.profile }}
-        SOCIAL_SKILLS_DIR: ${{ inputs.skills-dir }}
-      run: bash "$GITHUB_ACTION_PATH/save-state.sh"
-
     - name: Run ${{ inputs.command }}
       id: run
-      if: ${{ !contains(fromJSON('["fetch-skills", "setup-media-tools", "publish", "save-state"]'), inputs.command) }}
+      if: ${{ !contains(fromJSON('["fetch-skills", "setup-media-tools", "publish"]'), inputs.command) }}
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
@@ -276,6 +271,7 @@ runs:
         SOCIAL_OUTCOME: ${{ inputs.outcome }}
         SOCIAL_ALWAYS_COMMENT: ${{ inputs.always-comment }}
         SOCIAL_SAVE_OUTCOME: ${{ inputs.save-outcome }}
+        SOCIAL_SAVE_REASON: ${{ inputs.save-reason }}
         SOCIAL_BEFORE_REVISION: ${{ inputs.before-revision }}
         SOCIAL_SKILLS_DIR: ${{ inputs.skills-dir }}
         SOCIAL_SINCE: ${{ inputs.since }}

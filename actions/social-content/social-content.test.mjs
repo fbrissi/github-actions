@@ -10,6 +10,7 @@ import {
   isPublishable,
   isRepoPath,
   loggedIds,
+  mergeState,
   parseHeader,
   parsePlatforms,
   pendingIssues,
@@ -210,5 +211,45 @@ describe('summarize', () => {
 
   it('reads ids after a log prefix', () => {
     assert.deepEqual([...loggedIds('stale: x y\nstale:\nother: z\nstale: w', 'stale:')], ['x', 'w']);
+  });
+});
+
+describe('mergeState', () => {
+  const base = manifestOf({ approval: { status: 'approved', by: 'ana', revision: 1 }, state: { a: { status: 'published', remote_id: '1' } } });
+
+  it('keeps a concurrent run and takes only what this run changed', () => {
+    const ours = { ...base, state: { a: base.state.a, b: { status: 'published', remote_id: '2' } } };
+    const live = { ...base, state: { a: { status: 'published', remote_id: '1' }, c: { status: 'failed', error: 'x' } } };
+    const result = mergeState({ ours, before: base, live });
+    assert.equal(result.action, 'write');
+    assert.deepEqual(result.changed, ['b']);
+    assert.deepEqual(Object.keys(result.manifest.state).sort(), ['a', 'b', 'c']);
+  });
+
+  it('does not overwrite a newer entry with an untouched old one', () => {
+    const live = { ...base, state: { a: { status: 'published', remote_id: '1', url: 'u' } } };
+    const result = mergeState({ ours: base, before: base, live });
+    assert.equal(result.action, 'unchanged');
+    assert.equal(result.manifest.state.a.url, 'u');
+  });
+
+  it('records an approval this run stamped', () => {
+    const pending = manifestOf();
+    const ours = { ...pending, approval: { status: 'approved', by: 'ana', revision: 1 } };
+    const result = mergeState({ ours, before: ours, live: pending });
+    assert.equal(result.action, 'write');
+    assert.equal(result.manifest.approval.by, 'ana');
+  });
+
+  it('refuses to write over another revision, batch, or a missing marker', () => {
+    const bumped = { ...base, approval: { status: 'pending', revision: null }, review: { issue_number: 7, revision: 2 } };
+    assert.match(mergeState({ ours: base, before: base, live: bumped }).reason, /revision 2 while this run published revision 1/);
+    assert.equal(mergeState({ ours: base, before: base, live: { ...base, batch_id: 'other' } }).action, 'conflict');
+    assert.equal(mergeState({ ours: base, before: base, live: null }).action, 'conflict');
+  });
+
+  it('ignores state for items the live batch no longer has', () => {
+    const ours = { ...base, state: { ...base.state, gone: { status: 'published' } } };
+    assert.equal(mergeState({ ours, before: base, live: base }).action, 'unchanged');
   });
 });

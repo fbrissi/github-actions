@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { adjustReport, envName, gate, main, matrix, newManifests, openReview, pending, prompt, readContext, report, target } from './main.mjs';
-import { bodyOf, header, manifestOf } from './test-helpers.mjs';
+import { adjustReport, envName, gate, main, matrix, newManifests, openReview, pending, prompt, readContext, report, saveState, target } from './main.mjs';
+import { bodyOf, header, manifestOf, marker } from './test-helpers.mjs';
 
 const REPO = 'octo/app';
 const silent = { info() {}, notice() {}, warning() {} };
@@ -390,5 +390,81 @@ describe('fetch-skills.sh', () => {
     const branch = spawnSync('bash', [join(here, 'fetch-skills.sh')], { env: { ...env, SKILLS_REF: 'feat/x' }, encoding: 'utf8' });
     assert.equal(branch.status, 1);
     assert.match(branch.stdout, /Invalid skills-ref/);
+  });
+});
+
+describe('saveState', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'social-save-'));
+  const approved = manifestOf({ approval: { status: 'approved', by: 'ana', revision: 1 } });
+  const files = (name, ours, before = approved) => {
+    const folder = join(dir, name);
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, 'manifest.json'), JSON.stringify(ours));
+    writeFileSync(join(folder, 'before.json'), JSON.stringify(before));
+    return { manifest: join(folder, 'manifest.json'), before: join(folder, 'before.json'), folder };
+  };
+  const runner = () => {
+    const calls = [];
+    return { calls, run: (args) => { calls.push(args); return { code: 0, stdout: `BODY ${readFileSync(args[2], 'utf8').length}`, stderr: '' }; } };
+  };
+  const ctx = (paths) => ({ ...ctxFor({ issue: '7', 'skills-dir': '/skills', ...paths }), cwd: dir });
+
+  it('merges this run into the body a concurrent run wrote', async () => {
+    const ours = { ...approved, state: { a: { status: 'published', remote_id: '1' } } };
+    const live = { ...approved, state: { b: { status: 'failed', error: 'x' } } };
+    const paths = files('merge', ours);
+    const api = fakeApi([['GET', /\/issues\/7$/, { body: bodyOf(live) }], ['PATCH', /\/issues\/7$/, {}]]);
+    const { run, calls } = runner();
+    assert.deepEqual(await saveState(ctx(paths), api, silent, { run }), { saved: 'true', reason: '' });
+    const merged = JSON.parse(readFileSync(join(paths.folder, 'merged.json'), 'utf8'));
+    assert.deepEqual(Object.keys(merged.state).sort(), ['a', 'b']);
+    assert.deepEqual(calls[0].slice(1), ['issue-body', join(paths.folder, 'merged.json')]);
+    assert.match(api.calls.find((call) => call.method === 'PATCH').body.body, /^BODY \d+$/);
+  });
+
+  it('writes nothing when an adjust moved the batch to another revision', async () => {
+    const ours = { ...approved, state: { a: { status: 'published', remote_id: '1' } } };
+    const live = { ...approved, approval: { status: 'pending' }, review: { issue_number: 7, revision: 2 } };
+    const api = fakeApi([['GET', /\/issues\/7$/, { body: bodyOf(live) }]]);
+    const result = await saveState(ctx(files('conflict', ours)), api, silent, { run: runner().run });
+    assert.equal(result.saved, 'conflict');
+    assert.match(result.reason, /revision 2/);
+    assert.equal(api.calls.some((call) => call.method === 'PATCH'), false);
+  });
+
+  it('writes nothing while the header and marker disagree', async () => {
+    const api = fakeApi([['GET', /\/issues\/7$/, { body: `${header('instagram', approved.batch_id, 2)}\n${marker(approved)}` }]]);
+    assert.equal((await saveState(ctx(files('midway', approved)), api, silent, { run: runner().run })).saved, 'conflict');
+  });
+
+  it('skips a batch that was never restored and an unchanged state', async () => {
+    assert.equal((await saveState(ctx({ manifest: join(dir, 'none.json') }), fakeApi([]), silent)).saved, 'skipped');
+    const api = fakeApi([['GET', /\/issues\/7$/, { body: bodyOf(approved) }]]);
+    assert.equal((await saveState(ctx(files('same', approved)), api, silent, { run: runner().run })).saved, 'unchanged');
+    assert.equal(api.calls.length, 1);
+  });
+
+  it('fails when the body cannot be rendered', async () => {
+    const ours = { ...approved, state: { a: { status: 'published' } } };
+    const api = fakeApi([['GET', /\/issues\/7$/, { body: bodyOf(approved) }]]);
+    const run = () => ({ code: 1, stdout: '', stderr: 'issue body has 70000 characters' });
+    await assert.rejects(saveState(ctx(files('big', ours)), api, silent, { run }), /70000 characters/);
+  });
+});
+
+describe('report after a save conflict', () => {
+  it('leaves this run\'s results as a note and does not close', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'social-note-'));
+    const manifest = join(dir, 'm.json');
+    writeFileSync(manifest, JSON.stringify(manifestOf({ state: { a: { status: 'published', remote_id: '9' }, b: { status: 'published' } } })));
+    const api = fakeApi([['POST', /\/issues\/7\/comments$/, {}], ['PATCH', /\/issues\/7$/, {}]]);
+    const result = await report(ctxFor({ issue: '7', manifest, 'save-outcome': 'conflict', 'save-reason': 'the batch moved to revision 2' }), api, silent);
+    assert.deepEqual(result, { complete: 'false', commented: 'true' });
+    const body = api.calls[0].body.body;
+    assert.match(body, /State not saved: the batch changed/);
+    assert.match(body, /because the batch moved to revision 2/);
+    assert.match(body, /\| `a` \| photo \| published/);
+    assert.doesNotMatch(body, /this issue is closed/);
+    assert.equal(api.calls.some((call) => call.method === 'PATCH'), false);
   });
 });

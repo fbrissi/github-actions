@@ -4,17 +4,19 @@
 // generate agent did not open one. GitHub calls go through an injected client and ai-skills scripts through an
 // injected runner, so every command is testable without network.
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createClient } from '../ai-delivery/github.mjs';
 import {
   PLATFORM_NAMES,
   buildPrompt,
+  decodeMarker,
   gateDecision,
   issueDecision,
   isCommandName,
   isRepoPath,
+  mergeState,
   parseHeader,
   parsePlatforms,
   pendingIssues,
@@ -22,7 +24,7 @@ import {
 } from './social-content.mjs';
 
 const NAMES = ['command', 'platforms', 'platform', 'mode', 'start', 'profile', 'issue', 'comment-id', 'slash-command', 'label',
-  'drive-root', 'instructions', 'manifest', 'before', 'log', 'outcome', 'save-outcome', 'always-comment', 'before-revision', 'skills-dir', 'since',
+  'drive-root', 'instructions', 'manifest', 'before', 'log', 'outcome', 'save-outcome', 'save-reason', 'always-comment', 'before-revision', 'skills-dir', 'since',
   'agent-outcome'];
 
 export const envName = (name) => `SOCIAL_${name.toUpperCase().replaceAll('-', '_')}`;
@@ -144,6 +146,45 @@ export async function pending(ctx, api, log) {
 const readJson = (path) => (path && existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : null);
 const readText = (path) => (path && existsSync(path) ? readFileSync(path, 'utf8') : '');
 
+/**
+ * Writes the run's manifest back to the issue body without losing what a concurrent run wrote: re-reads the body just
+ * before writing and merges per item (see mergeState). When an adjust moved the batch to another revision, nothing is
+ * written (`saved=conflict`) and the report leaves the run's results as a note instead.
+ */
+export async function saveState(ctx, api, log, { run = runNode } = {}) {
+  const issue = issueNumber(ctx.issue);
+  const ours = readJson(ctx.manifest);
+  if (!ours) {
+    log.info('No restored manifest; the issue body is unchanged.');
+    return { saved: 'skipped', reason: '' };
+  }
+  if (!ctx['skills-dir']) throw new Error("'skills-dir' is required.");
+  const before = readJson(ctx.before) ?? ours;
+  const data = await getOrNull(api, `/repos/${ctx.repo}/issues/${issue}`);
+  const header = parseHeader(data?.body);
+  const live = decodeMarker(data?.body);
+  const result = header && live && header.revision !== (live.review?.revision ?? 1)
+    ? { action: 'conflict', reason: 'the issue header and marker disagree (an adjust is updating it)' }
+    : mergeState({ ours, before, live });
+  if (result.action === 'conflict') {
+    log.warning(`State of #${issue} not saved: ${result.reason}.`);
+    return { saved: 'conflict', reason: result.reason };
+  }
+  if (result.action === 'unchanged') {
+    log.info(`The body of #${issue} already holds this state.`);
+    return { saved: 'unchanged', reason: '' };
+  }
+  const merged = join(dirname(ctx.manifest), 'merged.json');
+  writeFileSync(merged, `${JSON.stringify(result.manifest, null, 2)}\n`);
+  const args = [join(ctx['skills-dir'], 'social-review', 'scripts', 'review-batch.mjs'), 'issue-body', merged];
+  if (existsSync(resolve(ctx.cwd, ctx.profile))) args.push('--profile', ctx.profile);
+  const body = run(args, { cwd: ctx.cwd });
+  if (body.code !== 0) throw new Error(`Could not render the issue body: ${tail(body.stderr || body.stdout)}`);
+  await api.request('PATCH', `/repos/${ctx.repo}/issues/${issue}`, { body: body.stdout });
+  log.info(`Saved the state of ${result.changed.length ? result.changed.join(', ') : 'the approval'} in #${issue}.`);
+  return { saved: 'true', reason: '' };
+}
+
 /** Comments the outcome of a publisher run and closes the issue once every item is done or stale. */
 export async function report(ctx, api, log) {
   const issue = issueNumber(ctx.issue);
@@ -156,6 +197,11 @@ export async function report(ctx, api, log) {
   };
   if (ctx['save-outcome'] === 'failure') {
     await comment(api, ctx.repo, issue, `### State not saved\n\nThe publishing state could not be written back to this issue body, so the issue may not show what is already scheduled or published. Fix the cause (see the run) before running or approving this batch again, or items may be published twice.${detail()}${run}\n`);
+    return { complete: 'false', commented: 'true' };
+  }
+  if (ctx['save-outcome'] === 'conflict') {
+    const results = manifest ? summarize({ manifest, log: readText(ctx.log), outcome }).body.replace(/^### .*\n\n/, '').replace(/\n(Every item|The publisher stopped)[^\n]*\n?/, '\n') : '';
+    await comment(api, ctx.repo, issue, `### State not saved: the batch changed\n\nThis run's results were not written to the issue body because ${ctx['save-reason'] || 'the batch changed while it ran'}. They are listed here so they are not lost: check these items on the platform before approving the batch again.\n\n${results.trim()}${run}\n`);
     return { complete: 'false', commented: 'true' };
   }
   if (ctx.mode === 'approved') {
@@ -350,6 +396,7 @@ export async function main(env = process.env, api = null, options = {}) {
     prompt: () => prompt(ctx),
     gate: () => gate(ctx, client, log),
     target: () => target(ctx, client, log),
+    'save-state': () => saveState(ctx, client, log, options),
     pending: () => pending(ctx, client, log),
     report: () => report(ctx, client, log),
     'adjust-report': () => adjustReport(ctx, client),

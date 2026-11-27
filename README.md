@@ -1633,13 +1633,24 @@ The review issue is the batch's durable record: its first line is `<!-- social-c
 batch=<id> revision=<n> -->` and its last line the gzip and base64 manifest marker, which holds the publishing state
 after every run (Drive holds the media). Only comments that start with the command and then a space or the end count,
 from people (never bots) whose `GET /repos/{owner}/{repo}/collaborators/{user}/permission` is `write`, `maintain`, or
-`admin`, on an open issue with the label and a consistent header and marker. Adjust, approve, and the scheduled runs of
-one issue share the concurrency group `fbrissi-social-content-<repo>-<issue>` with `cancel-in-progress: false`, so they
-never write the body at once. GitHub keeps one waiting job per group: any newer job for the same issue, a command or a
-scheduled Instagram sweep, replaces one that is still waiting, which shows as cancelled without a comment on the issue.
-Repeat that command, and keep the sweep schedule away from the times people usually adjust or approve. Permission is
-the API's `role_name` (or `permission`), as in the ai-skills scripts, so a custom repository role does not count as
-write access.
+`admin`, on an open issue with the label and a consistent header and marker. Permission is the API's `role_name` (or
+`permission`), as in the ai-skills scripts, so a custom repository role does not count as write access.
+
+Concurrency and the issue body:
+
+- Adjust, approve, and manual publish runs of one issue share the group `fbrissi-social-content-<repo>-<issue>` with
+  `cancel-in-progress: false`, so human commands run one at a time and the gate checks each one again when it starts.
+- Scheduled Instagram sweeps use their own group, `fbrissi-social-content-sweep-<repo>-<issue>`, so a sweep never
+  displaces a waiting command; a missed sweep is picked up by the next one.
+- Because a sweep can overlap an adjust or approve, the publish workflow re-reads the body just before writing its
+  state. On the same batch revision it merges per item id, keeping entries another run wrote and taking only those this
+  run changed. When the revision moved (an adjust bumped it) it writes nothing and comments this run's results as a
+  note, so nothing published is lost; check those items before approving the new revision. An adjust agent that
+  finishes after an overlapping sweep writes the body from the batch it restored, so a sweep result can then only be
+  found in the sweep's comment; keep the sweep schedule away from the times people usually adjust.
+- GitHub keeps one waiting job per group, and a newer one cancels it without a comment. Two quick commands on one issue
+  can therefore drop the first. A dropped `/adjust` is not lost: the next adjust reads every `/adjust` comment since the
+  last revision. A dropped `/aprove` must be repeated (an `/adjust` after it starts a new revision anyway).
 
 ### Generate
 
@@ -1754,9 +1765,9 @@ Secrets: the same as Generate.
 `social-content-publish.yml` has no LLM step. It runs the `facebook-publish`, `instagram-publish`, and
 `youtube-publish` scripts of `skills-ref` against the manifest in the issue marker, and writes the state back to the
 body after every run, even a failed one (published items are never redone; `failed` Instagram items are retried by the
-next scheduled run, Facebook and YouTube ones by a manual run or a new `/aprove`). When that write-back fails, the
-report says the state was not saved and neither confirms an approval nor closes the issue; fix it before publishing
-again. Scheduled runs download the batch media from Drive before the publisher decides what is due, so keep video
+next scheduled run, Facebook and YouTube ones by a manual run or a new `/aprove`). The write merges with what other
+runs wrote, as described above. When it fails, or the batch moved to a new revision, the report says the state was not
+saved and neither confirms an approval nor closes the issue; fix it before publishing again. Scheduled runs download the batch media from Drive before the publisher decides what is due, so keep video
 batches and the sweep frequency within `job-timeout-minutes`.
 It has three entry points:
 

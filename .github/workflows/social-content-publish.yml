@@ -211,9 +211,12 @@ jobs:
       max-parallel: 1
       matrix:
         issue: ${{ fromJSON(needs.select.outputs.issues) }}
-    # Shared with Social Content Adjust: approve, adjust, and the scheduled runs never write one issue body at once.
+    # Approve and manual runs share the issue group with Social Content Adjust, so human commands run one at a time.
+    # Scheduled sweeps use their own group: GitHub keeps one waiting job per group and a newer one cancels it, so a
+    # sweep must never displace a waiting command. A sweep can therefore overlap an adjust or approve; save-state
+    # re-reads the body and merges per item, and skips the write when the revision moved.
     concurrency:
-      group: fbrissi-social-content-${{ github.repository }}-${{ matrix.issue }}
+      group: ${{ needs.select.outputs.mode == 'sweep' && 'fbrissi-social-content-sweep' || 'fbrissi-social-content' }}-${{ github.repository }}-${{ matrix.issue }}
       cancel-in-progress: false
     steps:
       - name: Check settings
@@ -349,6 +352,7 @@ jobs:
           github-token: ${{ steps.app-token.outputs.token || github.token }}
           issue: ${{ matrix.issue }}
           manifest: ${{ runner.temp }}/social-batch/${{ matrix.issue }}/manifest.json
+          before: ${{ runner.temp }}/social-batch/${{ matrix.issue }}/before.json
           profile: ${{ inputs.profile }}
           skills-dir: ${{ steps.skills.outputs.skills-dir }}
 
@@ -364,5 +368,6 @@ jobs:
           before: ${{ runner.temp }}/social-batch/${{ matrix.issue }}/before.json
           log: ${{ runner.temp }}/social-batch/${{ matrix.issue }}/publisher.log
           outcome: ${{ steps.publish.outcome || 'failure' }}
-          save-outcome: ${{ steps.save.outcome || 'skipped' }}
+          save-outcome: ${{ steps.save.outputs.saved == 'conflict' && 'conflict' || steps.save.outcome || 'skipped' }}
+          save-reason: ${{ steps.save.outputs.reason }}
           always-comment: ${{ needs.select.outputs.mode != 'sweep' }}

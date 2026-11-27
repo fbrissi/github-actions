@@ -226,3 +226,34 @@ export function summarize({ manifest, before = null, log = '', outcome = 'succes
   if (runUrl) lines.push('', `[Workflow run](${runUrl})`);
   return { items, complete, changed, stale: [...stale], manual: [...manual], body: `${lines.join('\n').trim()}\n` };
 }
+
+const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+/**
+ * Decides how a publisher run writes its manifest back when the issue body may have changed since the run started
+ * (`before` is the manifest restored at the start, `live` the one in the body now). Same batch and revision: keep the
+ * live manifest and take, per item id, only the state entries this run changed, so a concurrent run's results
+ * survive; the approval comes from this run when it stamped one. A different batch or revision (an adjust ran, or the
+ * body lost its marker): `conflict`, and nothing is written.
+ */
+export function mergeState({ ours, before, live }) {
+  if (!live) return { action: 'conflict', reason: 'the issue body has no readable manifest marker anymore' };
+  const revision = (manifest) => manifest?.review?.revision ?? 1;
+  if (live.platform !== ours.platform || live.batch_id !== ours.batch_id) {
+    return { action: 'conflict', reason: `the issue now holds batch ${live.batch_id}, not ${ours.batch_id}` };
+  }
+  if (revision(live) !== revision(ours) || revision(live) !== revision(before)) {
+    return { action: 'conflict', reason: `the batch moved to revision ${revision(live)} while this run published revision ${revision(ours)}` };
+  }
+  const ids = new Set((live.items ?? []).map((item) => item.id));
+  const state = { ...(live.state ?? {}) };
+  const changed = [];
+  for (const [id, entry] of Object.entries(ours.state ?? {})) {
+    if (!ids.has(id) || same(entry, before?.state?.[id])) continue;
+    state[id] = entry;
+    changed.push(id);
+  }
+  const approval = ours.approval?.status === 'approved' && live.approval?.status !== 'approved' ? ours.approval : live.approval;
+  const merged = { ...live, state, approval };
+  return { action: same(merged, live) ? 'unchanged' : 'write', manifest: merged, changed };
+}
