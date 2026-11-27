@@ -694,8 +694,18 @@ export async function requestReview(ctx, api) {
   const login = humanLogin(ctx['requested-by']) || requestedBy;
   if (!login) return [`No requester found for PR #${ctx.pr}; nobody was asked to review.`];
   const comments = await api.paginate(`/repos/${repo}/issues/${ctx.pr}/comments`);
-  if (comments.some((comment) => comment.user?.type === 'Bot' && comment.body?.includes('<!-- merge-decision review-requested'))) {
-    return [`@${login} was already asked to review PR #${ctx.pr}.`];
+  const asked = comments.filter((comment) => comment.user?.type === 'Bot' && comment.body?.includes('<!-- merge-decision review-requested'));
+  // One mention per pull request, unless a person approved after it and a later commit made that approval stale (fix
+  // passes keep pushing while an approval label waits for a sign-off): then the pull request would wait silently.
+  let stale = false;
+  if (asked.length > 0) {
+    const since = Date.parse(asked.at(-1).created_at ?? '');
+    const reviews = await api.paginate(`/repos/${repo}/pulls/${ctx.pr}/reviews`);
+    stale = !Number.isNaN(since) && reviews.some((review) => review.state === 'APPROVED'
+      && review.user?.type === 'User' && !/\[bot\]$/i.test(review.user.login ?? '')
+      && review.commit_id && review.commit_id !== pr.head?.sha
+      && Date.parse(review.submitted_at ?? '') > since);
+    if (!stale) return [`@${login} was already asked to review PR #${ctx.pr}.`];
   }
   const summary = [];
   if (pr.user?.login?.toLowerCase() !== login.toLowerCase()) {
@@ -709,7 +719,7 @@ export async function requestReview(ctx, api) {
   const required = number(ctx['required-approvals']) ?? 1;
   const body = [
     `<!-- merge-decision review-requested=${login} -->`,
-    `@${login} this pull request into \`${pr.base.ref}\` needs ${required} human approval${required === 1 ? '' : 's'} on its latest commit before the merge decision can run. Approve it to continue: the approval dispatches the merge decision again.`
+    `@${login} ${stale ? 'your approval is on an older commit: ' : ''}this pull request into \`${pr.base.ref}\` needs ${required} human approval${required === 1 ? '' : 's'} on its latest commit before the merge decision can run. Approve it to continue: the approval dispatches the merge decision again.`
   ].join('\n');
   await api.request('POST', `/repos/${repo}/issues/${ctx.pr}/comments`, { body: `${body}\n` });
   summary.push(`Mentioned @${login} on PR #${ctx.pr}.`);

@@ -16,6 +16,9 @@ Pairs with `fbrissi/ai-skills` `v0.14.1` (the task implementer labels a pull req
   commit (at least one) before a decision, even when it is exempt by base and author. Unlike the PR Fix
   `escalation-label` (`ai:needs-human`), the label never stops a fix pass, so review findings keep being fixed while a
   sign-off (for example on legal text) is pending, and the person's approval of the final head lets the decision run.
+- **A stale approval asks again:** Merge Decision mentions the requester once per pull request; it now mentions them
+  again when a person approved after that mention and a later commit made the approval stale, so a pull request whose
+  fix passes kept pushing after the sign-off no longer waits silently.
 
 ## v1.18.0
 

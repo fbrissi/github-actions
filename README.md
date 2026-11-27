@@ -592,6 +592,7 @@ Do these once per repository, in this order:
    done
    gh label create ai:auto-fix --force      # opts a pull request into PR Fix
    gh label create ai:needs-human --force   # set by PR Fix when it escalates
+   gh label create ai:needs-approval --force  # needs a person's approval before merge; PR Fix keeps running
    gh label create do-not-merge --force     # hold labels of Merge Decision
    gh label create hold --force
    ```

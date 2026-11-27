@@ -461,9 +461,10 @@ describe('resume', () => {
 });
 
 describe('requestReview', () => {
-  const routes = (comments = []) => [
-    ['GET', /pulls\/8$/, { number: 8, user: { login: 'agent[bot]' }, base: { ref: 'main' }, milestone: null }],
+  const routes = (comments = [], reviews = []) => [
+    ['GET', /pulls\/8$/, { number: 8, user: { login: 'agent[bot]' }, head: { sha: 'b'.repeat(40) }, base: { ref: 'main' }, milestone: null }],
     ['GET', /issues\/8\/comments$/, comments],
+    ['GET', /pulls\/8\/reviews$/, reviews],
     ['POST', /pulls\/8\/requested_reviewers$/, {}],
     ['POST', /issues\/8\/comments$/, {}]
   ];
@@ -478,6 +479,24 @@ describe('requestReview', () => {
     const again = fakeApi(routes([{ user: { type: 'Bot' }, body: '<!-- merge-decision review-requested=alice -->' }]), closing);
     await requestReview(ctxFor({ pr: '8' }), again, silent);
     assert.equal(posts(again, /./).length, 0);
+  });
+
+  it('mentions again when an approval after the mention is on an older commit', async () => {
+    const asked = { user: { type: 'Bot' }, body: '<!-- merge-decision review-requested=alice -->', created_at: '2026-11-27T10:00:00Z' };
+    const approval = (commit, at, type = 'User', login = 'alice') => ({ state: 'APPROVED', user: { login, type }, commit_id: commit, submitted_at: at });
+    const stale = fakeApi(routes([asked], [approval('a'.repeat(40), '2026-11-27T11:00:00Z')]), closing);
+    await requestReview(ctxFor({ pr: '8' }), stale, silent);
+    assert.match(posts(stale, /comments$/)[0].body.body, /@alice your approval is on an older commit: this pull request/);
+
+    for (const reviews of [
+      [approval('b'.repeat(40), '2026-11-27T11:00:00Z')],
+      [approval('a'.repeat(40), '2026-11-27T09:00:00Z')],
+      [approval('a'.repeat(40), '2026-11-27T11:00:00Z', 'Bot', 'agent[bot]')]
+    ]) {
+      const api = fakeApi(routes([asked], reviews), closing);
+      await requestReview(ctxFor({ pr: '8' }), api, silent);
+      assert.equal(posts(api, /comments$/).length, 0);
+    }
   });
 
   it('does nothing without a requester', async () => {
