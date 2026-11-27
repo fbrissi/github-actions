@@ -1,0 +1,282 @@
+name: Social Content
+description: >-
+  Deterministic steps of the social content workflows: fetch the pinned ai-skills scripts, install the media tools,
+  build the platform matrix and the agent prompt, gate /adjust and /aprove comments, find approved Instagram
+  batches, report publishing results, and open a review issue when the generate agent did not.
+author: Filipe Bojikian Rissi
+
+inputs:
+  command:
+    description: "`fetch-skills`, `setup-media-tools`, `matrix`, `prompt`, `gate`, `target`, `pending`, `publish`, `save-state`, `report`, `adjust-report`, or `open-review`."
+    required: true
+  github-token:
+    description: GitHub token. `gate`, `publish`, `save-state`, `report`, `adjust-report`, and `open-review` need `issues` write; `target` and `pending` need `issues` read.
+    required: false
+    default: ""
+  skills:
+    description: Whitespace-separated skills to fetch (`fetch-skills`).
+    required: false
+    default: ""
+  skills-repository:
+    description: Repository that holds the skills (`fetch-skills`).
+    required: false
+    default: fbrissi/ai-skills
+  skills-ref:
+    description: Tag or commit SHA of `skills-repository` (`fetch-skills`). Pin it; never use a branch.
+    required: false
+    default: v0.12.0
+  skills-path:
+    description: Directory, inside `skills-repository`, with one folder per skill (`fetch-skills`).
+    required: false
+    default: .rulesync/skills
+  skills-dir:
+    description: Directory with the fetched skills (`publish`, `save-state`, `open-review`), the `skills-dir` output of `fetch-skills`.
+    required: false
+    default: ""
+  piper-tts-version:
+    description: Exact `piper-tts` version installed by `setup-media-tools`.
+    required: false
+    default: 1.8.0
+  platforms:
+    description: Whitespace- or comma-separated platforms (`matrix`), from `facebook`, `instagram`, and `youtube`.
+    required: false
+    default: ""
+  platform:
+    description: One platform (`prompt`, `pending`, `publish`, `open-review`).
+    required: false
+    default: ""
+  mode:
+    description: "`generate` or `adjust` (`prompt`); `approve`, `resume`, or `sweep` (`publish`); `publish` or `approved` (`report`)."
+    required: false
+    default: ""
+  start:
+    description: Optional first date of the batch, `YYYY-MM-DD` (`prompt` in generate mode).
+    required: false
+    default: ""
+  profile:
+    description: Social content profile in the checkout.
+    required: false
+    default: docs/ai/social-content.md
+  issue:
+    description: Review issue number (`prompt` in adjust mode, `gate`, `target`, `publish`, `save-state`, `report`, `adjust-report`).
+    required: false
+    default: ""
+  comment-id:
+    description: ID of the command comment (`gate`, `publish` in approve mode).
+    required: false
+    default: ""
+  slash-command:
+    description: Command the comment must start with (`gate`), for example `/adjust` or `/aprove`.
+    required: false
+    default: ""
+  label:
+    description: Label of the review issues.
+    required: false
+    default: marketing-content
+  drive-root:
+    description: Google Drive root folder name; empty uses the profile's `review.drive_root` (`prompt`, `open-review`).
+    required: false
+    default: ""
+  instructions:
+    description: Extra instructions appended to the agent instructions (`prompt`).
+    required: false
+    default: ""
+  manifest:
+    description: Manifest written by the publisher run (`save-state`, `report`).
+    required: false
+    default: ""
+  before:
+    description: Copy of the manifest before the publisher run (`report`); the state difference decides whether to comment.
+    required: false
+    default: ""
+  log:
+    description: Publisher output file (`report`).
+    required: false
+    default: ""
+  outcome:
+    description: Outcome of the step being reported, `success` or `failure` (`report`, `adjust-report`).
+    required: false
+    default: success
+  always-comment:
+    description: Comment even when nothing changed (`report`), for example after an approval.
+    required: false
+    default: "false"
+  before-revision:
+    description: Revision of the batch before the adjust (`adjust-report`).
+    required: false
+    default: ""
+  retry:
+    description: Comma-separated item ids passed to the Facebook or YouTube publisher as `--retry` (`publish`).
+    required: false
+    default: ""
+  instagram-max:
+    description: Instagram items published per batch and run, `--max` (`publish`).
+    required: false
+    default: "1"
+  since:
+    description: Epoch seconds or ISO time; only manifests written at or after it are opened (`open-review`).
+    required: false
+    default: ""
+  agent-outcome:
+    description: Outcome of the generate agent step (`open-review`); a failure with no batch fails the step.
+    required: false
+    default: success
+
+outputs:
+  skills-dir:
+    description: Directory with the fetched skills (`fetch-skills`).
+    value: ${{ steps.fetch.outputs.skills-dir }}
+  manifest:
+    description: Restored manifest path (`publish`); the file exists only when the batch was restored.
+    value: ${{ steps.publish.outputs.manifest }}
+  before:
+    description: Copy of the manifest before publishing (`publish`).
+    value: ${{ steps.publish.outputs.before }}
+  log:
+    description: Publisher output file (`publish`).
+    value: ${{ steps.publish.outputs.log }}
+  platforms:
+    description: JSON array of platforms (`matrix`).
+    value: ${{ steps.run.outputs.platforms }}
+  prompt:
+    description: Agent prompt (`prompt`).
+    value: ${{ steps.run.outputs.prompt }}
+  instructions:
+    description: Agent instructions (`prompt`).
+    value: ${{ steps.run.outputs.instructions }}
+  allowed:
+    description: "`true` when the comment may run its command (`gate`) or the issue is a review issue (`target`)."
+    value: ${{ steps.run.outputs.allowed }}
+  reason:
+    description: Why the issue or comment was refused (`gate`, `target`).
+    value: ${{ steps.run.outputs.reason }}
+  actor:
+    description: Login of the commenter (`gate`).
+    value: ${{ steps.run.outputs.actor }}
+  batch:
+    description: Batch ID of the review issue (`gate`, `target`).
+    value: ${{ steps.run.outputs.batch }}
+  revision:
+    description: Batch revision (`gate`, `target`, `adjust-report`).
+    value: ${{ steps.run.outputs.revision }}
+  issues:
+    description: JSON array of approved issues with items left to publish (`pending`).
+    value: ${{ steps.run.outputs.issues }}
+  count:
+    description: Number of `issues` (`pending`).
+    value: ${{ steps.run.outputs.count }}
+  complete:
+    description: "`true` when every item is done or stale and the issue was closed (`report`)."
+    value: ${{ steps.run.outputs.complete }}
+  opened:
+    description: JSON array of issues opened by the fallback (`open-review`).
+    value: ${{ steps.run.outputs.opened }}
+  platform:
+    description: Platform of the review issue (`gate`, `target`).
+    value: ${{ steps.run.outputs.platform }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check Node
+      id: node
+      if: ${{ inputs.command != 'fetch-skills' && inputs.command != 'setup-media-tools' }}
+      shell: bash
+      run: |
+        if command -v node >/dev/null 2>&1 && node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)'; then
+          echo 'setup=false' >> "$GITHUB_OUTPUT"
+        else
+          echo 'setup=true' >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Setup Node
+      if: ${{ steps.node.outputs.setup == 'true' }}
+      uses: actions/setup-node@v7
+      with:
+        node-version: 24
+
+    - name: Fetch skills
+      id: fetch
+      if: ${{ inputs.command == 'fetch-skills' }}
+      shell: bash
+      env:
+        SKILLS: ${{ inputs.skills }}
+        SKILLS_REPOSITORY: ${{ inputs.skills-repository }}
+        SKILLS_REF: ${{ inputs.skills-ref }}
+        SKILLS_PATH: ${{ inputs.skills-path }}
+      run: bash "$GITHUB_ACTION_PATH/fetch-skills.sh"
+
+    - name: Install media tools
+      if: ${{ inputs.command == 'setup-media-tools' }}
+      shell: bash
+      env:
+        PIPER_TTS_VERSION: ${{ inputs.piper-tts-version }}
+      run: bash "$GITHUB_ACTION_PATH/setup-media-tools.sh"
+
+    # Same repository ref as this action; keeps an installed gh, else installs a pinned one.
+    - name: Setup GitHub CLI
+      if: ${{ inputs.command == 'publish' || inputs.command == 'save-state' }}
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/../setup-gh/setup-gh.sh"
+
+    - name: Publish
+      id: publish
+      if: ${{ inputs.command == 'publish' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        GH_REPO: ${{ github.repository }}
+        SOCIAL_MODE: ${{ inputs.mode }}
+        SOCIAL_ISSUE: ${{ inputs.issue }}
+        SOCIAL_COMMENT_ID: ${{ inputs.comment-id }}
+        SOCIAL_PLATFORM: ${{ inputs.platform }}
+        SOCIAL_PROFILE: ${{ inputs.profile }}
+        SOCIAL_SKILLS_DIR: ${{ inputs.skills-dir }}
+        SOCIAL_RETRY: ${{ inputs.retry }}
+        SOCIAL_INSTAGRAM_MAX: ${{ inputs.instagram-max }}
+      run: bash "$GITHUB_ACTION_PATH/publish.sh"
+
+    - name: Save state
+      if: ${{ inputs.command == 'save-state' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        GH_REPO: ${{ github.repository }}
+        SOCIAL_MANIFEST: ${{ inputs.manifest }}
+        SOCIAL_ISSUE: ${{ inputs.issue }}
+        SOCIAL_PROFILE: ${{ inputs.profile }}
+        SOCIAL_SKILLS_DIR: ${{ inputs.skills-dir }}
+      run: bash "$GITHUB_ACTION_PATH/save-state.sh"
+
+    - name: Run ${{ inputs.command }}
+      id: run
+      if: ${{ !contains(fromJSON('["fetch-skills", "setup-media-tools", "publish", "save-state"]'), inputs.command) }}
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        SOCIAL_COMMAND: ${{ inputs.command }}
+        SOCIAL_PLATFORMS: ${{ inputs.platforms }}
+        SOCIAL_PLATFORM: ${{ inputs.platform }}
+        SOCIAL_MODE: ${{ inputs.mode }}
+        SOCIAL_START: ${{ inputs.start }}
+        SOCIAL_PROFILE: ${{ inputs.profile }}
+        SOCIAL_ISSUE: ${{ inputs.issue }}
+        SOCIAL_COMMENT_ID: ${{ inputs.comment-id }}
+        SOCIAL_SLASH_COMMAND: ${{ inputs.slash-command }}
+        SOCIAL_LABEL: ${{ inputs.label }}
+        SOCIAL_DRIVE_ROOT: ${{ inputs.drive-root }}
+        SOCIAL_INSTRUCTIONS: ${{ inputs.instructions }}
+        SOCIAL_MANIFEST: ${{ inputs.manifest }}
+        SOCIAL_BEFORE: ${{ inputs.before }}
+        SOCIAL_LOG: ${{ inputs.log }}
+        SOCIAL_OUTCOME: ${{ inputs.outcome }}
+        SOCIAL_ALWAYS_COMMENT: ${{ inputs.always-comment }}
+        SOCIAL_BEFORE_REVISION: ${{ inputs.before-revision }}
+        SOCIAL_SKILLS_DIR: ${{ inputs.skills-dir }}
+        SOCIAL_SINCE: ${{ inputs.since }}
+        SOCIAL_AGENT_OUTCOME: ${{ inputs.agent-outcome }}
+      run: node "$GITHUB_ACTION_PATH/main.mjs"
+
+branding:
+  icon: share-2
+  color: purple

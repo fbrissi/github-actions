@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.15.0
+
+Requires `fbrissi/ai-skills` `v0.12.0` (social content agents and skills), already released.
+
+- **Social content workflows:** three new reusable workflows run the `facebook-content`, `instagram-content`, and
+  `youtube-content` agents and the deterministic publishers of `fbrissi/ai-skills` (`skills-ref`, default `v0.12.0`).
+  - `social-content-generate.yml`: one job per platform (`platforms`, optional `start`, `profile`, `drive-root`,
+    `label`), with Node.js 24, ffmpeg, Piper TTS (`piper-tts==1.8.0`), and a media cache, runs the agent in `generate`
+    mode through `ai-harness`. The agent step has `continue-on-error`; when it does not open the review issue, a
+    deterministic step opens it for each new batch, only after the copy guard and validation pass.
+  - `social-content-adjust.yml`: on an `issue_comment` starting with `/adjust`, checks the commenter's real
+    permission (`write`, `maintain`, or `admin`, never bots), the label, and the batch markers, runs the platform agent
+    in `adjust <issue>` mode, and comments the result.
+  - `social-content-publish.yml` (no LLM): `/aprove` approves the current revision; Facebook and YouTube schedule
+    natively at once, Instagram is recorded for the scheduled runs, which publish due items of every approved
+    Instagram batch. Manual runs (`issue`, `retry`) publish an approved issue again. The state is written back to the
+    issue body after every run, the outcome is commented, and the issue is closed when every item is done or stale.
+  - Adjust, approve, and the scheduled runs of one issue share the `fbrissi-social-content-<repo>-<issue>`
+    concurrency group. The GitHub App is optional (`agent-client-id`, `AGENT_APP_PRIVATE_KEY`); without it the jobs use
+    `GITHUB_TOKEN`. Callers grant `contents: read` and `issues: write`.
+- **New `social-content` composite action** with the deterministic steps of those workflows (`fetch-skills`,
+  `setup-media-tools`, `matrix`, `prompt`, `gate`, `target`, `pending`, `publish`, `save-state`, `report`,
+  `adjust-report`, `open-review`), covered by Node tests.
+
 ## v1.14.0
 
 Release order: `fbrissi/ai-skills` `v0.11.0` first, then this release.

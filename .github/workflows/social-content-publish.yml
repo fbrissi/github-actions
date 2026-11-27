@@ -1,0 +1,365 @@
+name: Social Content Publish
+
+on:
+  workflow_call:
+    inputs:
+      command:
+        description: Slash command that approves a batch; keep it equal to the profile's `review.commands.approve`.
+        required: false
+        type: string
+        default: /aprove
+      issue:
+        description: Review issue to publish again without a comment (manual run), for example to retry failed items. Empty on approval comments and scheduled runs.
+        required: false
+        type: string
+        default: ""
+      retry:
+        description: Comma-separated Facebook or YouTube item ids left `unknown`, retried with `--retry` once you confirmed they are not live (manual run with `issue`).
+        required: false
+        type: string
+        default: ""
+      scheduled-platform:
+        description: Platform a run without a comment or `issue` publishes from every approved open batch. Only `instagram` needs it, since it has no scheduling API.
+        required: false
+        type: string
+        default: instagram
+      instagram-max:
+        description: Instagram items published per batch and run.
+        required: false
+        type: string
+        default: "1"
+      instagram-media-prefix:
+        description: R2 key prefix of the Instagram media (`{date}` and `{id}` are replaced). Empty uses the publisher default (the same value).
+        required: false
+        type: string
+        default: marketing/instagram/{date}/{id}/
+      profile:
+        description: Social content profile in the calling repository.
+        required: false
+        type: string
+        default: docs/ai/social-content.md
+      label:
+        description: Label of the review issues; keep it equal to the profile's `review.label`.
+        required: false
+        type: string
+        default: marketing-content
+      skills-ref:
+        description: Tag or commit SHA of fbrissi/ai-skills with the publisher scripts.
+        required: false
+        type: string
+        default: v0.12.0
+      facebook-page-id:
+        description: Facebook Page ID (Facebook and Instagram). Empty uses the `FACEBOOK_PAGE_ID` variable.
+        required: false
+        type: string
+        default: ""
+      facebook-graph-version:
+        description: Graph API version. Empty uses the `FACEBOOK_GRAPH_VERSION` variable, then the publisher default.
+        required: false
+        type: string
+        default: ""
+      instagram-user-id:
+        description: Instagram professional account ID. Empty uses the `INSTAGRAM_USER_ID` variable, then the account linked to the Page.
+        required: false
+        type: string
+        default: ""
+      youtube-client-id:
+        description: Google OAuth client ID of the YouTube app. Empty uses the `YOUTUBE_CLIENT_ID` variable.
+        required: false
+        type: string
+        default: ""
+      youtube-daily-upload-limit:
+        description: Uploads per 24 hours. Empty uses the `YOUTUBE_DAILY_UPLOAD_LIMIT` variable, then 100.
+        required: false
+        type: string
+        default: ""
+      google-drive-client-id:
+        description: Google OAuth client ID of the Drive app that holds the approved media. Empty uses the `GOOGLE_DRIVE_CLIENT_ID` variable, then secret.
+        required: false
+        type: string
+        default: ""
+      agent-client-id:
+        description: Client ID of an optional GitHub App that edits and comments the issue. Empty uses the `AGENT_APP_CLIENT_ID` variable; without an App (or its key) the job uses `GITHUB_TOKEN`.
+        required: false
+        type: string
+        default: ""
+      environment:
+        description: GitHub environment of the publish job; its secrets and variables are available to it. Empty runs without one.
+        required: false
+        type: string
+        default: ""
+      runs-on:
+        description: Runner label. Empty uses the `CI_RUNNER` variable, then `ubuntu-latest`.
+        required: false
+        type: string
+        default: ""
+      job-timeout-minutes:
+        description: Timeout of each publish job.
+        required: false
+        type: number
+        default: 60
+    secrets:
+      AGENT_APP_PRIVATE_KEY:
+        description: Private key of the optional GitHub App.
+        required: false
+      GOOGLE_DRIVE_CLIENT_ID:
+        description: Google OAuth client ID, when it is kept as a secret instead of an input or variable.
+        required: false
+      GOOGLE_DRIVE_CLIENT_SECRET:
+        description: Google OAuth client secret of the Drive app.
+        required: false
+      GOOGLE_DRIVE_REFRESH_TOKEN:
+        description: OAuth refresh token with the `drive.file` scope.
+        required: false
+      FACEBOOK_PAGE_ACCESS_TOKEN:
+        description: Page (or user) access token for Facebook and Instagram publishing.
+        required: false
+      YOUTUBE_CLIENT_SECRET:
+        description: Google OAuth client secret of the YouTube app.
+        required: false
+      YOUTUBE_REFRESH_TOKEN:
+        description: OAuth refresh token with the `youtube.upload` scope (`youtube.force-ssl` for captions, `youtube` for playlists).
+        required: false
+      R2_ACCESS_KEY_ID:
+        description: R2 (S3-compatible) access key ID for the public Instagram media.
+        required: false
+      R2_SECRET_ACCESS_KEY:
+        description: R2 secret access key.
+        required: false
+      R2_ACCOUNT_ID:
+        description: Cloudflare account ID of the bucket (or set `R2_ENDPOINT`). Also read from the variable of the same name.
+        required: false
+      R2_ENDPOINT:
+        description: S3 endpoint of the bucket, instead of `R2_ACCOUNT_ID`. Also read from the variable of the same name.
+        required: false
+      R2_BUCKET:
+        description: Bucket name. Also read from the variable of the same name.
+        required: false
+      R2_PUBLIC_BASE_URL:
+        description: Public base URL of the bucket that Instagram downloads from. Also read from the variable of the same name.
+        required: false
+
+permissions: {}
+
+jobs:
+  select:
+    name: Select Social Content
+    # Approval comments, manual runs with an issue, and scheduled runs; any other comment is skipped here.
+    if: >-
+      ${{ github.event_name != 'issue_comment'
+      || (github.event.action == 'created' && !github.event.issue.pull_request
+      && startsWith(github.event.comment.body, inputs.command)
+      && github.event.comment.user.type != 'Bot') }}
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      issues: read
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.mode.outputs.mode }}
+      issues: ${{ steps.mode.outputs.issues || steps.pending.outputs.issues }}
+    steps:
+      - name: Resolve mode
+        id: mode
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ISSUE: ${{ github.event.issue.number }}
+          ISSUE: ${{ inputs.issue }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = 'issue_comment' ]; then
+            mode=approve
+            issue="$EVENT_ISSUE"
+          elif [ -n "$ISSUE" ]; then
+            mode=resume
+            issue="${ISSUE#\#}"
+          else
+            echo 'mode=sweep' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! [[ "$issue" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::Invalid issue number '${issue}'."
+            exit 1
+          fi
+          {
+            echo "mode=$mode"
+            echo "issues=[$issue]"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Find approved batches
+        id: pending
+        if: ${{ steps.mode.outputs.mode == 'sweep' }}
+        uses: fbrissi/github-actions/actions/social-content@v1
+        with:
+          command: pending
+          github-token: ${{ github.token }}
+          platform: ${{ inputs.scheduled-platform }}
+          label: ${{ inputs.label }}
+
+  publish:
+    name: Publish #${{ matrix.issue }}
+    needs: select
+    if: ${{ needs.select.outputs.issues != '' && needs.select.outputs.issues != '[]' }}
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      issues: write
+    timeout-minutes: ${{ inputs.job-timeout-minutes }}
+    environment:
+      name: ${{ inputs.environment }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        issue: ${{ fromJSON(needs.select.outputs.issues) }}
+    # Shared with Social Content Adjust: approve, adjust, and the scheduled runs never write one issue body at once.
+    concurrency:
+      group: fbrissi-social-content-${{ github.repository }}-${{ matrix.issue }}
+      cancel-in-progress: false
+    steps:
+      - name: Check settings
+        id: settings
+        env:
+          APP_CLIENT_ID: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          HAS_APP_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          if [ -n "$APP_CLIENT_ID" ] && [ "$HAS_APP_KEY" = 'true' ]; then
+            echo 'app=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'app=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate GitHub App token
+        id: app-token
+        if: ${{ steps.settings.outputs.app == 'true' }}
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-issues: write
+
+      - name: Check approval
+        id: gate
+        if: ${{ needs.select.outputs.mode == 'approve' }}
+        uses: fbrissi/github-actions/actions/social-content@v1
+        with:
+          command: gate
+          github-token: ${{ steps.app-token.outputs.token || github.token }}
+          issue: ${{ matrix.issue }}
+          comment-id: ${{ github.event.comment.id }}
+          slash-command: ${{ inputs.command }}
+          label: ${{ inputs.label }}
+
+      - name: Check issue
+        id: target
+        if: ${{ needs.select.outputs.mode != 'approve' }}
+        uses: fbrissi/github-actions/actions/social-content@v1
+        with:
+          command: target
+          github-token: ${{ steps.app-token.outputs.token || github.token }}
+          issue: ${{ matrix.issue }}
+          label: ${{ inputs.label }}
+
+      - name: Resolve target
+        id: resolved
+        env:
+          GATE_ALLOWED: ${{ steps.gate.outputs.allowed }}
+          GATE_PLATFORM: ${{ steps.gate.outputs.platform }}
+          TARGET_ALLOWED: ${{ steps.target.outputs.allowed }}
+          TARGET_PLATFORM: ${{ steps.target.outputs.platform }}
+          TARGET_REASON: ${{ steps.target.outputs.reason }}
+          MODE: ${{ needs.select.outputs.mode }}
+        run: |
+          set -euo pipefail
+          if [ "$MODE" = 'approve' ]; then
+            allowed="$GATE_ALLOWED"
+            platform="$GATE_PLATFORM"
+          else
+            allowed="$TARGET_ALLOWED"
+            platform="$TARGET_PLATFORM"
+            if [ "$allowed" != 'true' ] && [ "$MODE" = 'resume' ]; then
+              echo "::error::${TARGET_REASON}"
+              exit 1
+            fi
+          fi
+          {
+            echo "allowed=$allowed"
+            echo "platform=$platform"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        if: ${{ steps.resolved.outputs.allowed == 'true' }}
+        with:
+          persist-credentials: false
+
+      - name: Fetch publisher scripts
+        id: skills
+        if: ${{ steps.resolved.outputs.allowed == 'true' }}
+        uses: fbrissi/github-actions/actions/social-content@v1
+        with:
+          command: fetch-skills
+          skills: social-review facebook-publish instagram-publish youtube-publish
+          skills-ref: ${{ inputs.skills-ref }}
+
+      - name: Publish
+        id: publish
+        if: ${{ steps.skills.outcome == 'success' }}
+        uses: fbrissi/github-actions/actions/social-content@v1
+        env:
+          GOOGLE_DRIVE_CLIENT_ID: ${{ inputs.google-drive-client-id || vars.GOOGLE_DRIVE_CLIENT_ID || secrets.GOOGLE_DRIVE_CLIENT_ID }}
+          GOOGLE_DRIVE_CLIENT_SECRET: ${{ secrets.GOOGLE_DRIVE_CLIENT_SECRET }}
+          GOOGLE_DRIVE_REFRESH_TOKEN: ${{ secrets.GOOGLE_DRIVE_REFRESH_TOKEN }}
+          FACEBOOK_PAGE_ID: ${{ inputs.facebook-page-id || vars.FACEBOOK_PAGE_ID }}
+          FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
+          FACEBOOK_GRAPH_VERSION: ${{ inputs.facebook-graph-version || vars.FACEBOOK_GRAPH_VERSION }}
+          INSTAGRAM_USER_ID: ${{ inputs.instagram-user-id || vars.INSTAGRAM_USER_ID }}
+          INSTAGRAM_MEDIA_PREFIX: ${{ inputs.instagram-media-prefix }}
+          YOUTUBE_CLIENT_ID: ${{ inputs.youtube-client-id || vars.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          YOUTUBE_DAILY_UPLOAD_LIMIT: ${{ inputs.youtube-daily-upload-limit || vars.YOUTUBE_DAILY_UPLOAD_LIMIT }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID || vars.R2_ACCOUNT_ID }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT || vars.R2_ENDPOINT }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET || vars.R2_BUCKET }}
+          R2_PUBLIC_BASE_URL: ${{ secrets.R2_PUBLIC_BASE_URL || vars.R2_PUBLIC_BASE_URL }}
+        with:
+          command: publish
+          github-token: ${{ steps.app-token.outputs.token || github.token }}
+          mode: ${{ needs.select.outputs.mode }}
+          issue: ${{ matrix.issue }}
+          comment-id: ${{ github.event.comment.id }}
+          platform: ${{ steps.resolved.outputs.platform }}
+          profile: ${{ inputs.profile }}
+          skills-dir: ${{ steps.skills.outputs.skills-dir }}
+          retry: ${{ inputs.retry }}
+          instagram-max: ${{ inputs.instagram-max }}
+
+      # Always, even after a failed publisher: it saves each success before moving on, so dropping the state would
+      # publish those items again on the next run.
+      - name: Save state
+        if: ${{ always() && steps.publish.outputs.manifest != '' }}
+        uses: fbrissi/github-actions/actions/social-content@v1
+        with:
+          command: save-state
+          github-token: ${{ steps.app-token.outputs.token || github.token }}
+          issue: ${{ matrix.issue }}
+          manifest: ${{ steps.publish.outputs.manifest }}
+          profile: ${{ inputs.profile }}
+          skills-dir: ${{ steps.skills.outputs.skills-dir }}
+
+      - name: Report
+        if: ${{ always() && steps.resolved.outputs.allowed == 'true' }}
+        uses: fbrissi/github-actions/actions/social-content@v1
+        with:
+          command: report
+          github-token: ${{ steps.app-token.outputs.token || github.token }}
+          issue: ${{ matrix.issue }}
+          mode: ${{ (needs.select.outputs.mode == 'approve' && steps.resolved.outputs.platform == 'instagram') && 'approved' || 'publish' }}
+          manifest: ${{ steps.publish.outputs.manifest }}
+          before: ${{ steps.publish.outputs.before }}
+          log: ${{ steps.publish.outputs.log }}
+          outcome: ${{ steps.publish.outcome || 'failure' }}
+          always-comment: ${{ needs.select.outputs.mode != 'sweep' }}

@@ -1,6 +1,6 @@
 # actionlint 1.7.12 bundles create-github-app-token metadata older than its v3 `client-id` input.
 paths:
-  .github/workflows/{code-review,pr-fix,merge-decision,ai-task,ai-resume,branch-sync}.yml:
+  .github/workflows/{code-review,pr-fix,merge-decision,ai-task,ai-resume,branch-sync,social-content-generate,social-content-adjust,social-content-publish}.yml:
     ignore:
       - 'missing input "app-id" which is required by action "actions/create-github-app-token@v3"'
       - 'input "client-id" is not defined in action "actions/create-github-app-token@v3"'
