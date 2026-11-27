@@ -10,23 +10,28 @@ merging a pull request that adds one tags the release and moves the major tag.
 
 Release order: `fbrissi/ai-skills` `v0.11.0` first, then this release.
 
-- **Merge gate counts only the newest check run of each name** (`pr-gate` `merge-gate`, used by `merge-decision.yml`):
+- **Merge gate counts only the newest run of each check** (`pr-gate` `merge-gate`, used by `merge-decision.yml`):
   `check-runs?filter=latest` is per check suite and each workflow run has its own suite, so a cancelled run that a
-  newer run of the same check replaced still blocked the merge (`checks not successful ... (cancelled)`). Check runs
-  are now grouped by name and only the newest (latest `started_at`, then highest id) is judged.
+  newer run of the same workflow replaced still blocked the merge (`checks not successful ... (cancelled)`). Check runs
+  are now grouped by App, workflow file (from the run that owns the suite), and name, and only the newest (latest
+  `started_at`, then highest id) is judged; same-named jobs of different workflows stay separate.
 - **Unresolved review threads no longer stall a merge silently:** when they are the only gate left and no
   `fix-workflow` run is queued, `merge-gate` sets the new `handoff` output and `merge-decision.yml` runs **Hand Off
   Unresolved Threads**, one `merge-decision` handoff to the requester (`<!-- merge-decision unresolved-threads -->`,
   not repeated while it is open). New `merge-decision.yml` and `pr-gate` input `fix-workflow` (default `pr-fix.yml` in
-  the workflow); while a run of it is queued and the pull request has review feedback newer than its last fix round,
-  the decision only skips, since that pass dispatches it again.
+  the workflow); while a run of it is queued, the pull request could get a pass (new inputs `fix-opt-in-label`,
+  `fix-branch-prefixes`, `fix-max-rounds`, `fix-escalation-label`, `fix-ignore-authors`, set like the PR Fix and PR
+  Feedback Dispatch callers), and it has review feedback newer than its last fix round, the decision only skips, since
+  that pass dispatches it again.
 - **Clean grades never dispatch PR Fix** (`pr-gate` `feedback-dispatch`, used by `pr-feedback-dispatch.yml`): a
   `commented` review that is only a clean `★★★★★` grade with no inline comments now always goes to `merge-workflow`,
   even with unresolved threads (the merge gate hands those off). Before, two clean reviews of one head with a thread
   still open dispatched two fix passes at the same moment.
 - **Release Note `exempt-paths`** (`release-note.yml`, default empty, so nothing changes until set): a pull request
   that only changes matching paths, for example `*.md docs/* .ai/* .github/*` (documentation, agent configuration,
-  CI), and adds no release heading passes with an empty `version`.
+  CI), and adds no release heading passes with an empty `version`. A file renamed out of a non-exempt path is not
+  exempt. Covered by the new `tests/release-note.test.mjs`, which runs the workflow's inline script in scratch
+  repositories (CI runs `node --test actions/*/*.test.mjs tests/*.test.mjs`).
 - **`ai-skills-ref` default `v0.11.0`** everywhere skills are loaded: `ai-task.yml` and the `ai-task` action (from
   `v0.10.1`), `merge-decision.yml` (from `v0.9.0`), `pr-fix.yml` (from `v0.4.0`), `code-review.yml` (from `v0.2.0`),
   and the `ai-harness` action's `skills-ref` (from `v0.2.0`). Every stage opens the issue's images itself, and the

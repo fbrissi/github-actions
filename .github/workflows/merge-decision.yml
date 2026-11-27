@@ -33,10 +33,35 @@ on:
         type: boolean
         default: true
       fix-workflow:
-        description: Fix workflow file (the PR Fix caller). While a run of it is queued and the pull request has review feedback newer than its last fix round, unresolved review threads only skip the decision; otherwise they hand the pull request off to the requester. Empty always hands off.
+        description: Fix workflow file (the PR Fix caller). While a run of it is queued, the pull request could get a pass (the `fix-*` inputs below match the PR Fix caller), and it has review feedback newer than its last fix round, unresolved review threads only skip the decision; otherwise they hand the pull request off to the requester. Empty always hands off.
         required: false
         type: string
         default: pr-fix.yml
+      fix-opt-in-label:
+        description: The `opt-in-label` of the PR Fix caller.
+        required: false
+        type: string
+        default: ai:auto-fix
+      fix-branch-prefixes:
+        description: The `branch-prefixes` of the PR Fix caller.
+        required: false
+        type: string
+        default: ""
+      fix-max-rounds:
+        description: The `max-rounds` of the PR Fix caller.
+        required: false
+        type: number
+        default: 3
+      fix-escalation-label:
+        description: The `escalation-label` of the PR Fix caller.
+        required: false
+        type: string
+        default: ai:needs-human
+      fix-ignore-authors:
+        description: The `ignore-authors` of the PR Feedback Dispatch caller; their feedback never waits for a queued fix run.
+        required: false
+        type: string
+        default: ""
       hold-labels:
         description: Whitespace-separated labels that block any decision.
         required: false
@@ -198,6 +223,11 @@ jobs:
           hold-labels: ${{ inputs.hold-labels }}
           branch-prefixes: ${{ inputs.branch-prefixes }}
           fix-workflow: ${{ inputs.fix-workflow }}
+          opt-in-label: ${{ inputs.fix-opt-in-label }}
+          fix-branch-prefixes: ${{ inputs.fix-branch-prefixes }}
+          max-rounds: ${{ inputs.fix-max-rounds }}
+          escalation-label: ${{ inputs.fix-escalation-label }}
+          ignore-authors: ${{ inputs.fix-ignore-authors }}
 
   decide:
     name: Run Merge Decision
