@@ -52,7 +52,7 @@ on:
         description: Tag or commit SHA of fbrissi/ai-skills with the publisher scripts.
         required: false
         type: string
-        default: v0.13.0
+        default: v0.13.1
       facebook-page-id:
         description: Facebook Page ID (Facebook and Instagram). Empty uses the `FACEBOOK_PAGE_ID` variable.
         required: false
