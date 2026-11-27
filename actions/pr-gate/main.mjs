@@ -8,7 +8,7 @@ import { createClient } from '../ai-delivery/github.mjs';
 
 const NAMES = [
   'command', 'fix-branch-prefixes', 'pr-number', 'opt-in-label', 'branch-prefixes', 'max-rounds', 'escalation-label', 'check-name',
-  'required-human-approvals', 'human-approval-exempt-base-prefixes', 'human-approval-exempt-authors', 'hold-labels', 'round', 'start-sha', 'outcome',
+  'required-human-approvals', 'human-approval-exempt-base-prefixes', 'human-approval-exempt-authors', 'approval-labels', 'hold-labels', 'round', 'start-sha', 'outcome',
   'head-sha', 'result', 'check-run-id', 'merge-workflow', 'fix-workflow', 'ignore-authors', 'ignore-reply-authors',
   'merge-check-name', 'output-file'
 ];
@@ -309,10 +309,15 @@ export async function mergeGate(ctx, api, sleep = (ms) => new Promise((resolve) 
   const exemptAuthor = exemptAuthors.length > 0
     ? exemptAuthors.includes(author.toLowerCase())
     : pr.user?.type === 'Bot' && /\[bot\]$/i.test(author);
-  const required = exemptBase && exemptAuthor ? 0 : Number(ctx['required-human-approvals'] || 1);
+  // An approval label (for example legal text that needs a person's sign-off) cancels the exemption, so only a human
+  // approval of the head commit lets the decision run, while the fix passes keep working on the pull request.
+  const approvalLabels = words(ctx['approval-labels']);
+  const approvalLabel = pr.labels.map((label) => label.name).find((name) => approvalLabels.includes(name));
+  const configured = Number(ctx['required-human-approvals'] || 1);
+  const required = approvalLabel ? Math.max(1, configured) : exemptBase && exemptAuthor ? 0 : configured;
   const outputs = { action: 'skip', pr_number: String(pr.number), required_approvals: String(required) };
   if (approvals < required) {
-    const reason = `${approvals} of ${required} human approvals on ${headSha}.`;
+    const reason = `${approvals} of ${required} human approvals on ${headSha}${approvalLabel ? ` (the ${approvalLabel} label needs one)` : ''}.`;
     return { outputs: { ...outputs, request_review: 'true' }, summary: [`skipped: ${reason}`], notice: reason };
   }
 

@@ -92,6 +92,11 @@ describe('fix-gate', () => {
     assert.match(result.summary[0], /ai:needs-human/);
   });
 
+  it('keeps fixing while only an approval label is present', async () => {
+    const result = await fixGate(ctxFor(base), fixRepo({ pr: pull({ labels: [{ name: 'ai:needs-approval' }] }) }));
+    assert.equal(result.outputs.action, 'fix');
+  });
+
   it('skips a second pass on the same head without new feedback', async () => {
     const comments = [bot(`<!-- pr-fix round=1 head=${HEAD} -->`)];
     const result = await fixGate(ctxFor(base), fixRepo({ comments }));
@@ -359,6 +364,23 @@ describe('merge-gate', () => {
     const pr = pull({ base: { ref: 'master', sha: OLD } });
     const result = await mergeGate(ctxFor(base), mergeRepo({ pr, reviews: [approval('alice')] }), noSleep);
     assert.equal(result.outputs.action, 'decide');
+  });
+
+  it('needs a human approval of the head commit when an approval label cancels the exemption', async () => {
+    const ctx = ctxFor({ ...base, 'human-approval-exempt-base-prefixes': 'feat/', 'approval-labels': 'ai:needs-approval legal' });
+    const labelled = pull({ labels: [{ name: 'ai:needs-approval' }] });
+    const waiting = await mergeGate(ctx, mergeRepo({ pr: labelled, reviews: [approval('agent[bot]', 'Bot')] }), noSleep);
+    assert.equal(waiting.outputs.action, 'skip');
+    assert.equal(waiting.outputs.request_review, 'true');
+    assert.equal(waiting.outputs.required_approvals, '1');
+    assert.match(waiting.summary[0], /the ai:needs-approval label needs one/);
+    const stale = await mergeGate(ctx, mergeRepo({ pr: labelled, reviews: [approval('alice', 'User', OLD)] }), noSleep);
+    assert.equal(stale.outputs.action, 'skip');
+    const approved = await mergeGate(ctx, mergeRepo({ pr: labelled, reviews: [approval('alice')] }), noSleep);
+    assert.equal(approved.outputs.action, 'decide');
+    const zero = ctxFor({ ...base, 'required-human-approvals': '0', 'approval-labels': 'legal' });
+    const legal = await mergeGate(zero, mergeRepo({ pr: pull({ labels: [{ name: 'legal' }] }) }), noSleep);
+    assert.equal(legal.outputs.required_approvals, '1');
   });
 
   it('ignores an approval of an older commit', async () => {

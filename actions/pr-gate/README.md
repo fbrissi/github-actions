@@ -55,6 +55,7 @@ jobs:
 | `required-human-approvals` | `1` | `merge-gate`: human approvals on the head commit. |
 | `human-approval-exempt-base-prefixes` | `""` | `merge-gate`: base prefixes that need no human approval when the author is exempt too. |
 | `human-approval-exempt-authors` | `""` | `merge-gate`: authors exempt into those bases; empty means any GitHub App bot, never a person. |
+| `approval-labels` | `ai:needs-approval` | `merge-gate`: labels that require a human approval of the head commit (at least one) even when the pull request is exempt. They never stop a fix pass. |
 | `hold-labels` | `do-not-merge hold` | `merge-gate`: labels that block a decision. |
 | `round`, `start-sha`, `outcome` | `""` | `fix-record`: round, starting head commit, and harness outcome. |
 | `head-sha` | `""` | `merge-record`: decided head commit. |
