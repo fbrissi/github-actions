@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.18.0
+
+Requires `fbrissi/ai-skills` `v0.14.0`.
+
+- **Social content:** the default `skills-ref` of `social-content-generate.yml`, `social-content-adjust.yml`,
+  `social-content-publish.yml` and the `social-content` action moves to `v0.14.0`: a creative brief per item before the
+  copy and a `## Brand` profile section, `copy-guard` warns on a template repeated across a batch, `image-cards`
+  composes cards without an image and crops screenshots to a legible region, `video-shorts` refuses frame edges that
+  cut UI text, and the review issue shows the text drawn in stories, slides and video scenes. Non-breaking: profiles
+  without `## Brand` keep working.
+
 ## v1.17.0
 
 Pairs with `fbrissi/ai-skills` `v0.13.2` (agents wait for delegated work before ending a non-interactive run); not
