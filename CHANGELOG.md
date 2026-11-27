@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.19.0
+
+Pairs with `fbrissi/ai-skills` `v0.14.1` (the task implementer labels a pull request that needs a person's sign-off with
+`ai:needs-approval` instead of `ai:needs-human`); not required.
+
+- **Approval labels for a sign-off without stopping the fixes:** `merge-decision.yml` and `pr-gate` (`merge-gate`) take
+  `approval-labels` (default `ai:needs-approval`). A pull request with one of them needs a human approval of its head
+  commit (at least one) before a decision, even when it is exempt by base and author. Unlike the PR Fix
+  `escalation-label` (`ai:needs-human`), the label never stops a fix pass, so review findings keep being fixed while a
+  sign-off (for example on legal text) is pending, and the person's approval of the final head lets the decision run.
+- **A stale approval asks again:** Merge Decision mentions the requester once per pull request; it now mentions them
+  again when a person approved after that mention and a later commit made the approval stale, so a pull request whose
+  fix passes kept pushing after the sign-off no longer waits silently.
+
 ## v1.18.0
 
 Requires `fbrissi/ai-skills` `v0.14.0`.

@@ -421,7 +421,7 @@ The fixer GitHub App needs `Contents: Read and write`, `Pull requests: Read and 
    successful (`neutral` and `skipped` count; runs started by review or check events, such as the dispatcher, are
    ignored), with no standing `CHANGES_REQUESTED`, at least `required-human-approvals` approvals on the head commit by
    users (not bots or Apps; none when the base branch matches `human-approval-exempt-base-prefixes` and the author
-   matches `human-approval-exempt-authors`), no unresolved review threads, and no decision recorded for the head
+   matches `human-approval-exempt-authors`, unless the pull request has one of the `approval-labels`), no unresolved review threads, and no decision recorded for the head
    commit yet. Of several check runs with one name from the same App and workflow file (for example a cancelled run
    and the newer run that replaced it), only the newest counts; same-named jobs of different workflows stay separate. When only unresolved threads remain and no `fix-workflow` run is queued that this pull request could get (opted in, not
    escalated, rounds left, review feedback newer than its last fix round), **Hand Off
@@ -515,6 +515,7 @@ The review request uses the same App with `pull-requests: write`.
 | `human-approval-exempt-base-prefixes` | `""` | Base branch prefixes whose pull requests need no human approval when the author is exempt too, for example `release/` for task PRs into release branches. |
 | `human-approval-exempt-authors` | `""` (any GitHub App bot) | Authors that may skip human approval into an exempt base, for example the agent App bot `my-agent[bot]`. Pull requests by people always need `required-human-approvals`. |
 | `request-human-review` | `true` | Request a review from the flow's requester and mention them once while approvals are missing. |
+| `approval-labels` | `ai:needs-approval` | Labels that cancel the exemption: the pull request needs a human approval of its head commit (at least one) before a decision, for example a sign-off on legal text. Unlike the PR Fix `escalation-label`, they never stop a fix pass, so review findings keep being fixed while the sign-off is pending. |
 | `hold-labels` | `do-not-merge hold` | Labels that block a decision. |
 | `fix-workflow` | `pr-fix.yml` | PR Fix caller; while a run of it is queued, the pull request could get a pass, and it has review feedback newer than its last fix round, unresolved threads only skip, otherwise they hand off to the requester. Empty always hands off. |
 | `fix-opt-in-label`, `fix-branch-prefixes`, `fix-max-rounds`, `fix-escalation-label` | `ai:auto-fix`, `""`, `3`, `ai:needs-human` | Set them as the `opt-in-label`, `branch-prefixes`, `max-rounds`, and `escalation-label` of the PR Fix caller, so the gate only waits for a pass the pull request could get. |
@@ -591,6 +592,7 @@ Do these once per repository, in this order:
    done
    gh label create ai:auto-fix --force      # opts a pull request into PR Fix
    gh label create ai:needs-human --force   # set by PR Fix when it escalates
+   gh label create ai:needs-approval --force  # needs a person's approval before merge; PR Fix keeps running
    gh label create do-not-merge --force     # hold labels of Merge Decision
    gh label create hold --force
    ```

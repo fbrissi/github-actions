@@ -62,6 +62,11 @@ on:
         required: false
         type: string
         default: ""
+      approval-labels:
+        description: Whitespace-separated labels that require a human approval of the head commit even when the pull request is exempt, for example a sign-off on legal text. Unlike the PR Fix `escalation-label`, they never stop a fix pass.
+        required: false
+        type: string
+        default: ai:needs-approval
       hold-labels:
         description: Whitespace-separated labels that block any decision.
         required: false
@@ -220,6 +225,7 @@ jobs:
           required-human-approvals: ${{ inputs.required-human-approvals }}
           human-approval-exempt-base-prefixes: ${{ inputs.human-approval-exempt-base-prefixes }}
           human-approval-exempt-authors: ${{ inputs.human-approval-exempt-authors }}
+          approval-labels: ${{ inputs.approval-labels }}
           hold-labels: ${{ inputs.hold-labels }}
           branch-prefixes: ${{ inputs.branch-prefixes }}
           fix-workflow: ${{ inputs.fix-workflow }}
