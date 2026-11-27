@@ -201,7 +201,9 @@ export function summarize({ manifest, before = null, log = '', outcome = 'succes
     return { id: item.id, type: item.type, status, url: state.url ?? '', remote: state.remote_id ?? '', error: state.error ?? '', when: state.publish_at ?? item.publish_at ?? item.date ?? '' };
   });
   const complete = items.length > 0 && items.every((item) => DONE_STATUSES.includes(item.status) || item.status === 'stale');
-  const changed = JSON.stringify(manifest?.state ?? {}) !== JSON.stringify(before?.state ?? {});
+  // Attempts and timestamps change on every retry; only status, result, and error count as a change.
+  const signature = (data) => JSON.stringify(Object.entries(data?.state ?? {}).sort(([a], [b]) => a.localeCompare(b)).map(([id, entry]) => [id, entry?.status ?? null, entry?.remote_id ?? null, entry?.error ?? null]));
+  const changed = signature(manifest) !== signature(before);
   const notes = [...new Set([...String(log ?? '').matchAll(NOTE_LINES)].map((match) => match[0].trim()))];
   const platform = PLATFORM_NAMES[manifest?.platform] ?? manifest?.platform ?? 'Social';
 
@@ -215,7 +217,11 @@ export function summarize({ manifest, before = null, log = '', outcome = 'succes
   if (notes.length) lines.push('', ...notes.map((note) => `- ${cell(note, 200)}`));
   lines.push('');
   if (complete) lines.push('Every item is scheduled, published, or stale, so this issue is closed.');
-  else if (outcome !== 'success') lines.push('The publisher stopped with an error; the state of finished items is saved in the issue body. Failed items are retried by the next run.');
+  else if (outcome !== 'success') {
+    lines.push(manifest?.platform === 'instagram'
+      ? 'The publisher stopped with an error; the state of finished items is saved in the issue body. The next scheduled run retries failed items.'
+      : 'The publisher stopped with an error; the state of finished items is saved in the issue body. Retry failed items with a manual run of the publish workflow for this issue, or comment the approve command again.');
+  }
   if (manual.size) lines.push(`Check ${[...manual].map((id) => `\`${cell(id)}\``).join(', ')} on the platform before retrying, since the last call got no response.`);
   if (runUrl) lines.push('', `[Workflow run](${runUrl})`);
   return { items, complete, changed, stale: [...stale], manual: [...manual], body: `${lines.join('\n').trim()}\n` };

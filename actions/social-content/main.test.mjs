@@ -201,10 +201,28 @@ describe('report', () => {
   it('comments a failure without closing', async () => {
     const api = fakeApi(routes);
     const manifest = write('failed.json', { ...facebook, state: { a: { status: 'failed', error: 'OAuthException' } } });
-    const result = await report(ctxFor({ issue: '7', manifest, before: manifest, log: write('err', ''), outcome: 'failure' }), api, silent);
+    const result = await report(ctxFor({ issue: '7', manifest, before: write('failed-before.json', facebook), log: write('err', ''), outcome: 'failure' }), api, silent);
     assert.equal(result.complete, 'false');
     assert.match(posted(api)[0].body.body, /publishing failed/);
     assert.doesNotMatch(posted(api)[0].body.body, /```text/);
+    assert.equal(api.calls.some((call) => call.method === 'PATCH'), false);
+  });
+
+  it('stays quiet when a scheduled run fails the same way again', async () => {
+    const api = fakeApi(routes);
+    const manifest = write('again.json', { ...facebook, state: { a: { status: 'failed', error: 'OAuthException', attempts: 3, at: '2026-12-01T12:00:00Z' } } });
+    const before = write('again-before.json', { ...facebook, state: { a: { status: 'failed', error: 'OAuthException', attempts: 2, at: '2026-12-01T09:00:00Z' } } });
+    const result = await report(ctxFor({ issue: '7', manifest, before, log: write('again.log', ''), outcome: 'failure' }), api, silent);
+    assert.equal(result.commented, 'false');
+    assert.equal(api.calls.length, 0);
+  });
+
+  it('warns instead of confirming or closing when the state was not saved', async () => {
+    const api = fakeApi(routes);
+    const manifest = write('unsaved.json', { ...facebook, state: { a: { status: 'scheduled' }, b: { status: 'scheduled' } } });
+    const result = await report(ctxFor({ issue: '7', manifest, before: write('unsaved-before.json', facebook), log: write('unsaved.log', 'issue body has 70000 characters\n'), 'save-outcome': 'failure', mode: 'approved' }), api, silent);
+    assert.deepEqual(result, { complete: 'false', commented: 'true' });
+    assert.match(posted(api)[0].body.body, /### State not saved/);
     assert.equal(api.calls.some((call) => call.method === 'PATCH'), false);
   });
 

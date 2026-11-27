@@ -97,6 +97,10 @@ inputs:
     description: Outcome of the step being reported, `success` or `failure` (`report`, `adjust-report`).
     required: false
     default: success
+  save-outcome:
+    description: Outcome of the save-state step (`report`); on `failure` the report warns that the state was not saved and neither confirms an approval nor closes the issue.
+    required: false
+    default: skipped
   always-comment:
     description: Comment even when nothing changed (`report`), for example after an approval.
     required: false
@@ -271,6 +275,7 @@ runs:
         SOCIAL_LOG: ${{ inputs.log }}
         SOCIAL_OUTCOME: ${{ inputs.outcome }}
         SOCIAL_ALWAYS_COMMENT: ${{ inputs.always-comment }}
+        SOCIAL_SAVE_OUTCOME: ${{ inputs.save-outcome }}
         SOCIAL_BEFORE_REVISION: ${{ inputs.before-revision }}
         SOCIAL_SKILLS_DIR: ${{ inputs.skills-dir }}
         SOCIAL_SINCE: ${{ inputs.since }}

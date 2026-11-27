@@ -189,6 +189,7 @@ describe('summarize', () => {
     assert.match(result.body, /quota \\\| 403/);
     assert.match(result.body, /- quota exceeded for today/);
     assert.match(result.body, /\[Workflow run\]\(https:\/\/run\)/);
+    assert.match(result.body, /manual run of the publish workflow/);
   });
 
   it('is complete when every item is done or stale', () => {

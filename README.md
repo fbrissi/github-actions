@@ -1635,8 +1635,11 @@ after every run (Drive holds the media). Only comments that start with the comma
 from people (never bots) whose `GET /repos/{owner}/{repo}/collaborators/{user}/permission` is `write`, `maintain`, or
 `admin`, on an open issue with the label and a consistent header and marker. Adjust, approve, and the scheduled runs of
 one issue share the concurrency group `fbrissi-social-content-<repo>-<issue>` with `cancel-in-progress: false`, so they
-never write the body at once. GitHub keeps one waiting run per group: a newer command on the same issue replaces a run
-that is still waiting (it shows as cancelled), so repeat that command.
+never write the body at once. GitHub keeps one waiting job per group: any newer job for the same issue, a command or a
+scheduled Instagram sweep, replaces one that is still waiting, which shows as cancelled without a comment on the issue.
+Repeat that command, and keep the sweep schedule away from the times people usually adjust or approve. Permission is
+the API's `role_name` (or `permission`), as in the ai-skills scripts, so a custom repository role does not count as
+write access.
 
 ### Generate
 
@@ -1750,7 +1753,11 @@ Secrets: the same as Generate.
 
 `social-content-publish.yml` has no LLM step. It runs the `facebook-publish`, `instagram-publish`, and
 `youtube-publish` scripts of `skills-ref` against the manifest in the issue marker, and writes the state back to the
-body after every run, even a failed one (published items are never redone; `failed` items are retried by the next run).
+body after every run, even a failed one (published items are never redone; `failed` Instagram items are retried by the
+next scheduled run, Facebook and YouTube ones by a manual run or a new `/aprove`). When that write-back fails, the
+report says the state was not saved and neither confirms an approval nor closes the issue; fix it before publishing
+again. Scheduled runs download the batch media from Drive before the publisher decides what is due, so keep video
+batches and the sweep frequency within `job-timeout-minutes`.
 It has three entry points:
 
 - **Approval** (`issue_comment` starting with `command`, default `/aprove`): the gate, then

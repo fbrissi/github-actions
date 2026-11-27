@@ -338,15 +338,17 @@ jobs:
           instagram-max: ${{ inputs.instagram-max }}
 
       # Always, even after a failed publisher: it saves each success before moving on, so dropping the state would
-      # publish those items again on the next run.
+      # publish those items again on the next run. The paths are the fixed ones publish.sh writes, not outputs of a
+      # step that may have failed; save-state does nothing when the manifest was never restored.
       - name: Save state
-        if: ${{ always() && steps.publish.outputs.manifest != '' }}
+        id: save
+        if: ${{ always() && steps.skills.outcome == 'success' }}
         uses: fbrissi/github-actions/actions/social-content@v1
         with:
           command: save-state
           github-token: ${{ steps.app-token.outputs.token || github.token }}
           issue: ${{ matrix.issue }}
-          manifest: ${{ steps.publish.outputs.manifest }}
+          manifest: ${{ runner.temp }}/social-batch/${{ matrix.issue }}/manifest.json
           profile: ${{ inputs.profile }}
           skills-dir: ${{ steps.skills.outputs.skills-dir }}
 
@@ -358,8 +360,9 @@ jobs:
           github-token: ${{ steps.app-token.outputs.token || github.token }}
           issue: ${{ matrix.issue }}
           mode: ${{ (needs.select.outputs.mode == 'approve' && steps.resolved.outputs.platform == 'instagram') && 'approved' || 'publish' }}
-          manifest: ${{ steps.publish.outputs.manifest }}
-          before: ${{ steps.publish.outputs.before }}
-          log: ${{ steps.publish.outputs.log }}
+          manifest: ${{ runner.temp }}/social-batch/${{ matrix.issue }}/manifest.json
+          before: ${{ runner.temp }}/social-batch/${{ matrix.issue }}/before.json
+          log: ${{ runner.temp }}/social-batch/${{ matrix.issue }}/publisher.log
           outcome: ${{ steps.publish.outcome || 'failure' }}
+          save-outcome: ${{ steps.save.outcome || 'skipped' }}
           always-comment: ${{ needs.select.outputs.mode != 'sweep' }}

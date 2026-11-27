@@ -22,7 +22,7 @@ import {
 } from './social-content.mjs';
 
 const NAMES = ['command', 'platforms', 'platform', 'mode', 'start', 'profile', 'issue', 'comment-id', 'slash-command', 'label',
-  'drive-root', 'instructions', 'manifest', 'before', 'log', 'outcome', 'always-comment', 'before-revision', 'skills-dir', 'since',
+  'drive-root', 'instructions', 'manifest', 'before', 'log', 'outcome', 'save-outcome', 'always-comment', 'before-revision', 'skills-dir', 'since',
   'agent-outcome'];
 
 export const envName = (name) => `SOCIAL_${name.toUpperCase().replaceAll('-', '_')}`;
@@ -154,6 +154,10 @@ export async function report(ctx, api, log) {
     const lines = readText(ctx.log).trim().split(/\r?\n/).filter(Boolean).slice(-3).map((line) => line.slice(0, 300));
     return lines.length ? `\n\n\`\`\`text\n${lines.join('\n').replaceAll('```', "'''")}\n\`\`\`` : '';
   };
+  if (ctx['save-outcome'] === 'failure') {
+    await comment(api, ctx.repo, issue, `### State not saved\n\nThe publishing state could not be written back to this issue body, so the issue may not show what is already scheduled or published. Fix the cause (see the run) before running or approving this batch again, or items may be published twice.${detail()}${run}\n`);
+    return { complete: 'false', commented: 'true' };
+  }
   if (ctx.mode === 'approved') {
     const approval = manifest?.approval ?? {};
     const name = PLATFORM_NAMES[manifest?.platform] ?? 'Instagram';
@@ -169,7 +173,10 @@ export async function report(ctx, api, log) {
   }
   const result = summarize({ manifest, before: readJson(ctx.before), log: readText(ctx.log), outcome, runUrl: ctx.runUrl });
   const always = ctx['always-comment'] === 'true';
-  const noteworthy = always || result.changed || outcome !== 'success' || result.stale.length > 0 || result.manual.length > 0;
+  // A scheduled run that fails the same way again (an Instagram item stays failed with the same error) stays quiet;
+  // a failure no item records is always reported.
+  const unattributed = outcome !== 'success' && !result.items.some((item) => item.error);
+  const noteworthy = always || result.changed || unattributed || result.stale.length > 0 || result.manual.length > 0;
   if (noteworthy) await comment(api, ctx.repo, issue, outcome === 'success' ? result.body : `${result.body.trimEnd()}${detail()}\n`);
   if (result.complete) {
     await api.request('PATCH', `/repos/${ctx.repo}/issues/${issue}`, { state: 'closed', state_reason: 'completed' });
