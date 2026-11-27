@@ -23,6 +23,14 @@ on:
         required: false
         type: boolean
         default: false
+      exempt-paths:
+        description: >-
+          Whitespace-separated path globs (shell `case` patterns, where `*` also matches `/`) that need no release note,
+          for example `*.md docs/* .ai/* .github/*` for documentation, agent configuration, and CI. A pull request that
+          only changes matching paths and adds no release heading passes with an empty `version`. Empty exempts nothing.
+        required: false
+        type: string
+        default: ""
       runs-on:
         description: Runner label. Empty uses the `CI_RUNNER` variable, then `ubuntu-latest`.
         required: false
@@ -65,6 +73,7 @@ jobs:
           CHECK_PACKAGE_VERSION: ${{ inputs.check-package-version }}
           PACKAGE_JSON: ${{ inputs.package-json-path }}
           ALLOW_EMPTY_BASE_HEADING: ${{ inputs.allow-empty-base-heading }}
+          EXEMPT_PATHS: ${{ inputs.exempt-paths }}
         run: |
           set -euo pipefail
 
@@ -100,6 +109,31 @@ jobs:
             else
               versions=()
             fi
+          fi
+
+          only_exempt_paths() {
+            local file pattern matched
+            local -a patterns changed
+            [ -n "${EXEMPT_PATHS//[[:space:]]/}" ] || return 1
+            read -r -d '' -a patterns <<< "$EXEMPT_PATHS" || true
+            mapfile -t changed < <(git diff --name-only --no-renames "$BASE_SHA...$HEAD_SHA")
+            [ "${#changed[@]}" -gt 0 ] || return 1
+            for file in "${changed[@]}"; do
+              matched=false
+              for pattern in "${patterns[@]}"; do
+                # shellcheck disable=SC2254
+                case "$file" in
+                  $pattern) matched=true; break ;;
+                esac
+              done
+              [ "$matched" = true ] || return 1
+            done
+          }
+
+          if [ "${#versions[@]}" -eq 0 ] && only_exempt_paths; then
+            echo "Every changed path matches exempt-paths; no release note is needed."
+            echo "version=" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
           if [ "${#versions[@]}" -ne 1 ]; then

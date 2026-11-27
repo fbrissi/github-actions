@@ -17,7 +17,7 @@ inputs:
     required: false
     default: ""
   opt-in-label:
-    description: "`fix-gate`: label that opts a pull request into automatic fixes."
+    description: "`fix-gate`: label that opts a pull request into automatic fixes. `merge-gate`: the same label of the PR Fix caller."
     required: false
     default: ai:auto-fix
   branch-prefixes:
@@ -25,13 +25,17 @@ inputs:
     required: false
     default: ""
   max-rounds:
-    description: "`fix-gate` and `fix-record`: fix passes allowed before escalation."
+    description: "`fix-gate` and `fix-record`: fix passes allowed before escalation. `merge-gate`: the same limit of the PR Fix caller."
     required: false
     default: "3"
   escalation-label:
-    description: "`fix-gate`: label that blocks further passes while present."
+    description: "`fix-gate`: label that blocks further passes while present. `merge-gate`: the same label of the PR Fix caller."
     required: false
     default: ai:needs-human
+  fix-branch-prefixes:
+    description: "`merge-gate`: head branch prefixes that opt a pull request into the PR Fix caller (its `branch-prefixes`)."
+    required: false
+    default: ""
   check-name:
     description: "`fix-gate` and `fix-finish`: name of the check run reported on the head commit."
     required: false
@@ -81,11 +85,11 @@ inputs:
     required: false
     default: ""
   fix-workflow:
-    description: "`feedback-dispatch`: workflow file dispatched with `pr_number` for review feedback. Empty dispatches nothing."
+    description: "`feedback-dispatch`: workflow file dispatched with `pr_number` for review feedback. Empty dispatches nothing. `merge-gate`: while a run of it is queued, the pull request could get a pass (opted in, not escalated, rounds left), and it has review feedback newer than its last fix round, unresolved review threads only skip; otherwise they set `handoff`."
     required: false
     default: ""
   ignore-authors:
-    description: "`feedback-dispatch`: logins whose reviews never dispatch `fix-workflow`."
+    description: "`feedback-dispatch`: logins whose reviews never dispatch `fix-workflow`. `merge-gate`: their feedback never waits for a queued fix run."
     required: false
     default: ""
   ignore-reply-authors:
@@ -135,6 +139,9 @@ outputs:
   request_review:
     description: "`merge-gate`: `true` when human approvals are missing."
     value: ${{ steps.run.outputs.request_review }}
+  handoff:
+    description: "`merge-gate`: `true` when only unresolved review threads block the decision and no fix run is queued."
+    value: ${{ steps.run.outputs.handoff }}
 
 runs:
   using: composite
@@ -164,6 +171,7 @@ runs:
         PR_GATE_PR_NUMBER: ${{ inputs.pr-number }}
         PR_GATE_OPT_IN_LABEL: ${{ inputs.opt-in-label }}
         PR_GATE_BRANCH_PREFIXES: ${{ inputs.branch-prefixes }}
+        PR_GATE_FIX_BRANCH_PREFIXES: ${{ inputs.fix-branch-prefixes }}
         PR_GATE_MAX_ROUNDS: ${{ inputs.max-rounds }}
         PR_GATE_ESCALATION_LABEL: ${{ inputs.escalation-label }}
         PR_GATE_CHECK_NAME: ${{ inputs.check-name }}

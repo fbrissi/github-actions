@@ -155,7 +155,7 @@ already cancels an older review of the same pull request.
 | `prompt` | `""` | Overrides the generated prompt. |
 | `instructions` | `""` | Per-run instructions appended to the prompt under `Additional instructions for this run:`; with `opencode-command` they are part of the command arguments. |
 | `review-skill-source` | `ai-skills` | `ai-skills` (pinned `ai-skills-ref`), `base` (the PR base commit, for the skills repository itself), or `none`. |
-| `ai-skills-ref` | `v0.2.0` | `fbrissi/ai-skills` tag or SHA used with `ai-skills`. |
+| `ai-skills-ref` | `v0.11.0` | `fbrissi/ai-skills` tag or SHA used with `ai-skills`. |
 | `base-skills-path` | `.rulesync/skills` | Skills directory read from the base commit with `base`. |
 | `check-name` | `Code Review` | Check run name. |
 | `environment` | `code-review` | Environment of the review job; its secrets are visible to the job. |
@@ -205,8 +205,9 @@ Three workflows follow a pull request up event by event instead of one agent tha
 
 1. A review arrives. [`pr-feedback-dispatch.yml`](#pr-feedback-dispatch) dispatches the fix workflow for
    `changes_requested` (or `commented` with a body or inline comments) and the merge workflow for `approved`, or for a
-   `commented` review that is only a clean `★★★★★` grade with no inline comments and no unresolved thread (a reviewer
-   that cannot approve, for example on its own pull request, leaves its approval that way).
+   `commented` review that is only a clean `★★★★★` grade with no inline comments (a reviewer that cannot approve, for
+   example on its own pull request, leaves its approval that way). A clean grade never dispatches a fix, even while
+   threads are open: the merge gate hands those to a person.
 2. [`pr-fix.yml`](#pr-fix) runs one fix pass and pushes with a GitHub App token. Unlike `GITHUB_TOKEN` pushes, App
    pushes trigger CI, so the code review runs again and its review closes the loop.
 3. [`merge-decision.yml`](#merge-decision) checks the merge gates without AI and, when they pass, rates the risk
@@ -229,6 +230,7 @@ flowchart TD
   esc -. "/ai-resume pr-fix<br/>or label removed" .-> fix
   merge --> mgate{"pr-gate<br/>merge gate"}
   mgate -- "approval missing" --> ask["Request review<br/>from the requester"]
+  mgate -- "only unresolved threads,<br/>no fix run queued" --> threads["Handoff to the requester"]
   ask -. "their approval" .-> disp
   mgate -- "decide" --> risk["merge-risk rating"]
   risk -- "auto-merge and low risk" --> merged["Merged by the merge App"]
@@ -278,7 +280,7 @@ jobs:
 | Input | Default | Description |
 |---|---|---|
 | `fix-workflow` | `pr-fix.yml` | Dispatched with `pr_number` on a `changes_requested` review, or a `commented` one with a body or inline comments that is not a clean grade. Empty disables it. |
-| `merge-workflow` | `merge-decision.yml` | Dispatched with `pr_number` on an `approved` review, a clean-grade `commented` review (only `★★★★★`, plus `Ticket:` lines, no inline comments, no unresolved thread on the pull request), or a successful `merge-check-name` check run. Empty disables it. The merge gates, human approvals included, still apply. |
+| `merge-workflow` | `merge-decision.yml` | Dispatched with `pr_number` on an `approved` review, a clean-grade `commented` review (only `★★★★★`, plus `Ticket:` lines, no inline comments; open threads are left to the merge gate), or a successful `merge-check-name` check run. Empty disables it. The merge gates, human approvals included, still apply. |
 | `ignore-authors` | `""` | Logins whose reviews never dispatch a fix, for example the fixer App bot, whose thread replies also emit review events. |
 | `ignore-reply-authors` | `""` | Logins whose reply-only reviews (no body, every inline comment a reply) never dispatch a fix. Use it instead of `ignore-authors` when one App both reviews and fixes, so its new reviews still dispatch fixes. |
 | `merge-check-name` | `Code Review` | Successful check run that dispatches `merge-workflow` for each pull request in `check_run.pull_requests` (same repository only). Empty disables it. |
@@ -389,7 +391,7 @@ The fixer GitHub App needs `Contents: Read and write`, `Pull requests: Read and 
 | `instructions` | `""` | Per-run instructions appended to the prompt under `Additional instructions for this run:`. |
 | `prompt-append` | `""` | Deprecated, use `instructions`. Appended to the prompt. |
 | `skill-source` | `ai-skills` | `ai-skills` (pinned `ai-skills-ref`), `base` (the PR base commit), or `none`. |
-| `ai-skills-ref` | `v0.4.0` | `fbrissi/ai-skills` tag or SHA used with `ai-skills`. |
+| `ai-skills-ref` | `v0.11.0` | `fbrissi/ai-skills` tag or SHA used with `ai-skills`. |
 | `base-skills-path` | `.rulesync/skills` | Skills directory read from the base commit with `base`. |
 | `check-name` | `PR Fix` | Check run name. |
 | `merge-workflow` | `""` | Workflow dispatched with `pr_number` after a successful pass, for example `merge-decision.yml`. Needs `Actions: Read and write` on the fixer App. Empty disables it. |
@@ -413,7 +415,12 @@ The fixer GitHub App needs `Contents: Read and write`, `Pull requests: Read and 
    ignored), with no standing `CHANGES_REQUESTED`, at least `required-human-approvals` approvals on the head commit by
    users (not bots or Apps; none when the base branch matches `human-approval-exempt-base-prefixes` and the author
    matches `human-approval-exempt-authors`), no unresolved review threads, and no decision recorded for the head
-   commit yet.
+   commit yet. Of several check runs with one name from the same App and workflow file (for example a cancelled run
+   and the newer run that replaced it), only the newest counts; same-named jobs of different workflows stay separate. When only unresolved threads remain and no `fix-workflow` run is queued that this pull request could get (opted in, not
+   escalated, rounds left, review feedback newer than its last fix round), **Hand Off
+   Unresolved Threads** posts one `merge-decision` [handoff](#how-stages-chain) to the requester
+   (`<!-- merge-decision unresolved-threads -->`, kept while it is open) instead of waiting silently; resume after
+   resolving them. A queued fix run only skips, since its follow-up dispatches the decision again.
 2. **Request Human Review** runs only when the approvals are missing (and `request-human-review` is on): it requests
    a review from the person who started the flow (the `requested-by` marker of the PR's milestone, or of the issues
    it closes) and mentions them once per pull request (`<!-- merge-decision review-requested=<login> -->`). Their
@@ -502,6 +509,9 @@ The review request uses the same App with `pull-requests: write`.
 | `human-approval-exempt-authors` | `""` (any GitHub App bot) | Authors that may skip human approval into an exempt base, for example the agent App bot `my-agent[bot]`. Pull requests by people always need `required-human-approvals`. |
 | `request-human-review` | `true` | Request a review from the flow's requester and mention them once while approvals are missing. |
 | `hold-labels` | `do-not-merge hold` | Labels that block a decision. |
+| `fix-workflow` | `pr-fix.yml` | PR Fix caller; while a run of it is queued, the pull request could get a pass, and it has review feedback newer than its last fix round, unresolved threads only skip, otherwise they hand off to the requester. Empty always hands off. |
+| `fix-opt-in-label`, `fix-branch-prefixes`, `fix-max-rounds`, `fix-escalation-label` | `ai:auto-fix`, `""`, `3`, `ai:needs-human` | Set them as the `opt-in-label`, `branch-prefixes`, `max-rounds`, and `escalation-label` of the PR Fix caller, so the gate only waits for a pass the pull request could get. |
+| `fix-ignore-authors` | `""` | The `ignore-authors` of the PR Feedback Dispatch caller; their feedback never waits for a queued fix run. |
 | `branch-prefixes` | `""` | Head branch prefixes a pull request must match (`startsWith`), for example `feature/ release/ hotfix/ bugfix/`; empty decides on every pull request. |
 | `skills` | `merge-risk` | Skills installed for the harness. |
 | `agents` | `""` | Agents installed for the harness (Claude Code or OpenCode agents of the same name). |
@@ -509,7 +519,7 @@ The review request uses the same App with `pull-requests: write`.
 | `instructions` | `""` | Per-run instructions appended to the prompt under `Additional instructions for this run:`. |
 | `prompt-append` | `""` | Deprecated, use `instructions`. Appended to the prompt. |
 | `skill-source` | `ai-skills` | `ai-skills` (pinned `ai-skills-ref`), `base` (the base commit), or `none`. |
-| `ai-skills-ref` | `v0.9.0` | `fbrissi/ai-skills` tag or SHA used with `ai-skills`. |
+| `ai-skills-ref` | `v0.11.0` | `fbrissi/ai-skills` tag or SHA used with `ai-skills`. |
 | `base-skills-path` | `.rulesync/skills` | Skills directory read from the base commit with `base`. |
 | `environment` | `merge-decision` | Environment of the decision job; its secrets are visible to the job. |
 | `agent-client-id` | `AGENT_APP_CLIENT_ID` | Client ID of the merge GitHub App. |
@@ -550,7 +560,7 @@ for the current one, and only the newest waiting run is kept.
 Do these once per repository, in this order:
 
 1. **Releases.** Tag `fbrissi/ai-skills` first (the agents and skills, pinned by `ai-skills-ref`, default
-   `v0.10.0`), then release this repository: the reusable workflows call `actions/ai-task@v1` and
+   `v0.11.0`), then release this repository: the reusable workflows call `actions/ai-task@v1` and
    `actions/ai-delivery@v1`, so a workflow only works once a `v1` release contains those actions. Callers then use
    `@v1` (or a pinned `@v1.8.0`).
 2. **GitHub App** for the agent, installed on the repository, with these repository permissions:
@@ -1349,7 +1359,7 @@ jobs:
 Task parameters are the [`ai-task` action inputs](actions/ai-task/README.md#inputs) under the same names: `task`,
 `source`, `source-tracker`, `source-language`, `milestone`, `issue`, `branch`, `base-branch`, `milestone-template`,
 `output-language`, `status-labels`, `project`, `project-status-field`, `project-status-options`, `research-sources`, `instructions`, `context` (deprecated alias), `profile`,
-`implement-workflow`, `max-parallel`, `skills`, `agents`, and `ai-skills-ref` (default `v0.10.1`). The workflow adds:
+`implement-workflow`, `max-parallel`, `skills`, `agents`, and `ai-skills-ref` (default `v0.11.0`). The workflow adds:
 
 | Input | Default | Description |
 |---|---|---|
@@ -1461,7 +1471,9 @@ Runs are serialized per target branch.
 ## Release Note
 
 `.github/workflows/release-note.yml` runs on `pull_request` and fails unless the pull request adds exactly one
-`## vX.Y.Z` heading to the changelog, as its first release heading, with non-empty notes and no existing tag.
+`## vX.Y.Z` heading to the changelog, as its first release heading, with non-empty notes and no existing tag. With
+`exempt-paths`, a pull request that only changes matching paths (for example documentation, agent configuration, and
+CI) and adds no heading passes with an empty `version`; one that adds a heading is still validated.
 
 ```yaml
   release-note:
@@ -1480,9 +1492,10 @@ Runs are serialized per target branch.
 | `check-package-version` | `false` | Require `package.json` `version` to match the release. |
 | `package-json-path` | `package.json` | `package.json` path. |
 | `allow-empty-base-heading` | `false` | Accept filling the notes of the single empty heading already on the base branch (first release). |
+| `exempt-paths` | `""` | Whitespace-separated path globs (shell `case` patterns; `*` also matches `/`) that need no release note, for example `*.md docs/* .ai/* .github/*`. Empty exempts nothing. |
 | `runs-on` | `CI_RUNNER`, then `ubuntu-latest` | Runner label. |
 
-Output: `version`, the release added by the pull request.
+Output: `version`, the release added by the pull request (empty for an exempt pull request).
 
 ## Release
 

@@ -218,9 +218,15 @@ describe('feedback-dispatch', () => {
     assert.deepEqual((await route({ state: 'commented', body: '★★★★★\nTicket: not loaded' })).targets, ['merge-decision.yml']);
   });
 
-  it('sends a clean grade with an unresolved thread or inline comment to the fixer', async () => {
-    assert.deepEqual((await route({ state: 'commented', body: '★★★★★' }, { threads: [{ isResolved: false }] })).targets, ['pr-fix.yml']);
+  it('sends a clean grade with an inline comment to the fixer', async () => {
     assert.deepEqual((await route({ state: 'commented', body: '★★★★★' }, { comments: [{ id: 1 }] })).targets, ['pr-fix.yml']);
+  });
+
+  it('never dispatches a fix for clean grades while a thread is still open', async () => {
+    const threads = [{ isResolved: false }];
+    const first = await route({ state: 'commented', body: '★★★★★' }, { threads });
+    const second = await route({ state: 'commented', body: '★★★★★' }, { threads });
+    assert.deepEqual([...first.targets, ...second.targets], ['merge-decision.yml', 'merge-decision.yml']);
   });
 
   it('sends lower grades and partial reviews to the fixer', async () => {
@@ -303,8 +309,10 @@ describe('merge-outcome', () => {
   });
 });
 
-function mergeRepo({ pr = pull(), runs = [], checks = [], status = { total_count: 0, state: 'pending' }, reviews = [], comments = [], threads = [] } = {}) {
+function mergeRepo({ pr = pull(), runs = [], checks = [], status = { total_count: 0, state: 'pending' }, reviews = [], comments = [], threads = [], fixRuns = null, reviewComments = [] } = {}) {
   return fakeApi([
+    ['GET', /^\/repos\/octo\/app\/pulls\/7\/comments$/, reviewComments],
+    ...(fixRuns ? [['GET', /^\/repos\/octo\/app\/actions\/workflows\/pr-fix\.yml\/runs\?/, { workflow_runs: fixRuns }]] : []),
     ['GET', /^\/repos\/octo\/app\/pulls\/7$/, pr],
     ['GET', /^\/repos\/octo\/app\/actions\/runs\?head_sha=/, { workflow_runs: runs }],
     ['GET', /^\/repos\/octo\/app\/commits\/[0-9a-f]+\/check-runs/, { check_runs: checks }],
@@ -379,6 +387,73 @@ describe('merge-gate', () => {
     assert.equal(dispatcher.outputs.action, 'decide');
     const failed = await mergeGate(ctx, mergeRepo({ checks: [{ name: 'CI', status: 'completed', conclusion: 'failure', check_suite: { id: 1 } }] }), noSleep);
     assert.match(failed.summary[0], /CI \(failure\)/);
+  });
+
+  it('keeps only the newest check run of a workflow: cancelled then success, same name', async () => {
+    const ctx = ctxFor({ ...base, 'human-approval-exempt-base-prefixes': 'feat/' });
+    const check = (id, conclusion, at, suite) => ({ id, name: 'Quality Checks', status: 'completed', conclusion, started_at: at, app: { id: 15368 }, check_suite: { id: suite } });
+    const runs = [{ event: 'pull_request', check_suite_id: 1, path: '.github/workflows/ci.yml' }, { event: 'pull_request', check_suite_id: 2, path: '.github/workflows/ci.yml' }];
+    const cancelledThenSuccess = [check(10, 'cancelled', '2026-01-01T00:00:00Z', 1), check(11, 'success', '2026-01-01T00:01:00Z', 2)];
+    assert.equal((await mergeGate(ctx, mergeRepo({ runs, checks: cancelledThenSuccess }), noSleep)).outputs.action, 'decide');
+    assert.equal((await mergeGate(ctx, mergeRepo({ runs, checks: [...cancelledThenSuccess].reverse() }), noSleep)).outputs.action, 'decide');
+    const successThenFailure = [check(10, 'success', '2026-01-01T00:00:00Z', 1), check(11, 'failure', '2026-01-01T00:01:00Z', 2)];
+    assert.match((await mergeGate(ctx, mergeRepo({ runs, checks: successThenFailure }), noSleep)).summary[0], /Quality Checks \(failure\)/);
+    const sameStart = [check(12, 'success', '2026-01-01T00:00:00Z', 1), check(13, 'cancelled', '2026-01-01T00:00:00Z', 2)];
+    assert.match((await mergeGate(ctx, mergeRepo({ runs, checks: sameStart }), noSleep)).summary[0], /cancelled/);
+  });
+
+  it('keeps same-named jobs of different workflows apart', async () => {
+    const ctx = ctxFor({ ...base, 'human-approval-exempt-base-prefixes': 'feat/' });
+    const check = (id, conclusion, at, suite) => ({ id, name: 'build', status: 'completed', conclusion, started_at: at, app: { id: 15368 }, check_suite: { id: suite } });
+    const runs = [{ event: 'pull_request', check_suite_id: 1, path: '.github/workflows/lint.yml' }, { event: 'pull_request', check_suite_id: 2, path: '.github/workflows/test.yml' }];
+    const checks = [check(10, 'failure', '2026-01-01T00:00:00Z', 1), check(11, 'success', '2026-01-01T00:01:00Z', 2)];
+    assert.match((await mergeGate(ctx, mergeRepo({ runs, checks }), noSleep)).summary[0], /build \(failure\)/);
+    // Suites without a known workflow run, or of another App, are never merged with each other.
+    assert.match((await mergeGate(ctx, mergeRepo({ checks }), noSleep)).summary[0], /build \(failure\)/);
+    const otherApp = [check(10, 'failure', '2026-01-01T00:00:00Z', 1), { ...check(11, 'success', '2026-01-01T00:01:00Z', 1), app: { id: 99 } }];
+    assert.match((await mergeGate(ctx, mergeRepo({ runs, checks: otherApp }), noSleep)).summary[0], /build \(failure\)/);
+  });
+
+  it('hands off unresolved threads unless a fix run is queued for new feedback', async () => {
+    const values = { ...base, 'human-approval-exempt-base-prefixes': 'feat/', 'fix-workflow': 'pr-fix.yml', 'opt-in-label': 'ai:auto-fix', 'fix-branch-prefixes': 'feat/', 'max-rounds': '3', 'escalation-label': 'ai:needs-human' };
+    const ctx = ctxFor(values);
+    const threads = [{ isResolved: false }];
+    const round = (n, at = '2026-01-02T00:00:00Z') => bot(`<!-- pr-fix round=${n} head=${OLD} -->`, at);
+    const newer = [{ user: { login: 'reviewer[bot]' }, created_at: '2026-01-03T00:00:00Z' }];
+    const older = [{ user: { login: 'reviewer[bot]' }, created_at: '2026-01-01T00:00:00Z' }];
+    const fixerReply = [{ user: { login: 'fixer[bot]' }, created_at: '2026-01-03T00:00:00Z' }];
+    const repo = (options) => mergeRepo({ threads, comments: [round(1)], ...options });
+    const idle = await mergeGate(ctx, repo({ reviewComments: newer, fixRuns: [{ status: 'completed' }, { status: 'in_progress' }] }), noSleep);
+    assert.equal(idle.outputs.action, 'skip');
+    assert.equal(idle.outputs.handoff, 'true');
+    assert.match(idle.summary[0], /1 unresolved/);
+    for (const status of ['queued', 'pending', 'waiting']) {
+      const queued = await mergeGate(ctx, repo({ reviewComments: newer, fixRuns: [{ status }] }), noSleep);
+      assert.equal(queued.outputs.handoff, undefined);
+      assert.match(queued.summary[0], /pr-fix\.yml run is queued/);
+    }
+    // A queued run for another pull request: this one has nothing new since its last round.
+    for (const reviewComments of [older, fixerReply]) {
+      assert.equal((await mergeGate(ctx, repo({ reviewComments, fixRuns: [{ status: 'queued' }] }), noSleep)).outputs.handoff, 'true');
+    }
+    const missing = await mergeGate(ctx, repo({ reviewComments: newer }), noSleep);
+    assert.equal(missing.outputs.handoff, 'true');
+    const noFixWorkflow = await mergeGate(ctxFor({ ...values, 'fix-workflow': '' }), repo({ reviewComments: newer }), noSleep);
+    assert.equal(noFixWorkflow.outputs.handoff, 'true');
+  });
+
+  it('hands off when this pull request could not get the queued fix pass', async () => {
+    const values = { ...base, 'human-approval-exempt-base-prefixes': 'feat/', 'fix-workflow': 'pr-fix.yml', 'opt-in-label': 'ai:auto-fix', 'fix-branch-prefixes': 'feat/', 'max-rounds': '3', 'escalation-label': 'ai:needs-human' };
+    const threads = [{ isResolved: false }];
+    const newer = [{ user: { login: 'reviewer[bot]' }, created_at: '2026-01-09T00:00:00Z' }];
+    const fixRuns = [{ status: 'queued' }];
+    const round = (n) => bot(`<!-- pr-fix round=${n} head=${OLD} -->`, `2026-01-0${n}T00:00:00Z`);
+    const handoff = async (ctxValues, options) => (await mergeGate(ctxFor({ ...values, ...ctxValues }), mergeRepo({ threads, fixRuns, reviewComments: newer, ...options }), noSleep)).outputs.handoff;
+    assert.equal(await handoff({}, { comments: [round(1), round(2), round(3)] }), 'true');
+    assert.equal(await handoff({}, { pr: pull({ labels: [{ name: 'ai:needs-human' }] }) }), 'true');
+    assert.equal(await handoff({ 'fix-branch-prefixes': 'ai/' }), 'true');
+    assert.equal(await handoff({ 'ignore-authors': 'reviewer[bot]' }), 'true');
+    assert.equal(await handoff({}, { comments: [round(1)] }), undefined);
   });
 
   it('skips with unresolved threads or a decision already recorded for the head', async () => {

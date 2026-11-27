@@ -4,7 +4,7 @@ Reusable GitHub Actions workflows (`.github/workflows/*.yml` with `on: workflow_
 
 ## Commands
 
-- Unit tests: `node --test actions/*/*.test.mjs` (Node.js 24).
+- Unit tests: `node --test actions/*/*.test.mjs tests/*.test.mjs` (Node.js 24; the `tests/` release-note tests need bash 4+ and skip on older bash).
 - Workflow lint: `actionlint .github/workflows/*.yml` (or `docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.12 .github/workflows/*.yml`).
 - Shell lint: `docker run --rm -v "$PWD":/mnt -w /mnt koalaman/shellcheck:v0.10.0 $(git ls-files '*.sh')`.
 

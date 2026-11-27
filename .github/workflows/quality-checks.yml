@@ -59,7 +59,7 @@ jobs:
         with:
           node-version: 24
       - name: Test action scripts
-        run: node --test actions/*/*.test.mjs
+        run: node --test actions/*/*.test.mjs tests/*.test.mjs
       # actionlint does not read composite action metadata, so parse it here.
       - name: Parse action metadata
         run: python3 -c 'import sys, yaml; [yaml.safe_load(open(path)) for path in sys.argv[1:]]' actions/*/action.yml
