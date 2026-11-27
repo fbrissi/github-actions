@@ -202,7 +202,7 @@ runs:
       if: ${{ steps.resolve.outputs.harness == 'claude' }}
       shell: bash
       env:
-        CLAUDE_CODE_VERSION: 2.1.319
+        CLAUDE_CODE_VERSION: 2.1.332
       run: |
         set -euo pipefail
         npm install --global --no-fund --no-audit "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"

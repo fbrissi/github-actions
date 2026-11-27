@@ -71,8 +71,11 @@ case "$AI_HARNESS" in
       echo '::error::The claude harness requires an anthropic-api-key or claude-code-oauth-token credential.'
       exit 1
     fi
+    # Print mode stops background work still running at its wait ceiling and can still exit 0, losing the work: run
+    # subagents and shells in the foreground, drop Monitor (not covered by the variable), and judge the JSON result.
+    export CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1
     # --strict-mcp-config without --mcp-config keeps project MCP servers (.mcp.json) from starting.
-    command=(claude --print --output-format text --dangerously-skip-permissions --strict-mcp-config)
+    command=(claude --print --output-format json --dangerously-skip-permissions --strict-mcp-config --disallowedTools Monitor)
     if [ -n "${CLAUDE_MODEL:-}" ]; then
       command+=(--model "$CLAUDE_MODEL")
     fi
@@ -92,9 +95,18 @@ case "$AI_HARNESS" in
       fi
       command+=(--agent "$agent")
     fi
+    # The run output can hold the agent's full answer: keep it under RUNNER_TEMP and remove it afterwards.
+    stdout_file="$(mktemp "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/claude-stdout.XXXXXX")"
+    stderr_file="$(mktemp "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/claude-stderr.XXXXXX")"
+    trap 'rm -f "$stdout_file" "$stderr_file"' EXIT
+    status=0
+    # stdout (the JSON result) goes to a file; stderr streams to the log as it comes (a killed step still shows it) and
+    # is kept for the result check. With pipefail the status is the CLI's (or timeout's) when it fails.
     printf '%s' "$AI_PROMPT" |
-      timeout --foreground --kill-after=30s "${timeout_minutes}m" "${command[@]}" 2>&1 |
-      tee "$AI_OUTPUT_FILE"
+      timeout --foreground --kill-after=30s "${timeout_minutes}m" "${command[@]}" 2>&1 >"$stdout_file" |
+      tee "$stderr_file" >&2 ||
+      status=$?
+    node "$(dirname "${BASH_SOURCE[0]}")/claude-result.mjs" "$stdout_file" "$stderr_file" "$AI_OUTPUT_FILE" "$status"
     ;;
   *)
     echo "::error::Unsupported AI harness '${AI_HARNESS}'."

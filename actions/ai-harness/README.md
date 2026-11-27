@@ -6,7 +6,7 @@ non-interactive prompt in the current checkout.
 | Harness | What is installed |
 |---|---|
 | `opencode` | OpenCode 1.19.5 (linux-x64, SHA-256 verified) plus `opencode-plugins` (default `@kompassdev/opencode`). The OpenCode session is exported to the log after the run. |
-| `claude` (default) | Claude Code 2.1.319 from npm (Node.js 24 is installed only when `npm` is missing). Runs with `--strict-mcp-config`, so project MCP servers from `.mcp.json` never start. |
+| `claude` (default) | Claude Code 2.1.332 from npm (Node.js 24 is installed only when `npm` is missing). Runs with `--strict-mcp-config`, so project MCP servers from `.mcp.json` never start, and without background work (see [Claude Code run result](#claude-code-run-result)). |
 
 Both harnesses run with permission prompts disabled, so only run them on trusted runners and give them the
 narrowest tokens that work.
@@ -100,6 +100,19 @@ Skills are installed into `~/.claude/skills` for Claude Code and `~/.config/open
 never come from the checked-out (possibly untrusted) working tree. Empty credentials are unset before the run, so
 they do not shadow another authentication method. The `claude` harness fails early without `anthropic-api-key` or
 `claude-code-oauth-token`.
+
+## Claude Code run result
+
+Print mode stops background work (subagents, shells, Monitor watches) still running when its wait ceiling after the
+last turn is reached, drops that work, and can still exit 0. An agent that hands its work to a background subagent and
+ends its turn would then lose the work while the step passed. The `claude` harness prevents and detects that:
+
+- it sets `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, so subagents and shell commands run in the foreground and the agent
+  waits for them, and removes the `Monitor` tool (`--disallowedTools Monitor`), which that variable does not cover;
+- it runs with `--output-format json` and writes the result text to `output-file`, so readers of the file see the same
+  text as before;
+- the step fails when Claude Code exits non-zero, prints no JSON result, ends with a result other than `success` or
+  with `is_error`, or reports that it stopped background tasks still running.
 
 ## Outputs
 

@@ -185,6 +185,13 @@ describe('buildPrompt', () => {
 });
 
 describe('issue tasks', () => {
+  it('tells every task to keep work in the foreground and end with its outcome', () => {
+    for (const task of Object.keys(TASKS)) {
+      const prompt = buildPrompt(inputsFor({ task, milestone: 'M1', issue: '9', branch: 'feature/x', 'base-branch': 'release/m1' }));
+      assert.match(prompt, /Run subagents and commands in the foreground and wait for their results\. Never end your turn while a subagent, command, or watch you started is still running/, task);
+    }
+  });
+
   it('requires the issue to resolve, nothing to run the intake', () => {
     assert.deepEqual(validate(inputsFor({ task: 'issue-intake' }), CREDENTIALS), []);
     assert.deepEqual(validate(inputsFor({ task: 'issue-resolve' }), CREDENTIALS), ["The issue-resolve task requires 'issue'."]);

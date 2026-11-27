@@ -182,8 +182,14 @@ describe('followUp', () => {
     assert.match(posts(api, /issues\/11\/comments$/)[0].body.body, /was cancelled or timed out/);
   });
 
+  const resolveRuns = (timeline = [], createdAt = '2026-11-27T10:00:00Z') => [
+    ['GET', /^\/repos\/octo\/app\/issues\/9\/timeline$/, timeline],
+    ['GET', /^\/repos\/octo\/app\/actions\/runs\/42$/, { created_at: createdAt, run_started_at: '2026-11-27T11:00:00Z' }]
+  ];
+  const openPr = { event: 'cross-referenced', source: { issue: { number: 30, state: 'open', pull_request: {} } } };
+
   it('only hands off a failed issue-resolve run, without touching its milestone', async () => {
-    const api = milestoneRepo({ issues: [{ number: 9, milestone: { title: 'JIRA:DEV-1' }, labels: [] }] });
+    const api = milestoneRepo({ issues: [{ number: 9, milestone: { title: 'JIRA:DEV-1' }, labels: [] }], extra: resolveRuns([openPr]) });
     assert.match((await followUp(ctxFor({ task: 'issue-resolve', issue: '9', 'requested-by': 'alice' }), api, silent)).join('\n'), /Nothing to do/);
     await followUp(ctxFor({ task: 'issue-resolve', result: 'failure', issue: '9', 'requested-by': 'alice' }), api, silent);
     assert.equal(api.calls.filter((call) => call.method === 'PATCH').length, 0);
@@ -191,6 +197,31 @@ describe('followUp', () => {
     const [comment] = posts(api, /issues\/9\/comments$/);
     assert.match(comment.body.body, /stopped at \*\*issue-resolve\*\*/);
     assert.match(comment.body.body, /gh workflow run ai-tech\.yml -f issue=9 -f requested_by=alice/);
+  });
+
+  it('hands off a successful issue-resolve run that left no pull request or blocker comment', async () => {
+    const closedPr = { event: 'cross-referenced', source: { issue: { number: 31, state: 'closed', pull_request: {} } } };
+    const comments = [
+      { body: '<!-- ai-delivery blocker stage=issue-resolve -->\nBlocked: earlier run', created_at: '2026-11-27T09:59:00Z' },
+      { body: 'resumed **issue-resolve** -> https://github.com/octo/app/actions/runs/42', created_at: '2026-11-27T10:00:05Z' },
+      { body: 'Any news?', created_at: '2026-11-27T10:30:00Z' }
+    ];
+    const api = milestoneRepo({ issues: [{ number: 9, state: 'open', labels: [] }], comments, extra: resolveRuns([closedPr]) });
+    const summary = (await followUp(ctxFor({ task: 'issue-resolve', issue: '9', 'requested-by': 'alice' }), api, silent)).join('\n');
+    assert.match(summary, /Handed issue-resolve off on #9 \(no-pr\)/);
+    const [comment] = posts(api, /issues\/9\/comments$/);
+    assert.match(comment.body.body, /ended without a pull request or a blocker comment/);
+    assert.equal(posts(api, /dispatches$/).length, 0);
+  });
+
+  it('accepts an issue-resolve run that posted a blocker comment or closed the issue', async () => {
+    // Posted after the first attempt was created and before a re-run attempt started.
+    const blocker = { body: '<!-- ai-delivery blocker stage=issue-resolve -->\nBlocked: questions', created_at: '2026-11-27T10:05:00Z' };
+    const commented = milestoneRepo({ issues: [{ number: 9, state: 'open', labels: [] }], comments: [blocker], extra: resolveRuns() });
+    assert.match((await followUp(ctxFor({ task: 'issue-resolve', issue: '9' }), commented, silent)).join('\n'), /Nothing to do/);
+    const closed = milestoneRepo({ issues: [{ number: 9, state: 'closed', labels: [] }] });
+    assert.match((await followUp(ctxFor({ task: 'issue-resolve', issue: '9' }), closed, silent)).join('\n'), /Nothing to do/);
+    assert.equal(posts(commented, /comments$/).length + posts(closed, /comments$/).length, 0);
   });
 
   it('hands off only a failed dependency-update run, on a tracking issue', async () => {

@@ -269,7 +269,8 @@ export function buildPrompt(inputs, { repository = '', runUrl = '', hasJira = fa
 
   const rules = [
     '- This run is non-interactive: never wait for input or confirmation. When something blocks the task, write the questions where the task says (the source ticket or the GitHub issue), set the blocked status, and stop.',
-    '- Use gh and git with the GitHub credentials already configured in the environment. Never print, echo, or log any token or credential.'
+    '- Use gh and git with the GitHub credentials already configured in the environment. Never print, echo, or log any token or credential.',
+    '- Run subagents and commands in the foreground and wait for their results. Never end your turn while a subagent, command, or watch you started is still running: the run ends with your turn and unfinished work is lost. End only with the task\'s outcome (for example the pull request, the updated issues, or the blocker comment).'
   ];
   if (hasJira) {
     rules.push('- Jira REST credentials are in the environment variables JIRA_BASE_URL, JIRA_EMAIL, and JIRA_API_TOKEN. Read them from the environment in your commands; never print or log their values.');

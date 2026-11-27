@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.17.0
+
+Pairs with `fbrissi/ai-skills` `v0.13.2` (agents wait for delegated work before ending a non-interactive run); not
+required: the harness check and the prompt rule below apply with any `ai-skills-ref`.
+
+- **Claude Code runs that lose their work now fail:** print mode stops background work (subagents, shells, Monitor
+  watches) still running at its wait ceiling after the last turn, drops it, and can still exit 0, so an agent that
+  handed its work to a background subagent and ended its turn passed with nothing done (an `issue-resolve` run ended
+  green without a branch or pull request). The `claude` harness of `ai-harness` now sets
+  `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, removes the `Monitor` tool, runs with `--output-format json`, and fails the
+  step on a non-zero exit, a missing JSON result, a result other than `success` or with `is_error`, or a report of
+  stopped background tasks. `output-file` keeps the result text, so `pr-gate` and the review readers are unchanged; the
+  CLI's stderr goes to the log only. Claude Code moves from 2.1.319 to 2.1.332. This applies to every workflow and
+  action that runs `ai-harness` with the `claude` harness.
+- **`issue-resolve` without an outcome hands off:** after a successful `issue-resolve` run, the follow-up hands off on
+  the issue (`no-pr`) when the issue is still open, no open pull request references it, and no `ai-delivery blocker`
+  comment was posted since the run was created (a resume reply or a person's comment does not count).
+- **Every task prompt** of `ai-task` tells the agent to run subagents and commands in the foreground, never end its turn
+  while one is still running, and end only with the task's outcome.
+- **Follow-up profile:** the follow-up job's App token adds `contents: read`, so it reads the delivery profile (status
+  labels, Project status field and options) instead of failing with 403 and falling back to the defaults.
+
 ## v1.16.1
 
 Requires `fbrissi/ai-skills` `v0.13.1`.

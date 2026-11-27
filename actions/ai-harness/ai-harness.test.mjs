@@ -37,7 +37,20 @@ beforeEach(() => {
   // Stubs: timeout drops its three options and runs the command; the harnesses print their arguments.
   write(join(bin, 'timeout'), '#!/usr/bin/env bash\nshift 3\nexec "$@"\n', 0o755);
   write(join(bin, 'opencode'), '#!/usr/bin/env bash\nprintf "opencode %s\\n" "$*"\n', 0o755);
-  write(join(bin, 'claude'), '#!/usr/bin/env bash\ncat >/dev/null\nprintf "claude %s\\n" "$*"\n', 0o755);
+  // The claude stub prints a JSON result whose text is its arguments; CLAUDE_STUB picks a failure mode.
+  write(join(bin, 'claude'), [
+    '#!/usr/bin/env bash',
+    'cat >/dev/null',
+    'text="claude $* background-disabled=${CLAUDE_CODE_DISABLE_BACKGROUND_TASKS:-}"',
+    'json() { node -e \'console.log(JSON.stringify({ type: "result", subtype: process.argv[1], is_error: process.argv[1] !== "success", result: process.argv[2] }))\' "$1" "$2"; }',
+    'case "${CLAUDE_STUB:-success}" in',
+    '  success) json success "$text" ;;',
+    '  error) json error_during_execution partial ;;',
+    '  stopped) echo \'Background tasks still running 10m after the last turn (subagent "Implement"); stopping them.\' >&2; json success "I will wait for the subagent." ;;',
+    '  crash) echo boom >&2; exit 3 ;;',
+    'esac',
+    ''
+  ].join('\n'), 0o755);
 });
 
 afterEach(() => rmSync(root, { recursive: true, force: true }));
@@ -124,6 +137,35 @@ describe('run.sh', () => {
     const result = run('run.sh', base('claude', { AI_AGENT: 'task-implementer', ANTHROPIC_API_KEY: 'test' }));
     assert.equal(result.status, 0, result.stdout + result.stderr);
     assert.match(readFileSync(output(), 'utf8'), /--agent task-implementer/);
+  });
+
+  it('runs Claude Code with background tasks disabled, Monitor removed, and the result text as output', () => {
+    const result = run('run.sh', base('claude', { ANTHROPIC_API_KEY: 'test' }));
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    const text = readFileSync(output(), 'utf8');
+    assert.match(text, /^claude --print --output-format json --dangerously-skip-permissions --strict-mcp-config --disallowedTools Monitor background-disabled=1\n$/);
+    assert.match(result.stdout, /^claude --print/m);
+  });
+
+  it('fails when Claude Code stopped unfinished background work, even after a success result', () => {
+    const result = run('run.sh', base('claude', { ANTHROPIC_API_KEY: 'test', CLAUDE_STUB: 'stopped' }));
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /::error::Claude Code stopped unfinished background work/);
+    assert.equal(readFileSync(output(), 'utf8'), 'I will wait for the subagent.\n');
+  });
+
+  it('fails when the Claude Code result is not a success', () => {
+    const result = run('run.sh', base('claude', { ANTHROPIC_API_KEY: 'test', CLAUDE_STUB: 'error' }));
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /::error::Claude Code ended with error_during_execution \(is_error\)/);
+  });
+
+  it('fails when Claude Code exits non-zero without a result', () => {
+    const result = run('run.sh', base('claude', { ANTHROPIC_API_KEY: 'test', CLAUDE_STUB: 'crash' }));
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /::error::Claude Code exited with status 3/);
+    assert.match(result.stdout, /::error::Claude Code printed no JSON result/);
+    assert.match(result.stderr, /boom/);
   });
 
   it('appends per-run instructions to the prompt, also with an OpenCode command', () => {
