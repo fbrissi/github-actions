@@ -14,7 +14,8 @@ Requires `fbrissi/ai-skills` `v0.13.1`.
   `social-content-publish.yml` and the `social-content` action moves to `v0.13.1`: `copy-guard` rejects unsourced
   numbers and relative days in cron-published items and reads the text drawn in media, `video-shorts` draws the
   profile's `video.screen_disclaimer` under product screens and refuses focus boxes that cut UI text, and the review
-  issue shows each item's link. Consumer profiles must add `video.screen_disclaimer` to render product-screen videos.
+  issue shows each item's link. Non-breaking: `video.screen_disclaimer` is optional, and profiles without it keep
+  rendering with a warning.
 
 ## v1.16.0
 
