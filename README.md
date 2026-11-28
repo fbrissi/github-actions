@@ -540,11 +540,16 @@ The fixer GitHub App needs `Contents: Read and write`, `Pull requests: Read and 
    Unresolved Threads** posts one `merge-decision` [handoff](#how-stages-chain) to the requester
    (`<!-- merge-decision unresolved-threads -->`, kept while it is open) instead of waiting silently; resume after
    resolving them. A queued fix run only skips, since its follow-up dispatches the decision again.
-   A pull request with conflicts gets **Resolve Merge Conflicts**: when a `fix-workflow` pass could run on its head
-   (opted in, not escalated, rounds left, no pass on this head yet), it dispatches that pass with the App token (which
-   needs Actions write) and records a `conflicts-dispatched` marker of the head, so later decisions on that head wait
-   for the pass, which merges the base; otherwise, or when the dispatch fails, it posts one `merge-decision` handoff
-   to the requester.
+   A blocked pull request that nothing else moves gets **Unblock Pull Request** instead of a silent skip. Conflicts,
+   failed CI checks, and failed commit statuses get a `fix-workflow` pass (which merges the base and repairs CI) when
+   one could run on the head (opted in, not escalated, rounds left, no pass on this head yet): the job dispatches it
+   with the App token (which needs Actions write) and records a `repair-dispatched` marker of the head, so later
+   decisions on that head wait for the pass. A failed AI check (Code Review, AI QA, PR Fix), a person's standing
+   request for changes, a pass that cannot run, or a failed dispatch posts one `merge-decision` handoff to the
+   requester instead. A request for changes by a bot counts only on the head it reviewed. A decision that holds the
+   pull request (merge-risk above the base's maximum or a path floor) also hands off, and so do a failed code review
+   (stage `code-review`) and QA without a verdict (stage `qa`); `/ai-resume` reruns those stages. For `/ai-resume` to
+   find the review and QA handoffs, list their App in the resume caller's `trusted-bots`.
 2. **Request Human Review** runs only when the approvals are missing (and `request-human-review` is on): it requests
    a review from the person who started the flow (the `requested-by` marker of the PR's milestone, or of the issues
    it closes) and mentions them once per pull request (`<!-- merge-decision review-requested=<login> -->`). Their
@@ -568,7 +573,7 @@ The fixer GitHub App needs `Contents: Read and write`, `Pull requests: Read and 
 flowchart TD
   start["merge-decision.yml<br/>pr_number"] --> g1{"Open, not a draft,<br/>branch-prefixes match,<br/>no hold label, no conflicts?"}
   g1 -- "no" --> skip["Skip with the reason"]
-  g1 -- "conflicts" --> conf["Resolve Merge Conflicts<br/>fix pass, or handoff"]
+  g1 -- "conflicts" --> conf["Unblock Pull Request<br/>fix pass, or handoff"]
   g1 -- "yes" --> g2{"Every check green,<br/>no changes requested,<br/>no unresolved thread?"}
   g2 -- "no" --> skip
   g2 -- "yes" --> ex{"Base matches exempt base prefixes<br/>AND author is an exempt author?"}

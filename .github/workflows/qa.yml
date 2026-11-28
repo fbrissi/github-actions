@@ -464,7 +464,6 @@ jobs:
             const fs = require('node:fs');
             const result = process.env.RESULT;
             const name = process.env.CHECK_NAME;
-            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             const report = fs.existsSync(process.env.REPORT) ? fs.readFileSync(process.env.REPORT, 'utf8') : '';
             // Only a verdict is success or failure; a run that ended without one is neutral, so the join waits for a rerun
             // instead of sending the developer a fix with nothing to fix.
@@ -491,15 +490,52 @@ jobs:
                 ...(report ? { text: report.slice(0, 60000) } : {}),
               },
             });
-            if (conclusion === 'neutral') {
-              // Say it on the pull request too: nothing else moves it until QA is rerun.
-              await github.rest.issues.createComment({
-                ...context.repo,
-                issue_number: Number(process.env.PR_NUMBER),
-                body: `${name} ended without a verdict (job ${process.env.QA_JOB}), so the review and QA cannot be joined for this commit. Rerun [the QA run](${runUrl}) or dispatch the QA workflow for this pull request.`,
-              });
-            }
             core.setOutput('result', result);
+            core.setOutput('conclusion', conclusion);
+
+      # Nothing reruns QA on its own, and the join waits for a verdict, so the requester is told how to resume it.
+      - name: Generate GitHub App token
+        id: app-token
+        if: ${{ steps.finish.outputs.conclusion == 'neutral' }}
+        continue-on-error: true
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+          permission-issues: read
+          permission-pull-requests: write
+
+      - name: Hand off QA without a verdict
+        id: handoff
+        if: ${{ steps.finish.outputs.conclusion == 'neutral' && steps.app-token.outcome == 'success' }}
+        continue-on-error: true
+        uses: fbrissi/github-actions/actions/ai-delivery@v1
+        with:
+          command: handoff
+          github-token: ${{ steps.app-token.outputs.token }}
+          task: qa
+          pr: ${{ inputs.pr-number }}
+          marker: "<!-- qa no-verdict head=${{ needs.start-qa.outputs.head_sha }} -->"
+          blocker: >-
+            QA of this commit ended without a verdict (the job failed or timed out, or the environment did not come up;
+            see the run linked below), so the review and QA cannot be joined. Fix the cause if it is not transient, then
+            resume to run QA again.
+
+      - name: Say it on the pull request
+        if: ${{ steps.finish.outputs.conclusion == 'neutral' && steps.handoff.outcome != 'success' }}
+        uses: actions/github-script@v9
+        env:
+          CHECK_NAME: ${{ inputs.check-name }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+          QA_JOB: ${{ needs.qa.result }}
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: Number(process.env.PR_NUMBER),
+              body: `${process.env.CHECK_NAME} ended without a verdict (job ${process.env.QA_JOB}), so the review and QA cannot be joined for this commit. Rerun [the QA run](${runUrl}) or reply \`/ai-resume qa\`.`,
+            });
 
   join-qa:
     name: Join QA with the code review

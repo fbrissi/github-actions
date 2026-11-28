@@ -251,21 +251,22 @@ async function fixQueued(ctx, api, pr, reviews, comments) {
   }
 }
 
-// A pull request with conflicts gets a fix pass, which merges its base, when fix-gate would let one run on this head.
-// The dispatch leaves a bot marker of the head, so a later decision on the same head waits for that pass (its push
+// A blocked pull request gets a fix pass (which merges the base and repairs CI) when fix-gate would let one run on this
+// head. The dispatch leaves a bot marker of the head, so a later decision on the same head waits for that pass (its push
 // starts the checks, review, and QA again) instead of dispatching another; dispatched runs do not say which pull
 // request they serve, so the marker, not the fix workflow's queue, is what ties the pass to this pull request.
 // Otherwise (no fix workflow, not opted in, escalated, out of rounds, or a pass already ran on this head and left the
-// conflict) a person is told instead of the pull request waiting silently.
-async function conflictRoute(ctx, pr, comments) {
+// block) a person is told instead of the pull request waiting silently.
+const REPAIR_DISPATCHED = (head) => [`<!-- merge-decision repair-dispatched head=${head} -->`, `<!-- merge-decision conflicts-dispatched head=${head} -->`];
+async function repairRoute(ctx, pr, comments) {
   const workflow = ctx['fix-workflow'];
   if (!workflow) return 'handoff';
   if (!WORKFLOW_FILE.test(workflow)) throw new Error(`'fix-workflow' must be a workflow file name, got '${workflow}'.`);
   const standing = fixStanding(ctx, pr, comments, words(ctx['fix-branch-prefixes']));
   if (standing.reason || standing.rounds >= Number(ctx['max-rounds'] || 3)) return 'handoff';
   if (standing.markers.some((comment) => comment.body.match(FIX_MARKER)[2] === pr.head.sha)) return 'handoff';
-  const dispatched = `<!-- merge-decision conflicts-dispatched head=${pr.head.sha} -->`;
-  if (comments.some((comment) => comment.user?.type === 'Bot' && comment.body?.includes(dispatched))) return 'queued';
+  const markers = REPAIR_DISPATCHED(pr.head.sha);
+  if (comments.some((comment) => comment.user?.type === 'Bot' && markers.some((marker) => comment.body?.includes(marker)))) return 'queued';
   return 'fix';
 }
 
@@ -292,15 +293,18 @@ export async function mergeGate(ctx, api, sleep = (ms) => new Promise((resolve) 
   const heldBy = pr.labels.map((label) => label.name).filter((name) => holdLabels.includes(name));
   if (heldBy.length > 0) return skip(`PR #${number} has the ${heldBy.join(', ')} label.`);
   if (pr.mergeable === null) return skip(`GitHub has not computed whether PR #${number} is mergeable.`);
-  if (pr.mergeable === false || pr.mergeable_state === 'dirty') {
-    const comments = await api.paginate(`/repos/${repo}/issues/${number}/comments`);
-    const route = await conflictRoute(ctx, pr, comments);
-    const reason = `PR #${number} has merge conflicts`;
-    const outputs = { action: 'skip', pr_number: String(pr.number) };
-    if (route === 'queued') return { ...skip(`${reason}; the ${ctx['fix-workflow']} pass dispatched for ${pr.head.sha} resolves them.`), outputs };
-    if (route === 'fix') return { outputs: { ...outputs, conflicts: 'fix', head_sha: pr.head.sha }, summary: [`skipped: ${reason}; dispatching ${ctx['fix-workflow']} to merge the base.`] };
-    return { outputs: { ...outputs, conflicts: 'handoff' }, summary: [`skipped: ${reason}.`], notice: `${reason}.` };
-  }
+  // A blocked pull request that nothing else moves (conflicts, red checks, a standing request for changes) is sent to a
+  // fix pass or to a person, never left waiting silently.
+  let issueComments;
+  const repair = async (reason, fixable) => {
+    issueComments ??= await api.paginate(`/repos/${repo}/issues/${number}/comments`);
+    const route = fixable ? await repairRoute(ctx, pr, issueComments) : 'handoff';
+    const outputs = { action: 'skip', pr_number: String(pr.number), head_sha: headSha };
+    if (route === 'queued') return { ...skip(`${reason}; the ${ctx['fix-workflow']} pass dispatched for ${headSha} handles it.`), outputs };
+    if (route === 'fix') return { outputs: { ...outputs, repair: 'fix', repair_reason: reason }, summary: [`skipped: ${reason}; dispatching ${ctx['fix-workflow']}.`] };
+    return { outputs: { ...outputs, repair: 'handoff', repair_reason: reason }, summary: [`skipped: ${reason}.`], notice: `${reason}.` };
+  };
+  if (pr.mergeable === false || pr.mergeable_state === 'dirty') return repair(`PR #${number} has merge conflicts`, true);
 
   const runs = await paginateKey(api, `/repos/${repo}/actions/runs?head_sha=${headSha}`, 'workflow_runs');
   const ignoredSuites = new Set(runs.filter((run) => DISPATCHER_EVENTS.has(run.event)).map((run) => run.check_suite_id));
@@ -311,9 +315,15 @@ export async function mergeGate(ctx, api, sleep = (ms) => new Promise((resolve) 
   const failed = checkRuns
     .filter((check) => !['success', 'neutral', 'skipped'].includes(check.conclusion))
     .map((check) => `${check.name} (${check.conclusion})`);
-  if (failed.length > 0) return skip(`checks not successful on ${headSha}: ${failed.join(', ')}.`);
+  if (failed.length > 0) {
+    // A fix pass can repair CI; a failed AI check (the review, QA, or a fix pass itself) needs its own rerun or a person.
+    const aiChecks = new Set(['Code Review', 'AI QA', 'PR Fix', ctx['review-check-name'], ctx['qa-check-name'], ctx['check-name']].filter(Boolean));
+    const fixable = checkRuns.some((check) => !['success', 'neutral', 'skipped'].includes(check.conclusion) && !aiChecks.has(check.name));
+    return repair(`checks not successful on ${headSha}: ${failed.join(', ')}`, fixable);
+  }
   const { data: status } = await api.request('GET', `/repos/${repo}/commits/${headSha}/status`);
-  if (status.total_count > 0 && status.state !== 'success') return skip(`commit statuses are ${status.state} on ${headSha}.`);
+  if (status.total_count > 0 && status.state === 'pending') return skip(`commit statuses are pending on ${headSha}.`);
+  if (status.total_count > 0 && status.state !== 'success') return repair(`commit statuses are ${status.state} on ${headSha}`, true);
 
   const reviews = await api.paginate(`/repos/${repo}/pulls/${number}/reviews`);
   const latest = new Map();
@@ -321,8 +331,12 @@ export async function mergeGate(ctx, api, sleep = (ms) => new Promise((resolve) 
     if (!review.user || !['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(review.state)) continue;
     latest.set(review.user.login, review);
   }
-  const changesRequested = [...latest.values()].filter((review) => review.state === 'CHANGES_REQUESTED').map((review) => review.user.login);
-  if (changesRequested.length > 0) return skip(`changes requested by ${changesRequested.join(', ')}.`);
+  // An AI reviewer publishes nothing on a head with nothing new, so its request for changes counts only on the head it
+  // reviewed; the join already weighed that review. A person's request stands until that person reviews again.
+  const changesRequested = [...latest.values()]
+    .filter((review) => review.state === 'CHANGES_REQUESTED' && (review.user.type !== 'Bot' || review.commit_id === headSha))
+    .map((review) => review.user.login);
+  if (changesRequested.length > 0) return repair(`changes requested by ${changesRequested.join(', ')}`, false);
   const approvals = [...latest.values()].filter((review) => review.state === 'APPROVED'
     && review.commit_id === headSha
     && review.user.type === 'User'

@@ -577,22 +577,48 @@ describe('merge-gate', () => {
     const fixCtx = ctxFor({ ...base, 'fix-workflow': 'pr-fix.yml', 'opt-in-label': 'ai:auto-fix', 'escalation-label': 'ai:needs-human' });
     const fix = await mergeGate(fixCtx, mergeRepo({ pr: conflicted, fixRuns: [{ status: 'in_progress' }] }), noSleep);
     assert.equal(fix.outputs.action, 'skip');
-    assert.equal(fix.outputs.conflicts, 'fix');
+    assert.equal(fix.outputs.repair, 'fix');
+    assert.match(fix.outputs.repair_reason, /has merge conflicts/);
     assert.equal(fix.outputs.head_sha, HEAD);
-    const dispatched = [{ user: { type: 'Bot', login: 'merger[bot]' }, created_at: '2026-01-01T00:00:00Z', body: `<!-- merge-decision conflicts-dispatched head=${HEAD} -->` }];
+    const dispatched = [{ user: { type: 'Bot', login: 'merger[bot]' }, created_at: '2026-01-01T00:00:00Z', body: `<!-- merge-decision repair-dispatched head=${HEAD} -->` }];
     const queued = await mergeGate(fixCtx, mergeRepo({ pr: conflicted, comments: dispatched }), noSleep);
-    assert.equal(queued.outputs.conflicts, undefined);
+    assert.equal(queued.outputs.repair, undefined);
     assert.match(queued.summary[0], /pr-fix\.yml pass dispatched for/);
+    const legacy = [{ ...dispatched[0], body: `<!-- merge-decision conflicts-dispatched head=${HEAD} -->` }];
+    assert.equal((await mergeGate(fixCtx, mergeRepo({ pr: conflicted, comments: legacy }), noSleep)).outputs.repair, undefined);
     const forged = [{ ...dispatched[0], user: { type: 'User', login: 'mallory' } }];
-    assert.equal((await mergeGate(fixCtx, mergeRepo({ pr: conflicted, comments: forged }), noSleep)).outputs.conflicts, 'fix');
+    assert.equal((await mergeGate(fixCtx, mergeRepo({ pr: conflicted, comments: forged }), noSleep)).outputs.repair, 'fix');
     const fixedHere = [{ user: { type: 'Bot', login: 'fixer[bot]' }, created_at: '2026-01-01T00:00:00Z', body: `<!-- pr-fix round=1 head=${HEAD} -->` }];
-    assert.equal((await mergeGate(fixCtx, mergeRepo({ pr: conflicted, comments: fixedHere, fixRuns: [] }), noSleep)).outputs.conflicts, 'handoff');
+    assert.equal((await mergeGate(fixCtx, mergeRepo({ pr: conflicted, comments: fixedHere, fixRuns: [] }), noSleep)).outputs.repair, 'handoff');
     const escalated = pull({ mergeable: false, labels: [{ name: 'ai:auto-fix' }, { name: 'ai:needs-human' }] });
-    assert.equal((await mergeGate(fixCtx, mergeRepo({ pr: escalated, fixRuns: [] }), noSleep)).outputs.conflicts, 'handoff');
+    assert.equal((await mergeGate(fixCtx, mergeRepo({ pr: escalated, fixRuns: [] }), noSleep)).outputs.repair, 'handoff');
     const optedOut = await mergeGate(fixCtx, mergeRepo({ pr: pull({ mergeable: false }), fixRuns: [] }), noSleep);
-    assert.equal(optedOut.outputs.conflicts, 'handoff');
+    assert.equal(optedOut.outputs.repair, 'handoff');
     assert.match(optedOut.notice, /has merge conflicts/);
-    assert.equal((await mergeGate(ctxFor(base), mergeRepo({ pr: conflicted }), noSleep)).outputs.conflicts, 'handoff');
+    assert.equal((await mergeGate(ctxFor(base), mergeRepo({ pr: conflicted }), noSleep)).outputs.repair, 'handoff');
+  });
+
+  it('sends red CI to a fix pass but a failed AI check or a person\'s request for changes to a person', async () => {
+    const optedIn = pull({ labels: [{ name: 'ai:auto-fix' }] });
+    const fixCtx = ctxFor({ ...base, 'human-approval-exempt-base-prefixes': 'feat/', 'fix-workflow': 'pr-fix.yml', 'opt-in-label': 'ai:auto-fix' });
+    const check = (name, conclusion) => ({ name, status: 'completed', conclusion, app: { id: 1 }, check_suite: { id: 9 } });
+    const red = await mergeGate(fixCtx, mergeRepo({ pr: optedIn, checks: [check('tests', 'failure'), check('Code Review', 'success')] }), noSleep);
+    assert.equal(red.outputs.repair, 'fix');
+    assert.match(red.outputs.repair_reason, /checks not successful .*tests \(failure\)/);
+    const review = await mergeGate(fixCtx, mergeRepo({ pr: optedIn, checks: [check('Code Review', 'failure')] }), noSleep);
+    assert.equal(review.outputs.repair, 'handoff');
+    const statuses = await mergeGate(fixCtx, mergeRepo({ pr: optedIn, status: { total_count: 1, state: 'failure' } }), noSleep);
+    assert.equal(statuses.outputs.repair, 'fix');
+    const pending = await mergeGate(fixCtx, mergeRepo({ pr: optedIn, status: { total_count: 1, state: 'pending' } }), noSleep);
+    assert.equal(pending.outputs.repair, undefined);
+    const person = [{ user: { login: 'alice', type: 'User' }, state: 'CHANGES_REQUESTED', commit_id: OLD }];
+    const asked = await mergeGate(fixCtx, mergeRepo({ pr: optedIn, reviews: person }), noSleep);
+    assert.equal(asked.outputs.repair, 'handoff');
+    assert.match(asked.notice, /changes requested by alice/);
+    const staleBot = [{ user: { login: 'agent[bot]', type: 'Bot' }, state: 'CHANGES_REQUESTED', commit_id: OLD }];
+    assert.equal((await mergeGate(fixCtx, mergeRepo({ pr: optedIn, reviews: staleBot }), noSleep)).outputs.action, 'decide');
+    const currentBot = [{ ...staleBot[0], commit_id: HEAD }];
+    assert.equal((await mergeGate(fixCtx, mergeRepo({ pr: optedIn, reviews: currentBot }), noSleep)).outputs.repair, 'handoff');
   });
 
   it('waits for checks but ignores those of dispatcher runs', async () => {

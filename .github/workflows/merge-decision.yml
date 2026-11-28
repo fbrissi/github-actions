@@ -215,7 +215,8 @@ jobs:
       required_approvals: ${{ steps.gate.outputs.required_approvals }}
       request_review: ${{ steps.gate.outputs.request_review }}
       handoff: ${{ steps.gate.outputs.handoff }}
-      conflicts: ${{ steps.gate.outputs.conflicts }}
+      repair: ${{ steps.gate.outputs.repair }}
+      repair_reason: ${{ steps.gate.outputs.repair_reason }}
     steps:
       - name: Check gates
         id: gate
@@ -405,6 +406,22 @@ jobs:
           pr-number: ${{ needs.gate.outputs.pr_number }}
           head-sha: ${{ needs.gate.outputs.head_sha }}
 
+      # A held pull request waits for a person (a merge, more fixes, or a new decision), so that person is told; the
+      # dependent issues of the milestone start only after it merges.
+      - name: Hand off a held pull request
+        if: ${{ always() && steps.outcome.outputs.result == 'held' }}
+        uses: fbrissi/github-actions/actions/ai-delivery@v1
+        with:
+          command: handoff
+          github-token: ${{ steps.app-token.outputs.token }}
+          task: merge-decision
+          pr: ${{ needs.gate.outputs.pr_number }}
+          marker: "<!-- merge-decision held head=${{ needs.gate.outputs.head_sha }} -->"
+          blocker: >-
+            The merge decision held this pull request: its merge-risk rating is above what this base merges on its own,
+            or a path floor applies (see the assessment comment). Merge it yourself if it is fine, or ask for changes;
+            resume with instructions to decide again.
+
       - name: Hand off an undecided pull request
         if: ${{ always() && steps.outcome.outputs.result == 'not-evaluated' }}
         uses: fbrissi/github-actions/actions/ai-delivery@v1
@@ -479,10 +496,10 @@ jobs:
             Every other merge gate passed, but review threads are still unresolved and no fix pass is queued; resolve
             the threads that are answered (or answer the rest), then resume to decide again.
 
-  resolve-conflicts:
-    name: Resolve Merge Conflicts
+  unblock:
+    name: Unblock Pull Request
     needs: gate
-    if: ${{ needs.gate.outputs.conflicts == 'fix' || needs.gate.outputs.conflicts == 'handoff' }}
+    if: ${{ needs.gate.outputs.repair == 'fix' || needs.gate.outputs.repair == 'handoff' }}
     runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
     permissions: {}
     timeout-minutes: 5
@@ -495,39 +512,41 @@ jobs:
         with:
           client-id: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
           private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
-          permission-actions: ${{ needs.gate.outputs.conflicts == 'fix' && 'write' || 'read' }}
+          permission-actions: ${{ needs.gate.outputs.repair == 'fix' && 'write' || 'read' }}
           permission-issues: read
           permission-pull-requests: write
 
-      # A fix pass merges the base and resolves the conflicts; its push runs the checks, the review, and QA again, and
-      # their join dispatches the decision again. An App without Actions write hands off instead.
+      # Conflicts and red CI get a fix pass: it merges the base and repairs the checks, and its push runs the checks,
+      # the review, and QA again, whose join dispatches the decision again. An App without Actions write hands off.
       - name: Dispatch a fix pass
         id: dispatch
-        if: ${{ needs.gate.outputs.conflicts == 'fix' }}
+        if: ${{ needs.gate.outputs.repair == 'fix' }}
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           FIX_WORKFLOW: ${{ inputs.fix-workflow }}
           PR_NUMBER: ${{ needs.gate.outputs.pr_number }}
           HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
+          REASON: ${{ needs.gate.outputs.repair_reason }}
         run: |
           default_branch="$(gh api "repos/${GITHUB_REPOSITORY}" --jq .default_branch)"
           gh workflow run "$FIX_WORKFLOW" --repo "$GITHUB_REPOSITORY" --ref "$default_branch" -f pr_number="$PR_NUMBER"
           # A later decision on this head waits for the pass instead of dispatching another.
-          gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="<!-- merge-decision conflicts-dispatched head=${HEAD_SHA} -->
-          Dispatched ${FIX_WORKFLOW} to merge the base and resolve the merge conflicts on ${HEAD_SHA}." >/dev/null
-          echo "Dispatched ${FIX_WORKFLOW} for PR #${PR_NUMBER} to resolve its merge conflicts." >> "$GITHUB_STEP_SUMMARY"
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="<!-- merge-decision repair-dispatched head=${HEAD_SHA} -->
+          Dispatched ${FIX_WORKFLOW} on ${HEAD_SHA}: ${REASON}." >/dev/null
+          echo "Dispatched ${FIX_WORKFLOW} for PR #${PR_NUMBER}: ${REASON}." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Hand off to the requester
-        if: ${{ needs.gate.outputs.conflicts == 'handoff' || steps.dispatch.outcome == 'failure' }}
+        if: ${{ needs.gate.outputs.repair == 'handoff' || steps.dispatch.outcome == 'failure' }}
         uses: fbrissi/github-actions/actions/ai-delivery@v1
         with:
           command: handoff
           github-token: ${{ steps.app-token.outputs.token }}
           task: merge-decision
           pr: ${{ needs.gate.outputs.pr_number }}
-          marker: "<!-- merge-decision merge-conflicts -->"
+          marker: "<!-- merge-decision blocked head=${{ needs.gate.outputs.head_sha }} -->"
           blocker: >-
-            The pull request has merge conflicts with its base and no automatic fix pass can resolve them (it is not
-            opted in, is escalated, is out of fix rounds, a pass on this commit left them, or the pass could not be dispatched); merge the base and resolve
-            the conflicts, then the checks, review, and QA run again and decide again.
+            The merge decision is blocked: ${{ needs.gate.outputs.repair_reason }}. No automatic fix pass can unblock it
+            (a failed AI review or QA run, a person's request for changes, not opted in, escalated, out of fix rounds, a
+            pass on this commit that left it, or a pass that could not be dispatched); unblock it, then resume to decide
+            again.

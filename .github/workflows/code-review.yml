@@ -530,3 +530,30 @@ jobs:
                   : 'The AI harness failed before completing the pull request review.',
               },
             });
+
+      # Nothing reruns a failed review on its own, and the join waits for it, so the requester is told how to resume it.
+      - name: Generate GitHub App token
+        id: app-token
+        if: ${{ needs.review.result != 'success' }}
+        continue-on-error: true
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID || inputs.agent-app-id || vars.AGENT_APP_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+          permission-issues: read
+          permission-pull-requests: write
+
+      - name: Hand off a failed review
+        if: ${{ needs.review.result != 'success' && steps.app-token.outcome == 'success' }}
+        continue-on-error: true
+        uses: fbrissi/github-actions/actions/ai-delivery@v1
+        with:
+          command: handoff
+          github-token: ${{ steps.app-token.outputs.token }}
+          task: code-review
+          pr: ${{ needs.start-review.outputs.pr_number }}
+          marker: "<!-- code-review failed head=${{ needs.start-review.outputs.head_sha }} -->"
+          blocker: >-
+            The code review of this commit failed before it finished (a harness, model, or API error; see the run linked
+            below), so the review and QA cannot be joined. Fix the cause if it is not transient, then resume to review
+            again.

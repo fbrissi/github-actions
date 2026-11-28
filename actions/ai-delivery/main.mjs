@@ -520,7 +520,9 @@ const REQUIRED = {
   'merge-decision': [['pr']],
   'issue-intake': [],
   'issue-resolve': [['issue']],
-  'dependency-update': []
+  'dependency-update': [],
+  'code-review': [['pr']],
+  qa: [['pr']]
 };
 
 // Decides from the issue_comment event alone whether it is an `/ai-resume` command written by a person.

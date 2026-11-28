@@ -40,9 +40,16 @@ describe('settings', () => {
     assert.deepEqual(result.overrides, { implement: 'ai-build.yml', 'pr-fix': 'fix.yaml' });
   });
 
+  it('resumes the code review and QA of a pull request on their own workflows', () => {
+    for (const [stage, workflow] of [['code-review', 'code-review.yml'], ['qa', 'qa.yml']]) {
+      assert.equal(DEFAULT_STAGE_WORKFLOWS[stage], workflow);
+      assert.deepEqual(dispatchInputs(stage, { pr_number: '7', instructions: 'focus', issue: '3' }), { pr_number: '7', instructions: 'focus' });
+    }
+  });
+
   it('rejects unknown stages and non-workflow values', () => {
     assert.deepEqual(parseStageWorkflows('deploy=x.yml\nimplement=../x.yml\nbroken').errors, [
-      "Unknown stage 'deploy' in 'stage-workflows'. Use one of: business-refinement, technical-refinement, readiness-review, orchestrate, implement, pr-fix, merge-decision, issue-intake, issue-resolve, dependency-update.",
+      "Unknown stage 'deploy' in 'stage-workflows'. Use one of: business-refinement, technical-refinement, readiness-review, orchestrate, implement, pr-fix, merge-decision, issue-intake, issue-resolve, dependency-update, code-review, qa.",
       "'stage-workflows' value for implement must be a workflow file name, got '../x.yml'.",
       "'stage-workflows' lines must be 'key=value', got 'broken'."
     ]);
