@@ -864,7 +864,8 @@ maintain, or admin permission. It then:
 1. reacts with `eyes` on the command,
 2. picks the target: the named stage (its newest handoff here, or the issue or pull request itself when there is
    none), else the newest open handoff posted by the agent App bot (or one of `trusted-bots`). With neither, it
-   replies with the list of stages and dispatches nothing,
+   replies with the list of stages and dispatches nothing. Only a handoff of the agent App itself may name the
+   workflow it resumes; one of `trusted-bots` resumes its stage's configured workflow,
 3. marks the handoff `state=resumed` (`Resumed by @<login>`) before dispatching, so a second command finds nothing
    open; runs are serialized per issue or pull request,
 4. removes the escalation label (`ai:needs-human`) of the pull request when the stage is `pr-fix`, posts a

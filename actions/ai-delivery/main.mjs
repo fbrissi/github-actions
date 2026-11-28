@@ -666,7 +666,11 @@ export async function resume(ctx, api, log, event) {
     });
   }
   const ref = parsed.defaultBranch || (await api.request('GET', `/repos/${repo}`)).data.default_branch;
-  const workflow = fields.workflow || config.workflows[fields.stage];
+  // Only the resume App's own handoff may name the workflow to dispatch (a caller with renamed stage files). A handoff
+  // of another trusted bot, such as an App that runs an AI review on the pull request, resumes its stage's configured
+  // workflow, so text it was led to write can never pick what the resume token dispatches.
+  const ownHandoff = found && found.comment.user?.login?.toLowerCase() === String(ctx['bot-login'] ?? '').toLowerCase();
+  const workflow = (ownHandoff && fields.workflow) || config.workflows[fields.stage];
   const inputs = dispatchInputs(fields.stage, resumeValues(fields, fields['requested-by'] || sender, instructions));
   try {
     const dispatched = await dispatchWorkflow(api, repo, workflow, ref, inputs, log);
