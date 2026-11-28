@@ -11,6 +11,7 @@ from a secret store instead of GitHub secrets (a reusable workflow only accepts 
 | `fix-record` | GitHub App token with `pull-requests: write` | Posts the `<!-- pr-fix round=N head=<sha> -->` comment `fix-gate` counts. |
 | `fix-finish` | `checks: write` | Completes the check run from `result`. |
 | `feedback-dispatch` | `actions: write`, `pull-requests: read` (the job's `GITHUB_TOKEN` is enough) | Routes the `pull_request_review` or `check_run` event to `fix-workflow` or `merge-workflow` with the rules of [PR Feedback Dispatch](../../README.md#pr-feedback-dispatch); [`pr-feedback-dispatch.yml`](../../README.md#pr-feedback-dispatch) runs it. |
+| `quality-join` | `actions: write`, `checks: read`, `pull-requests: write` (the job's `GITHUB_TOKEN` is enough) | Joins the `review-check-name` and `qa-check-name` check runs of the head commit, which separate workflows report, and decides once both have completed: `merge-workflow` when no reviewer's newest substantive review of the head asks for changes (replies to threads and `ignore-authors` never do) and QA passed, otherwise `fix-workflow`. Only check runs of `review-workflow` and `qa-workflow` runs dispatched on the default branch count. It records each decision after the dispatch with a `<!-- quality-join head=<sha> review-check=<id> qa-check=<id> reviews=<id> -->` bot comment, so a decision is dispatched once and a QA rerun or a new review decides again; serialize its jobs per pull request with a concurrency group. A check that ends without `success` or `failure` stops the join with a notice. `feedback-dispatch` runs it for each review when `qa-check-name` is set. |
 | `merge-dispatch` | `actions: write` (a GitHub App token, or the job's `GITHUB_TOKEN`) | Dispatches `merge-workflow` with `pr_number` on the default branch, so a merge decision skipped while a fix pass ran is decided again; nothing without `merge-workflow`, a notice when the workflow is not on the default branch. |
 | `merge-gate` | `actions`, `checks`, `issues`, `pull-requests`, and `statuses` read | Outputs `action` `decide` or `skip` with the rules of [Merge Decision](../../README.md#merge-decision); `request_review` is `true` when human approvals are missing, `handoff` is `true` when only unresolved review threads block it and no `fix-workflow` run is queued. Of the check runs of one App, workflow file, and name, only the newest counts. |
 | `merge-outcome` | none | Reads the harness output (`output-file`, default the ai-harness file) and the harness `outcome`, and outputs `result`: `merged`, `held`, or `not-evaluated` from the last `merge-risk-result:` line (older skills: the `PR #<n>: MERGE / HOLD` line; a failed harness without a result is `not-evaluated`). |
@@ -44,7 +45,7 @@ jobs:
 
 | Input | Default | Description |
 |---|---|---|
-| `command` | – (required) | `feedback-dispatch`, `fix-gate`, `fix-record`, `fix-finish`, `merge-dispatch`, `merge-gate`, `merge-outcome`, or `merge-record`. |
+| `command` | – (required) | `feedback-dispatch`, `quality-join`, `fix-gate`, `fix-record`, `fix-finish`, `merge-dispatch`, `merge-gate`, `merge-outcome`, or `merge-record`. |
 | `github-token` | `github.token` | Token for the GitHub API (see the table above). |
 | `pr-number` | `""` | Pull request number. |
 | `opt-in-label` | `ai:auto-fix` | `fix-gate`: opt-in label. |
@@ -61,7 +62,7 @@ jobs:
 | `head-sha` | `""` | `merge-record`: decided head commit. |
 | `result`, `check-run-id` | `""` | `fix-finish`: fix job result and the check run to complete. |
 | `merge-workflow` | `""` | `merge-dispatch` and `feedback-dispatch`: workflow file to dispatch, for example `merge-decision.yml`. |
-| `fix-workflow`, `ignore-authors`, `ignore-reply-authors`, `merge-check-name` | `""` | `feedback-dispatch`: as the inputs of the same name of `pr-feedback-dispatch.yml`. |
+| `fix-workflow`, `ignore-authors`, `ignore-reply-authors`, `merge-check-name`, `qa-check-name` | `""` | `feedback-dispatch`: as the inputs of the same name of `pr-feedback-dispatch.yml`. `quality-join`: the same `fix-workflow`, `merge-workflow`, `ignore-authors`, and `qa-check-name`, with `review-check-name` (`Code Review`), `qa-workflow` (`qa.yml`), and `review-workflow` (`code-review.yml`). |
 | `fix-workflow` | `""` | `merge-gate`: the PR Fix caller; a queued run of it keeps unresolved threads from setting `handoff` while the pull request could get a pass (`opt-in-label` or `fix-branch-prefixes`, no `escalation-label`, under `max-rounds`) and has review feedback, not by `ignore-authors`, newer than its last fix round. |
 | `fix-branch-prefixes` | `""` | `merge-gate`: the `branch-prefixes` of the PR Fix caller. |
 

@@ -1,0 +1,529 @@
+name: QA
+
+# Runs QA on a pull request in its own job, apart from the developer and the code review: the qa-e2e skill drives the
+# scenarios of the change against the test environment `setup-command` starts. The verdict is the `check-name` check
+# run on the head commit, with the findings in its output. When it completes, the job joins it with the code review of
+# the same head (pr-gate `quality-join`): once both checks of the head have completed, `merge-workflow` is dispatched
+# when both approve, otherwise `fix-workflow`. Call `quality-join.yml` from a `pull_request_review` workflow for the review side.
+on:
+  workflow_call:
+    inputs:
+      pr-number:
+        description: Pull request number to test.
+        required: true
+        type: string
+      harness:
+        description: AI harness, `opencode` or `claude`. Empty uses the `AI_HARNESS` variable, then `claude`.
+        required: false
+        type: string
+        default: ""
+      prompt:
+        description: Prompt override. Empty uses the qa-e2e skill prompt; it must keep the `qa-result:` line.
+        required: false
+        type: string
+        default: ""
+      instructions:
+        description: Per-run instructions appended to the prompt as "Additional instructions for this run".
+        required: false
+        type: string
+        default: ""
+      skills:
+        description: Whitespace-separated skills to install from fbrissi/ai-skills at `ai-skills-ref`.
+        required: false
+        type: string
+        default: qa-e2e bdd-scenarios
+      ai-skills-ref:
+        description: Tag or commit SHA of fbrissi/ai-skills.
+        required: false
+        type: string
+        default: v0.15.0
+      opencode-plugins:
+        description: Whitespace-separated OpenCode plugins to install.
+        required: false
+        type: string
+        default: ""
+      opencode-model:
+        description: OpenCode model in `provider/model` form. Empty uses the `OPENCODE_MODEL` variable; required by the `opencode` harness.
+        required: false
+        type: string
+        default: ""
+      opencode-variant:
+        description: OpenCode model variant. Empty uses the `OPENCODE_VARIANT` variable.
+        required: false
+        type: string
+        default: ""
+      claude-model:
+        description: Claude Code model alias or full model ID. Empty uses the `CLAUDE_MODEL` variable.
+        required: false
+        type: string
+        default: ""
+      claude-effort:
+        description: Claude Code effort level. Empty uses the `CLAUDE_EFFORT` variable.
+        required: false
+        type: string
+        default: ""
+      agent-client-id:
+        description: Client ID of the GitHub App whose token QA reads the pull request and its issue with. Empty uses the `AGENT_APP_CLIENT_ID` variable.
+        required: false
+        type: string
+        default: ""
+      check-name:
+        description: Name of the check run that carries the QA verdict; the join reads it under this name.
+        required: false
+        type: string
+        default: AI QA
+      fix-workflow:
+        description: Workflow the join dispatches with `pr_number` when the review or QA asks for changes. Empty skips the join.
+        required: false
+        type: string
+        default: pr-fix.yml
+      merge-workflow:
+        description: Workflow the join dispatches with `pr_number` when the review and QA both approve. Empty skips the join.
+        required: false
+        type: string
+        default: merge-decision.yml
+      ignore-authors:
+        description: Logins whose reviews never ask for a fix in the join, as in `quality-join.yml`.
+        required: false
+        type: string
+        default: ""
+      review-check-name:
+        description: Check run of the code review that the join waits for, as in `quality-join.yml`.
+        required: false
+        type: string
+        default: Code Review
+      qa-workflow:
+        description: File name of the caller of this workflow in the calling repository; the join trusts only `check-name` check runs of its runs dispatched on the default branch.
+        required: false
+        type: string
+        default: qa.yml
+      review-workflow:
+        description: File name of the code review caller in the calling repository, as in `quality-join.yml`.
+        required: false
+        type: string
+        default: code-review.yml
+      skip-head-prefixes:
+        description: >-
+          Whitespace-separated head branch prefixes whose pull requests get an approving check without running QA, for
+          example `release/` when each task pull request the release branch aggregates already had its own QA. Empty
+          tests every pull request.
+        required: false
+        type: string
+        default: ""
+      setup-command:
+        description: Command that starts the test environment QA drives (for example a seeded local stack and a browser). Empty makes QA use targeted validation.
+        required: false
+        type: string
+        default: ""
+      environment:
+        description: GitHub environment of the QA job; its secrets are available to the job.
+        required: false
+        type: string
+        default: ""
+      runs-on:
+        description: Runner label for every job. Empty uses the `CI_RUNNER` variable, then `ubuntu-latest`.
+        required: false
+        type: string
+        default: ""
+      timeout-minutes:
+        description: Maximum harness run time in minutes. The App token lasts one hour from the start of the job, setup included.
+        required: false
+        type: number
+        default: 40
+      job-timeout-minutes:
+        description: Timeout of the QA job; keep it above `timeout-minutes` plus the setup.
+        required: false
+        type: number
+        default: 55
+      node-version:
+        description: Node.js version installed before `install-command`. Empty skips actions/setup-node.
+        required: false
+        type: string
+        default: ""
+      node-cache:
+        description: Package manager cache for actions/setup-node (`npm`, `yarn`, or `pnpm`). Only used with `save-dependency-cache`. Empty disables it.
+        required: false
+        type: string
+        default: ""
+      install-command:
+        description: Command that installs the project dependencies. Empty skips it.
+        required: false
+        type: string
+        default: ""
+      dependency-cache-path:
+        description: Paths cached around `install-command`, for example `node_modules`. Empty disables the cache.
+        required: false
+        type: string
+        default: ""
+      dependency-cache-prefix:
+        description: Cache key prefix; the key is `<prefix>-<os>-<arch>-<hash of dependency-cache-files>`.
+        required: false
+        type: string
+        default: qa-deps-v1
+      dependency-cache-files:
+        description: Glob whose files are hashed into the dependency cache key.
+        required: false
+        type: string
+        default: "**/{package-lock.json,yarn.lock,pnpm-lock.yaml}"
+      save-dependency-cache:
+        description: Save the dependency cache after installing the pull request's dependencies. Off by default, so a pull request can never write a cache that later runs restore.
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      AGENT_APP_PRIVATE_KEY:
+        description: Private key of the agent GitHub App.
+        required: false
+      OPEN_AI_TOKEN:
+        description: OpenAI API key for the `opencode` harness.
+        required: false
+      ANTHROPIC_API_KEY:
+        description: Anthropic API key for the `claude` harness.
+        required: false
+      CLAUDE_CODE_OAUTH_TOKEN:
+        description: Claude Code OAuth token for the `claude` harness, used when `ANTHROPIC_API_KEY` is empty.
+        required: false
+    outputs:
+      result:
+        description: "`approved`, `changes-required`, or `none` when QA gave no verdict."
+        value: ${{ jobs.finish-qa.outputs.result }}
+
+concurrency:
+  group: fbrissi-qa-${{ github.repository }}-${{ inputs.pr-number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  start-qa:
+    name: Start QA
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      checks: write
+      pull-requests: read
+    outputs:
+      check_run_id: ${{ steps.start.outputs.check_run_id }}
+      skip: ${{ steps.start.outputs.skip }}
+      head_sha: ${{ steps.start.outputs.head_sha }}
+      head_repository: ${{ steps.start.outputs.head_repository }}
+      base_ref: ${{ steps.start.outputs.base_ref }}
+    steps:
+      - uses: actions/github-script@v9
+        id: start
+        env:
+          PR_NUMBER: ${{ inputs.pr-number }}
+          CHECK_NAME: ${{ inputs.check-name }}
+          SKIP_HEAD_PREFIXES: ${{ inputs.skip-head-prefixes }}
+        with:
+          script: |
+            const prNumber = Number(process.env.PR_NUMBER);
+            if (!Number.isInteger(prNumber) || prNumber <= 0) {
+              core.setFailed(`Invalid pull request number: ${process.env.PR_NUMBER}`);
+              return;
+            }
+            const { data: pullRequest } = await github.rest.pulls.get({ ...context.repo, pull_number: prNumber });
+            if (pullRequest.state !== 'open') {
+              core.setFailed(`PR #${prNumber} is not open.`);
+              return;
+            }
+            if (pullRequest.head.repo.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
+              core.setFailed(`PR #${prNumber} comes from a fork; QA runs only same-repository pull requests.`);
+              return;
+            }
+            const created = await github.rest.checks.create({
+              ...context.repo,
+              name: process.env.CHECK_NAME,
+              head_sha: pullRequest.head.sha,
+              status: 'in_progress',
+              started_at: new Date().toISOString(),
+              details_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              output: { title: `${process.env.CHECK_NAME} in progress`, summary: `The AI harness is testing PR #${prNumber}.` },
+            });
+            core.setOutput('check_run_id', created.data.id);
+            const skip = process.env.SKIP_HEAD_PREFIXES.split(/\s+/).filter(Boolean).some((prefix) => pullRequest.head.ref.startsWith(prefix));
+            core.setOutput('skip', String(skip));
+            core.setOutput('head_sha', pullRequest.head.sha);
+            core.setOutput('head_repository', pullRequest.head.repo.full_name);
+            core.setOutput('base_ref', pullRequest.base.ref);
+
+  qa:
+    name: Run QA
+    needs: start-qa
+    if: ${{ needs.start-qa.outputs.skip != 'true' }}
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+    timeout-minutes: ${{ inputs.job-timeout-minutes }}
+    environment:
+      name: ${{ inputs.environment }}
+    outputs:
+      result: ${{ steps.verdict.outputs.result }}
+    steps:
+      - name: Resolve QA settings
+        id: settings
+        env:
+          HARNESS: ${{ inputs.harness || vars.AI_HARNESS }}
+          PROMPT: ${{ inputs.prompt }}
+          OPENCODE_MODEL: ${{ inputs.opencode-model || vars.OPENCODE_MODEL }}
+          APP_CLIENT_ID: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          HAS_APP_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY != '' }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+          CHECK_NAME: ${{ inputs.check-name }}
+          HEAD_SHA: ${{ needs.start-qa.outputs.head_sha }}
+          BASE_REF: ${{ needs.start-qa.outputs.base_ref }}
+          SETUP_COMMAND: ${{ inputs.setup-command }}
+        run: |
+          set -euo pipefail
+          harness="${HARNESS:-claude}"
+          case "$harness" in
+            opencode | claude) ;;
+            *)
+              echo "::error::Unsupported harness '${harness}'. Use 'opencode' or 'claude'."
+              exit 1
+              ;;
+          esac
+          if [ -z "$APP_CLIENT_ID" ]; then
+            echo '::error::The agent-client-id input or the AGENT_APP_CLIENT_ID variable is required.'
+            exit 1
+          fi
+          if [ "$HAS_APP_KEY" != 'true' ]; then
+            echo '::error::The AGENT_APP_PRIVATE_KEY secret is required.'
+            exit 1
+          fi
+          if [ "$harness" = 'opencode' ] && [ -z "$OPENCODE_MODEL" ]; then
+            echo '::error::The opencode harness requires the opencode-model input or the OPENCODE_MODEL variable.'
+            exit 1
+          fi
+          if [ -n "$PROMPT" ]; then
+            prompt="$PROMPT"
+          else
+            if [ -n "$SETUP_COMMAND" ]; then
+              environment="The test environment is already running: it was started with \`${SETUP_COMMAND}\`. Use it in a real browser."
+            else
+              environment='No test environment was set up: use targeted validation (focused tests for the new behavior, and the app or API started headless when feasible).'
+            fi
+            prompt="$(cat <<PROMPT
+          Use the qa-e2e skill to QA pull request #${PR_NUMBER} in ${GITHUB_REPOSITORY} (head ${HEAD_SHA}, base ${BASE_REF}), as the QA role of its review and QA cycle. The developer and the code reviewer work in other jobs: judge only from the repository, the pull request, its linked issue (with its parent and images), and the running app.
+          ${environment}
+          Scope: when an earlier '${CHECK_NAME}' check run of this pull request (on an older commit) failed, re-test its failing scenarios, the scenarios covering the files changed since that commit, and the @smoke scenarios of the touched areas. Otherwise test every scenario that covers what the pull request changes, and every acceptance criterion of its issue that QA can check. Always also exercise the flows a 'QA focus' section of the pull request body names.
+          This run is non-interactive: never wait for input. Do not modify, commit, or push files, and do not comment on the pull request or the issue: the verdict is published as the '${CHECK_NAME}' check run.
+          End your answer with the QA report: the verdict, the QA mode (browser or targeted validation) and its evidence, each scenario with pass, fail, or blocked, and each finding with an ID, its severity, the steps to reproduce, and the expected and actual result, so a developer in another job can fix it. A scenario blocked only by the environment is an environment finding. The very last line must be exactly 'qa-result: approved' or 'qa-result: changes-required'.
+          PROMPT
+            )"
+          fi
+          delimiter="PROMPT_$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+          {
+            echo "harness=$harness"
+            echo "prompt<<$delimiter"
+            echo "$prompt"
+            echo "$delimiter"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-issues: read
+          permission-pull-requests: read
+          permission-checks: read
+
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ needs.start-qa.outputs.head_repository }}
+          ref: ${{ needs.start-qa.outputs.head_sha }}
+          fetch-depth: 0
+
+      - name: Fetch pull request base
+        env:
+          BASE_REF: ${{ needs.start-qa.outputs.base_ref }}
+        run: git fetch --no-tags origin "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+
+      - uses: actions/cache/restore@v6
+        id: dependency-cache
+        if: ${{ inputs.dependency-cache-path != '' }}
+        with:
+          path: ${{ inputs.dependency-cache-path }}
+          key: ${{ inputs.dependency-cache-prefix }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(inputs.dependency-cache-files) }}
+
+      - uses: actions/setup-node@v7
+        if: ${{ inputs.node-version != '' }}
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: ${{ inputs.save-dependency-cache && inputs.node-cache || '' }}
+
+      - name: Install dependencies
+        if: ${{ inputs.install-command != '' && steps.dependency-cache.outputs.cache-hit != 'true' }}
+        env:
+          INSTALL_COMMAND: ${{ inputs.install-command }}
+        run: bash -euo pipefail -c "$INSTALL_COMMAND"
+
+      - name: Save dependency cache
+        if: ${{ inputs.save-dependency-cache && inputs.dependency-cache-path != '' && inputs.install-command != '' && steps.dependency-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ inputs.dependency-cache-path }}
+          key: ${{ steps.dependency-cache.outputs.cache-primary-key }}
+
+      - name: Setup GitHub CLI
+        uses: fbrissi/github-actions/actions/setup-gh@v1
+
+      - name: Set up test environment
+        if: ${{ inputs.setup-command != '' }}
+        env:
+          SETUP_COMMAND: ${{ inputs.setup-command }}
+        run: bash -euo pipefail -c "$SETUP_COMMAND"
+
+      - name: Run AI QA
+        id: run
+        uses: fbrissi/github-actions/actions/ai-harness@v1
+        with:
+          harness: ${{ steps.settings.outputs.harness }}
+          prompt: ${{ steps.settings.outputs.prompt }}
+          instructions: ${{ inputs.instructions }}
+          opencode-plugins: ${{ inputs.opencode-plugins }}
+          opencode-model: ${{ inputs.opencode-model || vars.OPENCODE_MODEL }}
+          opencode-variant: ${{ inputs.opencode-variant || vars.OPENCODE_VARIANT }}
+          claude-model: ${{ inputs.claude-model || vars.CLAUDE_MODEL }}
+          claude-effort: ${{ inputs.claude-effort || vars.CLAUDE_EFFORT }}
+          skills: ${{ inputs.skills }}
+          skills-ref: ${{ inputs.ai-skills-ref }}
+          timeout-minutes: ${{ inputs.timeout-minutes }}
+          openai-api-key: ${{ secrets.OPEN_AI_TOKEN }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github-token: ${{ steps.app-token.outputs.token }}
+
+      - name: Read the QA verdict
+        id: verdict
+        if: ${{ always() && steps.run.outputs.output-file != '' }}
+        env:
+          OUTPUT_FILE: ${{ steps.run.outputs.output-file }}
+          RUN_OUTCOME: ${{ steps.run.outcome }}
+        run: |
+          set -euo pipefail
+          result=none
+          if [ "$RUN_OUTCOME" = 'success' ] && [ -f "$OUTPUT_FILE" ]; then
+            # The verdict is the last line that is exactly a verdict line (markdown emphasis or code marks, * and the
+            # backquote, octal 140, dropped), so a verdict quoted inside a sentence never decides it, and trailing harness
+            # output after the answer does not hide it.
+            line="$(tr -d '\r*\140' < "$OUTPUT_FILE" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | grep -E '^qa-result: (approved|changes-required)$' | tail -n 1 || true)"
+            case "$line" in
+              'qa-result: approved') result=approved ;;
+              'qa-result: changes-required') result=changes-required ;;
+            esac
+          fi
+          # The report goes to the check run; GitHub keeps up to 65535 characters of its text.
+          report="$RUNNER_TEMP/qa-report.md"
+          if [ -f "$OUTPUT_FILE" ]; then head -c 60000 "$OUTPUT_FILE" > "$report"; else : > "$report"; fi
+          echo "result=$result" >> "$GITHUB_OUTPUT"
+          echo "QA result: $result"
+
+      - name: Upload the QA report
+        if: ${{ always() && steps.verdict.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: qa-report-${{ inputs.pr-number }}-${{ needs.start-qa.outputs.head_sha }}
+          path: ${{ runner.temp }}/qa-report.md
+          retention-days: 14
+
+  finish-qa:
+    name: Finish QA
+    needs: [start-qa, qa]
+    if: ${{ always() && !cancelled() && needs.start-qa.result == 'success' }}
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    # Outside the join's concurrency group: the group keeps one pending job, and a dropped job must never leave the
+    # check run in progress.
+    permissions:
+      checks: write
+      pull-requests: write
+    outputs:
+      result: ${{ steps.finish.outputs.result }}
+    steps:
+      - uses: actions/download-artifact@v8
+        if: ${{ needs.qa.outputs.result != '' }}
+        continue-on-error: true
+        with:
+          name: qa-report-${{ inputs.pr-number }}-${{ needs.start-qa.outputs.head_sha }}
+          path: ${{ runner.temp }}/qa
+
+      - uses: actions/github-script@v9
+        id: finish
+        env:
+          RESULT: ${{ needs.start-qa.outputs.skip == 'true' && 'skipped' || needs.qa.outputs.result || 'none' }}
+          QA_JOB: ${{ needs.qa.result }}
+          CHECK_RUN_ID: ${{ needs.start-qa.outputs.check_run_id }}
+          CHECK_NAME: ${{ inputs.check-name }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+          REPORT: ${{ runner.temp }}/qa/qa-report.md
+        with:
+          script: |
+            const fs = require('node:fs');
+            const result = process.env.RESULT;
+            const name = process.env.CHECK_NAME;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const report = fs.existsSync(process.env.REPORT) ? fs.readFileSync(process.env.REPORT, 'utf8') : '';
+            // Only a verdict is success or failure; a run that ended without one is neutral, so the join waits for a rerun
+            // instead of sending the developer a fix with nothing to fix.
+            const conclusion = ['approved', 'skipped'].includes(result) ? 'success' : result === 'changes-required' ? 'failure' : 'neutral';
+            const titles = {
+              approved: `${name}: approved`,
+              skipped: `${name}: not run for this branch`,
+              'changes-required': `${name}: changes required`,
+            };
+            const summaries = {
+              approved: 'QA verdict for the head commit: approved. The report follows.',
+              skipped: 'QA does not run on pull requests from this branch (`skip-head-prefixes`): the pull requests it aggregates had their own QA.',
+              'changes-required': 'QA verdict for the head commit: changes required. The report follows.',
+            };
+            await github.rest.checks.update({
+              ...context.repo,
+              check_run_id: Number(process.env.CHECK_RUN_ID),
+              status: 'completed',
+              conclusion,
+              completed_at: new Date().toISOString(),
+              output: {
+                title: titles[result] ?? `${name} ended without a verdict (job ${process.env.QA_JOB})`,
+                summary: summaries[result] ?? 'QA did not finish with a `qa-result:` line. Rerun the QA workflow for this pull request; the join waits for a verdict.',
+                ...(report ? { text: report.slice(0, 60000) } : {}),
+              },
+            });
+            if (conclusion === 'neutral') {
+              // Say it on the pull request too: nothing else moves it until QA is rerun.
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: Number(process.env.PR_NUMBER),
+                body: `${name} ended without a verdict (job ${process.env.QA_JOB}), so the review and QA cannot be joined for this commit. Rerun [the QA run](${runUrl}) or dispatch the QA workflow for this pull request.`,
+              });
+            }
+            core.setOutput('result', result);
+
+  join-qa:
+    name: Join QA with the code review
+    needs: [start-qa, finish-qa]
+    if: ${{ always() && !cancelled() && needs.finish-qa.result == 'success' && inputs.fix-workflow != '' && inputs.merge-workflow != '' && needs.finish-qa.outputs.result != 'none' }}
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      actions: write
+      checks: read
+      pull-requests: write
+    # Shared with quality-join.yml: one join per pull request at a time. Every join reads the whole state, so a join the
+    # group drops is made up by the next one.
+    concurrency:
+      group: quality-join-${{ github.repository }}-${{ inputs.pr-number }}
+      cancel-in-progress: false
+    steps:
+      - name: Join with the code review
+        uses: fbrissi/github-actions/actions/pr-gate@v1
+        with:
+          command: quality-join
+          pr-number: ${{ inputs.pr-number }}
+          qa-check-name: ${{ inputs.check-name }}
+          review-check-name: ${{ inputs.review-check-name }}
+          qa-workflow: ${{ inputs.qa-workflow }}
+          review-workflow: ${{ inputs.review-workflow }}
+          fix-workflow: ${{ inputs.fix-workflow }}
+          merge-workflow: ${{ inputs.merge-workflow }}
+          ignore-authors: ${{ inputs.ignore-authors }}

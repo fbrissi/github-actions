@@ -1,0 +1,80 @@
+name: Quality Join
+
+# Joins the code review and the QA check of a pull request's head commit, which run as separate workflows. Call it from
+# a `pull_request_review` workflow (each review); the QA workflow runs the same join when its check completes, and the
+# code review caller runs it after its check completes (README, Review and QA in separate jobs). Once both checks of the
+# head have completed, it dispatches `merge-workflow` when both approve, otherwise `fix-workflow`.
+on:
+  workflow_call:
+    inputs:
+      qa-check-name:
+        description: Check run of the QA workflow (`qa.yml`) joined with the code review.
+        required: false
+        type: string
+        default: AI QA
+      fix-workflow:
+        description: Workflow dispatched with `pr_number` when the review or QA asks for changes.
+        required: false
+        type: string
+        default: pr-fix.yml
+      merge-workflow:
+        description: Workflow dispatched with `pr_number` when the review and QA both approve.
+        required: false
+        type: string
+        default: merge-decision.yml
+      ignore-authors:
+        description: Whitespace-separated logins whose reviews never ask for a fix and start no join, for example the fixer App bot (`my-fixer[bot]`), whose thread replies also emit review events. Replies to existing threads never ask for a fix, whoever posts them.
+        required: false
+        type: string
+        default: ""
+      review-check-name:
+        description: Check run of the code review (`code-review.yml` `check-name`). The join decides only after it completed.
+        required: false
+        type: string
+        default: Code Review
+      qa-workflow:
+        description: File name of the QA caller in this repository; only `qa-check-name` check runs of its runs dispatched on the default branch count.
+        required: false
+        type: string
+        default: qa.yml
+      review-workflow:
+        description: File name of the code review caller in this repository; only `review-check-name` check runs of its runs dispatched on the default branch count.
+        required: false
+        type: string
+        default: code-review.yml
+      runs-on:
+        description: Runner label. Empty uses the `CI_RUNNER` variable, then `ubuntu-latest`.
+        required: false
+        type: string
+        default: ""
+
+permissions: {}
+
+jobs:
+  join:
+    name: Quality Join
+    # Reviews by ignored authors start no join, so a burst of fixer replies never crowds the concurrency group.
+    if: ${{ !contains(format(' {0} ', inputs.ignore-authors), format(' {0} ', github.event.review.user.login)) }}
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      actions: write
+      checks: read
+      pull-requests: write
+    # Shared with the QA workflow's join and the code review caller's join: one join per pull request at a time. Every
+    # join reads the whole state, so a join the group drops is made up by the next one.
+    concurrency:
+      group: quality-join-${{ github.repository }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      # Dispatches on the default branch, so a pull request can never change its own fixer or merger.
+      - name: Join the review with QA
+        uses: fbrissi/github-actions/actions/pr-gate@v1
+        with:
+          command: feedback-dispatch
+          fix-workflow: ${{ inputs.fix-workflow }}
+          merge-workflow: ${{ inputs.merge-workflow }}
+          ignore-authors: ${{ inputs.ignore-authors }}
+          qa-check-name: ${{ inputs.qa-check-name }}
+          review-check-name: ${{ inputs.review-check-name }}
+          qa-workflow: ${{ inputs.qa-workflow }}
+          review-workflow: ${{ inputs.review-workflow }}

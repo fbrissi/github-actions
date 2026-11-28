@@ -153,6 +153,40 @@ describe('resolveAssets', () => {
   });
 });
 
+describe('quality mode', () => {
+  const base = { task: 'implement', issue: '7', branch: 'feature/x' };
+
+  it('defaults to the cycle and rejects unknown modes', () => {
+    assert.equal(inputsFor(base)['quality-mode'], 'cycle');
+    assert.deepEqual(validate(inputsFor({ ...base, 'quality-mode': 'separate' }), CREDENTIALS), []);
+    assert.match(validate(inputsFor({ ...base, 'quality-mode': 'later' }), CREDENTIALS)[0], /'quality-mode' must be 'cycle' or 'separate'/);
+  });
+
+  it('drops the reviewer and QA assets of the change tasks in separate mode', () => {
+    const assets = resolveAssets(inputsFor({ ...base, 'quality-mode': 'separate' }));
+    assert.deepEqual(assets.agents, ['task-implementer', 'developer']);
+    assert.deepEqual(assets.skills, ['dev', 'pr-create', 'bdd-scenarios', 'ticket-plan']);
+    const resolve = resolveAssets(inputsFor({ task: 'issue-resolve', issue: '7', 'quality-mode': 'separate' }));
+    assert.ok(!resolve.skills.includes('quality-cycle') && !resolve.agents.includes('qa-tester'));
+    const caller = resolveAssets(inputsFor({ ...base, 'quality-mode': 'separate', skills: 'qa-e2e' }));
+    assert.ok(caller.skills.includes('qa-e2e'), 'a skill the caller asks for is kept');
+    assert.deepEqual(resolveAssets(inputsFor({ task: 'orchestrate', milestone: 'm', 'quality-mode': 'separate' })).skills, TASKS.orchestrate.skills);
+  });
+
+  it('tells the developer to push and stop instead of running the cycle', () => {
+    const separate = buildPrompt(inputsFor({ ...base, 'quality-mode': 'separate', 'test-environment': 'scripts/stack.sh' }));
+    assert.match(separate, /Quality mode `separate`: you are the developer only/);
+    assert.match(separate, /none becomes a follow-up/);
+    assert.doesNotMatch(separate, /reviewer and QA of the quality cycle for every change/);
+    assert.doesNotMatch(separate, /Browser QA/);
+    const resolve = buildPrompt(inputsFor({ task: 'issue-resolve', issue: '7', 'quality-mode': 'separate' }));
+    assert.match(resolve, /branch, change, checks, and pull request/);
+    const cycle = buildPrompt(inputsFor(base));
+    assert.match(cycle, /reviewer and QA of the quality cycle for every change/);
+    assert.doesNotMatch(cycle, /Quality mode `separate`/);
+  });
+});
+
 describe('buildPrompt', () => {
   it('passes only the non-empty parameters', () => {
     const prompt = buildPrompt(inputsFor({

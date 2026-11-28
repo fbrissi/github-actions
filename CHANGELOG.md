@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.20.0
+
+Pairs with `fbrissi/ai-skills` `v0.15.0` (the task implementer honors `quality-mode: separate`, and the default
+`ai-skills-ref` of `qa.yml`).
+
+- **Review and QA in separate jobs:** the new `qa.yml` runs AI QA of a pull request in its own job and reports an
+  `AI QA` check run with the report, and the new `quality-join.yml` joins each review with that check. The new pr-gate
+  `quality-join` command decides once the `Code Review` and `AI QA` check runs of the head have completed (it runs
+  after each check and on every review): the merge decision when no substantive review asks for changes and QA
+  passed, otherwise one fix pass. It trusts only check runs of the QA and review callers dispatched on the default
+  branch, ignores replies to existing threads, and records each decision after the dispatch. A QA run without a
+  verdict comments on the pull request; `skip-head-prefixes` passes QA for aggregating branches such as `release/`.
+- **`quality-mode` for the change tasks:** `ai-task.yml` and the `ai-task` action take `quality-mode` (default
+  `cycle`). With `separate`, `implement`, `issue-resolve`, and `dependency-update` only develop, run the narrow checks,
+  and open the pull request; the reviewer and QA agents and skills are not installed.
+- **PR Fix fixes QA findings:** `pr-fix.yml` takes `qa-check-name`; the pass then also fixes the report of the newest
+  failing QA check run on the head commit and answers it in one pull request comment.
+- pr-gate `feedback-dispatch` takes `qa-check-name`; without it, reviews still dispatch directly as before.
+
 ## v1.19.0
 
 Pairs with `fbrissi/ai-skills` `v0.14.1` (the task implementer labels a pull request that needs a person's sign-off with
