@@ -162,9 +162,12 @@ outputs:
   handoff:
     description: "`merge-gate`: `true` when only unresolved review threads block the decision and no fix run is queued."
     value: ${{ steps.run.outputs.handoff }}
-  conflicts:
-    description: "`merge-gate`: `fix` when a pull request with conflicts gets a fix pass, `handoff` when a person must resolve them."
-    value: ${{ steps.run.outputs.conflicts }}
+  repair:
+    description: "`merge-gate`: `fix` when a blocked pull request (conflicts, red CI) gets a fix pass, `handoff` when a person must unblock it."
+    value: ${{ steps.run.outputs.repair }}
+  repair_reason:
+    description: "`merge-gate`: what blocks the pull request, when `repair` is set."
+    value: ${{ steps.run.outputs.repair_reason }}
 
 runs:
   using: composite

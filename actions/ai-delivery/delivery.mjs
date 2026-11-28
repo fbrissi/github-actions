@@ -1,6 +1,6 @@
 // Pure helpers of the AI delivery flow: stages, markers, handoff comments, and the chaining decision.
 
-export const STAGES = ['business-refinement', 'technical-refinement', 'readiness-review', 'orchestrate', 'implement', 'pr-fix', 'merge-decision', 'issue-intake', 'issue-resolve', 'dependency-update'];
+export const STAGES = ['business-refinement', 'technical-refinement', 'readiness-review', 'orchestrate', 'implement', 'pr-fix', 'merge-decision', 'issue-intake', 'issue-resolve', 'dependency-update', 'code-review', 'qa'];
 
 export const DEFAULT_STAGE_WORKFLOWS = {
   'business-refinement': 'ai-business-refinement.yml',
@@ -12,7 +12,9 @@ export const DEFAULT_STAGE_WORKFLOWS = {
   'merge-decision': 'merge-decision.yml',
   'issue-intake': 'ai-issue-intake.yml',
   'issue-resolve': 'ai-issue-resolve.yml',
-  'dependency-update': 'ai-dependency-update.yml'
+  'dependency-update': 'ai-dependency-update.yml',
+  'code-review': 'code-review.yml',
+  qa: 'qa.yml'
 };
 
 // What the flow does on its own once the stage is resumed.
@@ -26,7 +28,9 @@ export const NEXT_STEP = {
   'merge-decision': 'merge or hold on the current head',
   'issue-intake': 'issue-resolve for each issue it labels',
   'issue-resolve': 'pull request review and merge decision',
-  'dependency-update': 'pull request review and merge decision'
+  'dependency-update': 'pull request review and merge decision',
+  'code-review': 'quality join with QA',
+  qa: 'quality join with the code review'
 };
 
 // workflow_dispatch inputs each stage caller declares. Only these are sent.
@@ -41,7 +45,9 @@ export const STAGE_INPUTS = {
   'merge-decision': ['pr_number', 'instructions'],
   'issue-intake': ['requested_by', 'instructions'],
   'issue-resolve': ['issue', 'requested_by', 'instructions'],
-  'dependency-update': ['requested_by', 'instructions']
+  'dependency-update': ['requested_by', 'instructions'],
+  'code-review': ['pr_number', 'instructions'],
+  qa: ['pr_number', 'instructions']
 };
 
 export const STATES = [

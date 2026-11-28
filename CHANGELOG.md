@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.24.0
+
+- **No silent stops in the merge gate:** a blocked pull request that nothing else would move now gets the new
+  **Unblock Pull Request** job (it replaces v1.23.0's Resolve Merge Conflicts, and the gate's `conflicts` output becomes
+  `repair` and `repair_reason`). Conflicts, failed CI checks, and failed commit statuses get a fix pass when one can run
+  on the head; a failed AI check (Code Review, AI QA, PR Fix), a person's standing request for changes, or a pass that
+  cannot run hands off to the requester. A bot's request for changes counts only on the head it reviewed, so a stale
+  AI review no longer blocks the merge after its fix.
+- **Held decisions hand off:** a merge decision that holds the pull request posts a `merge-decision` handoff, so the
+  requester knows the milestone waits on them.
+- **Failed review and QA hand off:** `code-review.yml` posts a `code-review` handoff when the review fails, and `qa.yml`
+  a `qa` handoff (instead of a plain comment) when QA ends without a verdict. `code-review` and `qa` are new
+  `/ai-resume` stages; list the review and QA App in the resume caller's `trusted-bots` so a bare `/ai-resume` finds
+  them.
+
 ## v1.23.0
 
 - **Merge conflicts no longer stall the loop:** `merge-decision.yml` used to skip a pull request with conflicts and
