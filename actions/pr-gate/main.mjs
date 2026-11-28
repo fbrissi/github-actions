@@ -419,13 +419,15 @@ const RUN_ID = /\/actions\/runs\/(\d+)/;
 
 // The newest completed check run of that name on the head whose run is the given workflow, dispatched on the default
 // branch of this repository. Any App with `checks: write`, or a workflow added on a pull request branch, can create a
-// check run with the same name; only the run that created it tells the real one apart.
+// check run with the same name; only the run that created it tells the real one apart. GitHub replaces the
+// `details_url` of a check run created with the Actions token by the check's own page, so the creating run records its
+// id in `external_id`; a `details_url` that points at a run is the fallback.
 async function trustedCheck(api, repo, head, name, workflow, defaultBranch) {
   const checks = (await paginateKey(api, `/repos/${repo}/commits/${head}/check-runs?check_name=${encodeURIComponent(name)}`, 'check_runs'))
     .filter((check) => check.name === name)
     .sort((a, b) => (Date.parse(b.started_at ?? '') || 0) - (Date.parse(a.started_at ?? '') || 0) || b.id - a.id);
   for (const check of checks) {
-    const id = RUN_ID.exec(check.details_url ?? '')?.[1];
+    const id = /^\d+$/.test(check.external_id ?? '') ? check.external_id : RUN_ID.exec(check.details_url ?? '')?.[1];
     if (!id) continue;
     let run;
     try {

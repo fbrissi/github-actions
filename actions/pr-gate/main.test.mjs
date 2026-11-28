@@ -284,7 +284,7 @@ describe('feedback-dispatch', () => {
 describe('quality-join', () => {
   const check = (id, name, conclusion, overrides = {}) => ({
     id, name, status: conclusion ? 'completed' : 'in_progress', conclusion, started_at: `2026-01-0${id % 9 || 1}T00:00:00Z`,
-    details_url: `https://github.com/octo/app/actions/runs/${id}`, html_url: `https://qa/${id}`, ...overrides
+    external_id: String(id), details_url: `https://github.com/octo/app/runs/${id + 900}`, html_url: `https://qa/${id}`, ...overrides
   });
   const runs = {
     11: { path: '.github/workflows/code-review.yml', head_branch: 'main', event: 'workflow_dispatch', repository: { full_name: REPO } },
@@ -325,6 +325,15 @@ describe('quality-join', () => {
     assert.deepEqual(qaRunning.targets, []);
     assert.match(qaRunning.result.summary[0], /Waiting for AI QA/);
     assert.deepEqual((await join({ qa: [], reviews: [review(1, 'APPROVED')] })).targets, []);
+  });
+
+  it('finds the creating run from the external id, since GitHub rewrites the details url of Actions-token checks', async () => {
+    const legacy = check(11, 'Code Review', 'success', { external_id: null, details_url: 'https://github.com/octo/app/actions/runs/11' });
+    assert.deepEqual((await join({ reviewCheck: legacy, reviews: [review(1, 'APPROVED')] })).targets, ['merge-decision.yml']);
+    const rewritten = check(11, 'Code Review', 'success', { external_id: null });
+    const untrusted = await join({ reviewCheck: rewritten, reviews: [review(1, 'APPROVED')] });
+    assert.deepEqual(untrusted.targets, []);
+    assert.match(untrusted.result.summary[0], /Waiting for Code Review/);
   });
 
   it('dispatches the merge only when the review side and QA both approve', async () => {
