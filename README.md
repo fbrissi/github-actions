@@ -277,8 +277,9 @@ one timeout. With `separate`:
    completes (the QA workflow's `join-qa` job, and a job of the code review caller after `code-review.yml`) and on every
    review ([`quality-join.yml`](#review-and-qa-in-separate-jobs)). It decides only once the `Code Review` and `AI QA`
    check runs of the head have completed, trusting only check runs of the QA and code review callers dispatched on the
-   default branch. The review side asks for a fix when any substantive review of the head does (replies to existing
-   threads and `ignore-authors` never do), and approves otherwise, also when the reviewer published nothing new.
+   default branch. The review side asks for a fix when any reviewer's newest substantive review of the head does (replies to
+   existing threads and `ignore-authors` never do), and approves otherwise, also when the reviewer published nothing
+   new. A `QA focus` section of the pull request body names flows QA always exercises.
    Both approving dispatches `merge-workflow`; otherwise `fix-workflow`. A
    `<!-- quality-join head=<sha> review-check=<id> qa-check=<id> reviews=<id> -->` bot comment, posted after the
    dispatch, records each decision, so a decision is dispatched once and a QA rerun or a new review decides again.

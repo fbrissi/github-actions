@@ -358,7 +358,11 @@ describe('quality-join', () => {
     });
     assert.deepEqual(replies.targets, ['merge-decision.yml'], 'a reply resolving a thread is not a request for changes');
     const overridden = await join({ reviews: [review(1, 'CHANGES_REQUESTED'), review(2, 'APPROVED', '', { user: { login: 'person' } })] });
-    assert.deepEqual(overridden.targets, ['pr-fix.yml']);
+    assert.deepEqual(overridden.targets, ['pr-fix.yml'], "another reviewer's approval never hides a request for changes");
+    const changedMind = await join({ reviews: [review(1, 'CHANGES_REQUESTED', '', { user: { login: 'person' } }), review(2, 'APPROVED', '', { user: { login: 'person' } })] });
+    assert.deepEqual(changedMind.targets, ['merge-decision.yml'], 'the same reviewer approving the head later withdraws its request');
+    const askedAgain = await join({ reviews: [review(1, 'APPROVED'), review(2, 'CHANGES_REQUESTED')] });
+    assert.deepEqual(askedAgain.targets, ['pr-fix.yml']);
     assert.deepEqual((await join({ reviews: [review(1, 'COMMENTED', 'nit', { user: { login: 'fixer[bot]' } })] })).targets, ['merge-decision.yml']);
   });
 

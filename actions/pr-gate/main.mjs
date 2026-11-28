@@ -442,8 +442,8 @@ async function trustedCheck(api, repo, head, name, workflow, defaultBranch) {
 
 // Joins the code review and the QA check of one head commit, which run as separate workflows. It runs when either
 // check completes and on every review, and decides only once both checks of the head have completed: the review side
-// asks for a fix when any substantive review of the head (not a reply to existing threads, not by `ignore-authors`)
-// does, and otherwise approves, even with no review at all (a reviewer with nothing new publishes none; the merge gate
+// asks for a fix when the newest substantive review of the head by any reviewer (not a reply to existing threads,
+// not by `ignore-authors`) does, and otherwise approves, even with no review at all (a reviewer with nothing new publishes none; the merge gate
 // still hands open threads to a person). Both approving dispatches the merge workflow; otherwise the fix workflow, which
 // handles the review threads and the QA report together. Each decision is recorded with a bot marker of the head, both
 // check runs, and the newest substantive review, so it is dispatched once, and a QA rerun or a new review decides again.
@@ -487,9 +487,11 @@ export async function qualityJoin(ctx, api, number) {
   const options = { ignored: new Set(lower(ctx['ignore-authors'])), allReplies: true };
   const reviews = (await api.paginate(`/repos/${repo}/pulls/${number}/reviews`))
     .filter((item) => item.commit_id === head && item.submitted_at);
+  // Each reviewer's newest substantive review of the head is what that reviewer asks for now: a person who requested
+  // changes and then approved the same head after discussion no longer asks for a fix.
   let newest = 0;
-  let askers = [];
-  for (const item of reviews) {
+  const latest = new Map();
+  for (const item of [...reviews].sort((x, y) => Date.parse(x.submitted_at) - Date.parse(y.submitted_at) || x.id - y.id)) {
     const state = String(item.state).toLowerCase();
     const comments = ['changes_requested', 'commented'].includes(state)
       ? await api.paginate(`/repos/${repo}/pulls/${number}/reviews/${item.id}/comments`)
@@ -497,9 +499,9 @@ export async function qualityJoin(ctx, api, number) {
     const { outcome } = reviewOutcome(item, comments, options);
     if (!outcome) continue;
     newest = Math.max(newest, Number(item.id));
-    if (outcome === 'fix') askers.push(item.user?.login ?? 'someone');
+    latest.set((item.user?.login ?? '').toLowerCase(), { login: item.user?.login ?? 'someone', outcome });
   }
-  askers = [...new Set(askers)];
+  const askers = [...latest.values()].filter((item) => item.outcome === 'fix').map((item) => item.login);
 
   const key = `head=${head} review-check=${review.id} qa-check=${qa.id} reviews=${newest}`;
   const comments = await api.paginate(`/repos/${repo}/issues/${number}/comments`);
