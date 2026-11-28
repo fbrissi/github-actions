@@ -618,7 +618,11 @@ describe('merge-gate', () => {
     const staleBot = [{ user: { login: 'agent[bot]', type: 'Bot' }, state: 'CHANGES_REQUESTED', commit_id: OLD }];
     assert.equal((await mergeGate(fixCtx, mergeRepo({ pr: optedIn, reviews: staleBot }), noSleep)).outputs.action, 'decide');
     const currentBot = [{ ...staleBot[0], commit_id: HEAD }];
-    assert.equal((await mergeGate(fixCtx, mergeRepo({ pr: optedIn, reviews: currentBot }), noSleep)).outputs.repair, 'handoff');
+    const answered = await mergeGate(fixCtx, mergeRepo({ pr: optedIn, reviews: currentBot }), noSleep);
+    assert.equal(answered.outputs.repair, undefined);
+    assert.match(answered.summary[0], /a fix pass on .* answers it/);
+    const fixedHere = [{ user: { type: 'Bot', login: 'fixer[bot]' }, created_at: '2026-01-01T00:00:00Z', body: `<!-- pr-fix round=1 head=${HEAD} -->` }];
+    assert.equal((await mergeGate(fixCtx, mergeRepo({ pr: optedIn, reviews: currentBot, comments: fixedHere }), noSleep)).outputs.repair, 'handoff');
   });
 
   it('waits for checks but ignores those of dispatcher runs', async () => {

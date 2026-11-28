@@ -333,10 +333,19 @@ export async function mergeGate(ctx, api, sleep = (ms) => new Promise((resolve) 
   }
   // An AI reviewer publishes nothing on a head with nothing new, so its request for changes counts only on the head it
   // reviewed; the join already weighed that review. A person's request stands until that person reviews again.
-  const changesRequested = [...latest.values()]
-    .filter((review) => review.state === 'CHANGES_REQUESTED' && (review.user.type !== 'Bot' || review.commit_id === headSha))
-    .map((review) => review.user.login);
-  if (changesRequested.length > 0) return repair(`changes requested by ${changesRequested.join(', ')}`, false);
+  const requests = [...latest.values()]
+    .filter((review) => review.state === 'CHANGES_REQUESTED' && (review.user.type !== 'Bot' || review.commit_id === headSha));
+  const changesRequested = requests.map((review) => review.user.login);
+  if (changesRequested.length > 0) {
+    const reason = `changes requested by ${changesRequested.join(', ')}`;
+    // An AI reviewer's request on this head is what the join sends to a fix pass; while such a pass can still run on the
+    // head, it answers the request, so only a pass that cannot run (or already ran here) needs a person.
+    if (requests.every((review) => review.user.type === 'Bot')) {
+      issueComments ??= await api.paginate(`/repos/${repo}/issues/${number}/comments`);
+      if ((await repairRoute(ctx, pr, issueComments)) !== 'handoff') return skip(`${reason}; a fix pass on ${headSha} answers it.`);
+    }
+    return repair(reason, false);
+  }
   const approvals = [...latest.values()].filter((review) => review.state === 'APPROVED'
     && review.commit_id === headSha
     && review.user.type === 'User'
