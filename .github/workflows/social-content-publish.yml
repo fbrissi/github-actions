@@ -52,7 +52,7 @@ on:
         description: Tag or commit SHA of fbrissi/ai-skills with the publisher scripts.
         required: false
         type: string
-        default: v0.16.0
+        default: v0.17.0
       facebook-page-id:
         description: Facebook Page ID (Facebook and Instagram). Empty uses the `FACEBOOK_PAGE_ID` variable.
         required: false
@@ -391,6 +391,10 @@ jobs:
         id: save
         if: ${{ always() && steps.skills.outcome == 'success' }}
         uses: fbrissi/github-actions/actions/social-content@v1
+        env:
+          GOOGLE_DRIVE_CLIENT_ID: ${{ inputs.google-drive-client-id || vars.GOOGLE_DRIVE_CLIENT_ID || secrets.GOOGLE_DRIVE_CLIENT_ID }}
+          GOOGLE_DRIVE_CLIENT_SECRET: ${{ secrets.GOOGLE_DRIVE_CLIENT_SECRET }}
+          GOOGLE_DRIVE_REFRESH_TOKEN: ${{ secrets.GOOGLE_DRIVE_REFRESH_TOKEN }}
         with:
           command: save-state
           github-token: ${{ steps.app-token.outputs.token || github.token }}

@@ -47,7 +47,7 @@ on:
         description: Tag or commit SHA of fbrissi/ai-skills with the social content agents and skills.
         required: false
         type: string
-        default: v0.16.0
+        default: v0.17.0
       harness:
         description: AI harness, `opencode` or `claude`. Empty uses the `AI_HARNESS` variable, then `claude`.
         required: false
