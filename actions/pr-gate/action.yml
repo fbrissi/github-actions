@@ -9,7 +9,7 @@ inputs:
     description: "`feedback-dispatch`, `quality-join`, `fix-gate`, `fix-record`, `fix-finish`, `merge-dispatch`, `merge-gate`, `merge-outcome`, or `merge-record`."
     required: true
   github-token:
-    description: Token for the GitHub API. `feedback-dispatch` needs `actions` write and `pull-requests` read; `fix-gate` needs `checks` write and `issues` and `pull-requests` read; `fix-finish` needs `checks` write; `merge-dispatch` needs `actions` write; `quality-join`, and `feedback-dispatch` with `qa-check-name`, also need `checks` read and `pull-requests` write; `merge-gate` needs `actions`, `checks`, `issues`, `pull-requests`, and `statuses` read; the record commands need a GitHub App token with `pull-requests` write, because only bot comments count as markers.
+    description: Token for the GitHub API. `feedback-dispatch` needs `actions` write and `pull-requests` read; `fix-gate` needs `checks` write and `issues` and `pull-requests` read; `fix-finish` needs `checks` write; `merge-dispatch` needs `actions` write; `quality-join`, and `feedback-dispatch` with `qa-check-name`, need `actions` write, `checks` read, and `pull-requests` write; `merge-gate` needs `actions`, `checks`, `issues`, `pull-requests`, and `statuses` read; the record commands need a GitHub App token with `pull-requests` write, because only bot comments count as markers.
     required: false
     default: ${{ github.token }}
   pr-number:
@@ -109,9 +109,21 @@ inputs:
     required: false
     default: ""
   qa-check-name:
-    description: "`quality-join`, and `feedback-dispatch` for reviews: check run of the QA workflow. When set, a review no longer dispatches on its own: the code review and this check of the head commit are joined, and the last to finish dispatches `merge-workflow` when both approve, otherwise `fix-workflow`. Empty keeps reviews dispatching directly."
+    description: "`quality-join`, and `feedback-dispatch` for reviews: check run of the QA workflow. When set, a review no longer dispatches on its own: once the `review-check-name` and this check of the head commit have completed, `merge-workflow` is dispatched when both sides approve, otherwise `fix-workflow`. Empty keeps reviews dispatching directly."
     required: false
     default: ""
+  review-check-name:
+    description: "`quality-join`: check run of the code review workflow."
+    required: false
+    default: Code Review
+  qa-workflow:
+    description: "`quality-join`: workflow file of the QA caller; only `qa-check-name` check runs of its runs dispatched on the default branch count."
+    required: false
+    default: qa.yml
+  review-workflow:
+    description: "`quality-join`: workflow file of the code review caller; only `review-check-name` check runs of its runs dispatched on the default branch count."
+    required: false
+    default: code-review.yml
 
 outputs:
   action:
@@ -201,6 +213,9 @@ runs:
         PR_GATE_MERGE_CHECK_NAME: ${{ inputs.merge-check-name }}
         PR_GATE_OUTPUT_FILE: ${{ inputs.output-file }}
         PR_GATE_QA_CHECK_NAME: ${{ inputs.qa-check-name }}
+        PR_GATE_REVIEW_CHECK_NAME: ${{ inputs.review-check-name }}
+        PR_GATE_QA_WORKFLOW: ${{ inputs.qa-workflow }}
+        PR_GATE_REVIEW_WORKFLOW: ${{ inputs.review-workflow }}
       run: node "$GITHUB_ACTION_PATH/main.mjs"
 
 branding:

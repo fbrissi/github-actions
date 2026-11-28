@@ -1,8 +1,9 @@
 name: Quality Join
 
 # Joins the code review and the QA check of a pull request's head commit, which run as separate workflows. Call it from
-# a `pull_request_review` workflow (each review), and the QA workflow runs the same join when its check completes. The
-# last of the two to finish dispatches `merge-workflow` when both approve, otherwise `fix-workflow`.
+# a `pull_request_review` workflow (each review); the QA workflow runs the same join when its check completes, and the
+# code review caller runs it after its check completes (README, Review and QA in separate jobs). Once both checks of the
+# head have completed, it dispatches `merge-workflow` when both approve, otherwise `fix-workflow`.
 on:
   workflow_call:
     inputs:
@@ -22,15 +23,25 @@ on:
         type: string
         default: merge-decision.yml
       ignore-authors:
-        description: Whitespace-separated logins whose reviews never ask for a fix, for example the fixer App bot (`my-fixer[bot]`), whose thread replies also emit review events.
+        description: Whitespace-separated logins whose reviews never ask for a fix and start no join, for example the fixer App bot (`my-fixer[bot]`), whose thread replies also emit review events. Replies to existing threads never ask for a fix, whoever posts them.
         required: false
         type: string
         default: ""
-      ignore-reply-authors:
-        description: Whitespace-separated logins whose reply-only reviews never ask for a fix.
+      review-check-name:
+        description: Check run of the code review (`code-review.yml` `check-name`). The join decides only after it completed.
         required: false
         type: string
-        default: ""
+        default: Code Review
+      qa-workflow:
+        description: File name of the QA caller in this repository; only `qa-check-name` check runs of its runs dispatched on the default branch count.
+        required: false
+        type: string
+        default: qa.yml
+      review-workflow:
+        description: File name of the code review caller in this repository; only `review-check-name` check runs of its runs dispatched on the default branch count.
+        required: false
+        type: string
+        default: code-review.yml
       runs-on:
         description: Runner label. Empty uses the `CI_RUNNER` variable, then `ubuntu-latest`.
         required: false
@@ -42,12 +53,15 @@ permissions: {}
 jobs:
   join:
     name: Quality Join
+    # Reviews by ignored authors start no join, so a burst of fixer replies never crowds the concurrency group.
+    if: ${{ !contains(format(' {0} ', inputs.ignore-authors), format(' {0} ', github.event.review.user.login)) }}
     runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
     permissions:
       actions: write
       checks: read
       pull-requests: write
-    # Shared with the QA workflow's join: one join per pull request at a time, so the review and QA never both decide.
+    # Shared with the QA workflow's join and the code review caller's join: one join per pull request at a time. Every
+    # join reads the whole state, so a join the group drops is made up by the next one.
     concurrency:
       group: quality-join-${{ github.repository }}-${{ github.event.pull_request.number }}
       cancel-in-progress: false
@@ -60,5 +74,7 @@ jobs:
           fix-workflow: ${{ inputs.fix-workflow }}
           merge-workflow: ${{ inputs.merge-workflow }}
           ignore-authors: ${{ inputs.ignore-authors }}
-          ignore-reply-authors: ${{ inputs.ignore-reply-authors }}
           qa-check-name: ${{ inputs.qa-check-name }}
+          review-check-name: ${{ inputs.review-check-name }}
+          qa-workflow: ${{ inputs.qa-workflow }}
+          review-workflow: ${{ inputs.review-workflow }}

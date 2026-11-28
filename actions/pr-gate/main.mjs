@@ -10,7 +10,7 @@ const NAMES = [
   'command', 'fix-branch-prefixes', 'pr-number', 'opt-in-label', 'branch-prefixes', 'max-rounds', 'escalation-label', 'check-name',
   'required-human-approvals', 'human-approval-exempt-base-prefixes', 'human-approval-exempt-authors', 'approval-labels', 'hold-labels', 'round', 'start-sha', 'outcome',
   'head-sha', 'result', 'check-run-id', 'merge-workflow', 'fix-workflow', 'ignore-authors', 'ignore-reply-authors',
-  'merge-check-name', 'output-file', 'qa-check-name'
+  'merge-check-name', 'output-file', 'qa-check-name', 'review-check-name', 'qa-workflow', 'review-workflow'
 ];
 
 export const envName = (name) => `PR_GATE_${name.toUpperCase().replaceAll('-', '_')}`;
@@ -397,7 +397,7 @@ export function isCleanGrade(body = '') {
 
 // What a review asks for: `merge` (an approval or a clean grade), `fix` (changes requested or actionable comments), or
 // nothing, with the reason.
-export function reviewOutcome(review = {}, comments = [], { ignored = new Set(), replyIgnored = new Set() } = {}) {
+export function reviewOutcome(review = {}, comments = [], { ignored = new Set(), replyIgnored = new Set(), allReplies = false } = {}) {
   const author = (review.user?.login ?? '').toLowerCase();
   const state = String(review.state).toLowerCase();
   if (state === 'approved') return { outcome: 'merge', reason: 'the review approves' };
@@ -409,84 +409,123 @@ export function reviewOutcome(review = {}, comments = [], { ignored = new Set(),
   // hands those to a person. Two clean reviews of one head then never start two fix passes.
   if (state === 'commented' && comments.length === 0 && isCleanGrade(review.body)) return { outcome: 'merge', reason: 'the review is a clean grade' };
   if (ignored.has(author)) return { outcome: null, reason: `reviews by ${review.user?.login} are ignored.` };
-  if (replyOnly && replyIgnored.has(author)) return { outcome: null, reason: `the review by ${review.user?.login} only replies to existing threads.` };
+  if (replyOnly && (allReplies || replyIgnored.has(author))) return { outcome: null, reason: `the review by ${review.user?.login} only replies to existing threads.` };
   if (!actionable) return { outcome: null, reason: 'the review has no body and no inline comments.' };
   return { outcome: 'fix', reason: 'the review asks for changes' };
 }
 
-const JOIN_MARKER = /<!-- quality-join head=([0-9a-f]{40}) review=(\d+) -->/;
+const JOIN_MARKER = /<!-- quality-join (head=[0-9a-f]{40} review-check=\d+ qa-check=\d+ reviews=\d+) -->/;
+const RUN_ID = /\/actions\/runs\/(\d+)/;
 
-// Joins the code review and the QA check of one head commit, which run as separate workflows: the last of the two to
-// finish decides. Both passing dispatches the merge workflow; either failing dispatches the fix workflow, which then
-// handles the review threads and the QA findings together. A bot marker per head and review keeps a decision from being
-// dispatched twice; callers serialize joins per pull request with a concurrency group.
+// The newest completed check run of that name on the head whose run is the given workflow, dispatched on the default
+// branch of this repository. Any App with `checks: write`, or a workflow added on a pull request branch, can create a
+// check run with the same name; only the run that created it tells the real one apart.
+async function trustedCheck(api, repo, head, name, workflow, defaultBranch) {
+  const checks = (await paginateKey(api, `/repos/${repo}/commits/${head}/check-runs?check_name=${encodeURIComponent(name)}`, 'check_runs'))
+    .filter((check) => check.name === name)
+    .sort((a, b) => (Date.parse(b.started_at ?? '') || 0) - (Date.parse(a.started_at ?? '') || 0) || b.id - a.id);
+  for (const check of checks) {
+    const id = RUN_ID.exec(check.details_url ?? '')?.[1];
+    if (!id) continue;
+    let run;
+    try {
+      ({ data: run } = await api.request('GET', `/repos/${repo}/actions/runs/${id}`));
+    } catch (error) {
+      if (error.status === 404) continue;
+      throw error;
+    }
+    if (String(run.path ?? '').split('@')[0] === `.github/workflows/${workflow}` && run.head_branch === defaultBranch
+      && run.event === 'workflow_dispatch' && run.repository?.full_name === repo) return check;
+  }
+  return null;
+}
+
+// Joins the code review and the QA check of one head commit, which run as separate workflows. It runs when either
+// check completes and on every review, and decides only once both checks of the head have completed: the review side
+// asks for a fix when any substantive review of the head (not a reply to existing threads, not by `ignore-authors`)
+// does, and otherwise approves, even with no review at all (a reviewer with nothing new publishes none; the merge gate
+// still hands open threads to a person). Both approving dispatches the merge workflow; otherwise the fix workflow, which
+// handles the review threads and the QA report together. Each decision is recorded with a bot marker of the head, both
+// check runs, and the newest substantive review, so it is dispatched once, and a QA rerun or a new review decides again.
+// Callers serialize joins per pull request with a concurrency group; every join reads the whole state, so a join the
+// group drops is made up by the next one.
 export async function qualityJoin(ctx, api, number) {
   const { repo } = ctx;
   const qaName = ctx['qa-check-name'];
+  const reviewName = ctx['review-check-name'] || 'Code Review';
+  const qaWorkflow = ctx['qa-workflow'] || 'qa.yml';
+  const reviewWorkflow = ctx['review-workflow'] || 'code-review.yml';
   if (!qaName) throw new Error("'qa-check-name' is required to join the review and QA.");
   for (const name of ['fix-workflow', 'merge-workflow']) {
     if (!WORKFLOW_FILE.test(ctx[name])) throw new Error(`'${name}' must be a workflow file name, got '${ctx[name]}'.`);
   }
+  for (const [name, value] of [['qa-workflow', qaWorkflow], ['review-workflow', reviewWorkflow]]) {
+    if (!WORKFLOW_FILE.test(value)) throw new Error(`'${name}' must be a workflow file name, got '${value}'.`);
+  }
   const lower = (value) => words(value).map((login) => login.toLowerCase());
   const { data: pr } = await api.request('GET', `/repos/${repo}/pulls/${number}`);
-  const head = pr.head.sha;
   if (pr.state !== 'open') return { summary: [`Skipped: PR #${number} is not open.`] };
+  if (pr.head.repo?.full_name !== repo) return { summary: [`Skipped: PR #${number} comes from a fork.`] };
+  const head = pr.head.sha;
+  const short = head.slice(0, 7);
+  const { data: repository } = await api.request('GET', `/repos/${repo}`);
+  const defaultBranch = repository.default_branch;
 
-  const runs = (await paginateKey(api, `/repos/${repo}/commits/${head}/check-runs?check_name=${encodeURIComponent(qaName)}`, 'check_runs'))
-    .filter((check) => check.name === qaName)
-    .sort((a, b) => (Date.parse(b.started_at ?? '') || 0) - (Date.parse(a.started_at ?? '') || 0) || b.id - a.id);
-  const qa = runs[0];
-  if (!qa || qa.status !== 'completed') return { summary: [`Waiting for ${qaName} on ${head.slice(0, 7)}; its end joins the review.`] };
+  const review = await trustedCheck(api, repo, head, reviewName, reviewWorkflow, defaultBranch);
+  if (!review || review.status !== 'completed') return { summary: [`Waiting for ${reviewName} on ${short}; its end joins ${qaName}.`] };
+  if (review.conclusion !== 'success') {
+    const reason = `${reviewName} on ${short} ended ${review.conclusion}; rerun it to continue.`;
+    return { summary: [reason], notice: reason };
+  }
+  const qa = await trustedCheck(api, repo, head, qaName, qaWorkflow, defaultBranch);
+  if (!qa || qa.status !== 'completed') return { summary: [`Waiting for ${qaName} on ${short}; its end joins ${reviewName}.`] };
   if (!['success', 'failure'].includes(qa.conclusion)) {
-    const reason = `${qaName} on ${head.slice(0, 7)} ended ${qa.conclusion} without a verdict; rerun it to continue.`;
+    const reason = `${qaName} on ${short} ended ${qa.conclusion} without a verdict; rerun it to continue.`;
     return { summary: [reason], notice: reason };
   }
 
-  // The newest review of the head that asks for something decides; fixer replies and empty comments do not.
-  const options = { ignored: new Set(lower(ctx['ignore-authors'])), replyIgnored: new Set(lower(ctx['ignore-reply-authors'])) };
+  const options = { ignored: new Set(lower(ctx['ignore-authors'])), allReplies: true };
   const reviews = (await api.paginate(`/repos/${repo}/pulls/${number}/reviews`))
-    .filter((item) => item.commit_id === head && item.submitted_at)
-    .sort((a, b) => Date.parse(b.submitted_at) - Date.parse(a.submitted_at));
-  let decided = null;
+    .filter((item) => item.commit_id === head && item.submitted_at);
+  let newest = 0;
+  let askers = [];
   for (const item of reviews) {
     const state = String(item.state).toLowerCase();
     const comments = ['changes_requested', 'commented'].includes(state)
       ? await api.paginate(`/repos/${repo}/pulls/${number}/reviews/${item.id}/comments`)
       : [];
     const { outcome } = reviewOutcome(item, comments, options);
-    if (outcome) {
-      decided = { ...item, outcome };
-      break;
-    }
+    if (!outcome) continue;
+    newest = Math.max(newest, Number(item.id));
+    if (outcome === 'fix') askers.push(item.user?.login ?? 'someone');
   }
-  if (!decided) return { summary: [`Waiting for a code review of ${head.slice(0, 7)}; its end joins ${qaName}.`] };
+  askers = [...new Set(askers)];
 
+  const key = `head=${head} review-check=${review.id} qa-check=${qa.id} reviews=${newest}`;
   const comments = await api.paginate(`/repos/${repo}/issues/${number}/comments`);
-  const done = comments.some((comment) => {
-    const marker = JOIN_MARKER.exec(comment.body ?? '');
-    return comment.user?.type === 'Bot' && marker?.[1] === head && Number(marker[2]) === Number(decided.id);
-  });
-  if (done) return { summary: [`Already joined the review ${decided.id} and ${qaName} of ${head.slice(0, 7)}.`] };
+  if (comments.some((comment) => comment.user?.type === 'Bot' && JOIN_MARKER.exec(comment.body ?? '')?.[1] === key)) {
+    return { summary: [`Already joined ${reviewName} and ${qaName} of ${short} with these reviews.`] };
+  }
 
   const qaPassed = qa.conclusion === 'success';
-  const merge = decided.outcome === 'merge' && qaPassed;
+  const merge = askers.length === 0 && qaPassed;
   const workflow = merge ? ctx['merge-workflow'] : ctx['fix-workflow'];
-  const verdict = (passed) => (passed ? 'approved' : 'changes required');
-  const body = [
-    `<!-- quality-join head=${head} review=${decided.id} -->`,
-    `Quality join for ${head.slice(0, 7)}: code review ${verdict(decided.outcome === 'merge')}, [${qaName}](${qa.html_url ?? qa.details_url ?? ''}) ${verdict(qaPassed)}.`,
-    merge ? `Both approved: dispatched ${workflow}.` : `Dispatched ${workflow} to fix the findings of ${[decided.outcome === 'fix' && 'the review', !qaPassed && qaName].filter(Boolean).join(' and ')}.`
-  ].join('\n');
-  await api.request('POST', `/repos/${repo}/issues/${number}/comments`, { body });
-  const { data: repository } = await api.request('GET', `/repos/${repo}`);
+  // Dispatch before recording, so a failed dispatch is retried by the next join instead of being marked done.
   try {
-    await api.request('POST', `/repos/${repo}/actions/workflows/${workflow}/dispatches`, { ref: repository.default_branch, inputs: { pr_number: String(number) } });
+    await api.request('POST', `/repos/${repo}/actions/workflows/${workflow}/dispatches`, { ref: defaultBranch, inputs: { pr_number: String(number) } });
   } catch (error) {
     if (error.status !== 404) throw error;
-    const reason = `${workflow} is not on ${repository.default_branch}; PR #${number} was not dispatched.`;
+    const reason = `${workflow} is not on ${defaultBranch}; PR #${number} was not dispatched.`;
     return { summary: [reason], notice: reason };
   }
-  return { summary: [`Joined the review and ${qaName} of ${head.slice(0, 7)}: dispatched ${workflow} for PR #${number}.`] };
+  const reviewText = askers.length > 0 ? `changes requested by ${askers.join(', ')}` : 'approved';
+  const body = [
+    `<!-- quality-join ${key} -->`,
+    `Quality join for ${short}: code review ${reviewText}, [${qaName}](${qa.html_url ?? qa.details_url ?? ''}) ${qaPassed ? 'approved' : 'changes required'}.`,
+    merge ? `Both approved: dispatched ${workflow}.` : `Dispatched ${workflow} to fix the findings of ${[askers.length > 0 && 'the review', !qaPassed && qaName].filter(Boolean).join(' and ')}.`
+  ].join('\n');
+  await api.request('POST', `/repos/${repo}/issues/${number}/comments`, { body });
+  return { summary: [`Joined ${reviewName} and ${qaName} of ${short}: dispatched ${workflow} for PR #${number}.`] };
 }
 
 export async function qualityJoinCommand(ctx, api) {

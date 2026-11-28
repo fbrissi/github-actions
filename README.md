@@ -265,18 +265,25 @@ and QA to their own workflows (`quality-mode: separate`) so no job holds the dev
 one timeout. With `separate`:
 
 1. The implement agent only develops: it runs the narrow checks, pushes, opens the pull request, and stops.
-2. The push starts the code review ([`code-review.yml`](#code-review)) and QA ([`qa.yml`](#review-and-qa-in-separate-jobs)) in
-   parallel; dispatch both from the same CI job that dispatches the code review today. QA starts `setup-command`,
-   runs the `qa-e2e` skill on the scenarios of the change (from the second round: the failed scenarios, those covering
-   the files changed since, and the touched `@smoke` scenarios), and reports an `AI QA` check run on the head commit,
-   `success` or `failure`, with its report as the check output. A run that ends without a `qa-result:` line is
-   `neutral` and stops the join until it is rerun.
-3. Whichever finishes last decides, through the pr-gate [`quality-join`](actions/pr-gate/README.md) command:
-   [`quality-join.yml`](#review-and-qa-in-separate-jobs) runs it for every review, and `qa.yml` when its check completes. It
-   waits while either side of the head commit is missing, dispatches `merge-workflow` when the newest decisive review
-   and QA both approve, and otherwise dispatches `fix-workflow` once. A `<!-- quality-join head=<sha> review=<id> -->`
-   bot comment records each decision, and one concurrency group per pull request serializes the joins, so a decision
-   is never dispatched twice.
+2. The push starts the code review ([`code-review.yml`](#code-review)) and QA
+   ([`qa.yml`](#review-and-qa-in-separate-jobs)) in parallel: dispatch both from the CI job that dispatches the code
+   review today. QA starts `setup-command`, runs the `qa-e2e` skill on the scenarios of the change (from the second
+   round: the failed scenarios, those covering the files changed since, and the touched `@smoke` scenarios), and
+   reports an `AI QA` check run on the head commit, `success` or `failure`, with its report as the check output. A run
+   without a `qa-result:` last line is `neutral`: QA comments on the pull request, and nothing moves until QA is rerun.
+   Pull requests whose head matches `skip-head-prefixes` (for example `release/`, whose task pull requests had their
+   own QA) get a passing check without a run.
+3. The pr-gate [`quality-join`](actions/pr-gate/README.md) command joins them. It runs after each of the two checks
+   completes (the QA workflow's `join-qa` job, and a job of the code review caller after `code-review.yml`) and on every
+   review ([`quality-join.yml`](#review-and-qa-in-separate-jobs)). It decides only once the `Code Review` and `AI QA`
+   check runs of the head have completed, trusting only check runs of the QA and code review callers dispatched on the
+   default branch. The review side asks for a fix when any substantive review of the head does (replies to existing
+   threads and `ignore-authors` never do), and approves otherwise, also when the reviewer published nothing new.
+   Both approving dispatches `merge-workflow`; otherwise `fix-workflow`. A
+   `<!-- quality-join head=<sha> review-check=<id> qa-check=<id> reviews=<id> -->` bot comment, posted after the
+   dispatch, records each decision, so a decision is dispatched once and a QA rerun or a new review decides again.
+   One concurrency group per pull request serializes the joins; each reads the whole state, so a join the group drops
+   is made up by the next one.
 4. [`pr-fix.yml`](#pr-fix) with `qa-check-name` fixes the review threads and the QA report together and pushes; the
    push starts the next review and QA. `max-rounds` and the escalation of PR Fix bound the loop.
 
@@ -320,17 +327,44 @@ jobs:
       pr-number: ${{ inputs.pr_number }}
       ignore-authors: my-fixer[bot]
       setup-command: scripts/start-test-stack.sh
+      skip-head-prefixes: release/
     secrets: inherit
 ```
 
+```yaml
+# .github/workflows/code-review.yml: add this job after the code-review job
+  join:
+    needs: code-review
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      checks: read
+      pull-requests: write
+    concurrency:
+      group: quality-join-${{ github.repository }}-${{ inputs.pr_number }}
+      cancel-in-progress: false
+    steps:
+      - uses: fbrissi/github-actions/actions/pr-gate@v1
+        with:
+          command: quality-join
+          pr-number: ${{ inputs.pr_number }}
+          qa-check-name: AI QA
+          fix-workflow: pr-fix.yml
+          merge-workflow: merge-decision.yml
+          ignore-authors: my-fixer[bot]
+```
+
 `qa.yml` inputs: `pr-number` (required); `check-name` (`AI QA`); `setup-command` (`""`, targeted validation without
-it); `skills` (`qa-e2e bdd-scenarios`) and `ai-skills-ref`; `fix-workflow` (`pr-fix.yml`), `merge-workflow`
-(`merge-decision.yml`), `ignore-authors`, and `ignore-reply-authors` for the join (an empty workflow skips it);
-`prompt` (it must keep the `qa-result:` line) and `instructions`; `environment`, `timeout-minutes` (`40`), and
-`job-timeout-minutes` (`55`); and `harness`, the model inputs, `agent-client-id`, `runs-on`, and the dependency inputs
-as in [Code Review](#inputs). The agent App needs `Contents`, `Issues`, `Pull requests`, and `Checks: Read`. Output:
-`result` (`approved`, `changes-required`, or `none`). `quality-join.yml` inputs: `qa-check-name` (`AI QA`),
-`fix-workflow`, `merge-workflow`, `ignore-authors`, `ignore-reply-authors`, and `runs-on`.
+it); `skip-head-prefixes` (`""`); `skills` (`qa-e2e bdd-scenarios`) and `ai-skills-ref`; for the join,
+`fix-workflow` (`pr-fix.yml`) and `merge-workflow` (`merge-decision.yml`) (an empty one skips the join),
+`ignore-authors`, `review-check-name` (`Code Review`), `qa-workflow` (`qa.yml`, the caller's file name), and
+`review-workflow` (`code-review.yml`); `prompt` (it must keep the `qa-result:` last line) and `instructions`;
+`environment`, `timeout-minutes` (`40`), and `job-timeout-minutes` (`55`); and `harness`, the model inputs,
+`agent-client-id`, `runs-on`, and the dependency inputs as in [Code Review](#inputs). The agent App needs `Contents`,
+`Issues`, `Pull requests`, and `Checks: Read`. Output: `result` (`approved`, `changes-required`, `skipped`, or `none`).
+`quality-join.yml` inputs: `qa-check-name` (`AI QA`), `review-check-name`, `qa-workflow`, `review-workflow`,
+`fix-workflow`, `merge-workflow`, `ignore-authors` (their reviews start no join), and `runs-on`.
 
 ### PR Feedback Dispatch
 

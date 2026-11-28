@@ -12,10 +12,12 @@ Pairs with `fbrissi/ai-skills` `v0.15.0` (the task implementer honors `quality-m
 `ai-skills-ref` of `qa.yml`).
 
 - **Review and QA in separate jobs:** the new `qa.yml` runs AI QA of a pull request in its own job and reports an
-  `AI QA` check run with the report, and the new `quality-join.yml` joins each review with that check. The last of
-  the two to finish dispatches the merge decision when both approve, otherwise one fix pass, through the new pr-gate
-  `quality-join` command (one bot marker per head and review, one concurrency group per pull request). A long QA no
-  longer shares the developer's timeout, and the developer's work is pushed before QA starts.
+  `AI QA` check run with the report, and the new `quality-join.yml` joins each review with that check. The new pr-gate
+  `quality-join` command decides once the `Code Review` and `AI QA` check runs of the head have completed (it runs
+  after each check and on every review): the merge decision when no substantive review asks for changes and QA
+  passed, otherwise one fix pass. It trusts only check runs of the QA and review callers dispatched on the default
+  branch, ignores replies to existing threads, and records each decision after the dispatch. A QA run without a
+  verdict comments on the pull request; `skip-head-prefixes` passes QA for aggregating branches such as `release/`.
 - **`quality-mode` for the change tasks:** `ai-task.yml` and the `ai-task` action take `quality-mode` (default
   `cycle`). With `separate`, `implement`, `issue-resolve`, and `dependency-update` only develop, run the narrow checks,
   and open the pull request; the reviewer and QA agents and skills are not installed.
