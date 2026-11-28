@@ -391,6 +391,19 @@ describe('resume', () => {
     assert.match(body, /gh workflow run merge-decision\.yml -f pr_number=7/);
   });
 
+  it('lets only its own App name the workflow a handoff resumes', async () => {
+    const body = buildHandoff({ stage: 'qa', pr: 7, requestedBy: 'alice', workflow: 'deploy.yml' });
+    const reviewer = { id: 50, user: { login: 'reviewer[bot]', type: 'Bot' }, body };
+    const trusting = () => ctxFor({ 'bot-login': 'agent[bot]', 'trusted-bots': 'reviewer[bot]' });
+    const api = fakeApi(routes([reviewer]));
+    await resume(trusting(), api, silent, eventFor('/ai-resume'));
+    const dispatches = api.calls.filter((call) => call.path.endsWith('/dispatches')).map((call) => call.path);
+    assert.deepEqual(dispatches, ['/repos/octo/app/actions/workflows/qa.yml/dispatches']);
+    const own = fakeApi(routes([{ ...reviewer, user: { login: 'agent[bot]', type: 'Bot' }, body: buildHandoff({ stage: 'qa', pr: 7, workflow: 'renamed-qa.yml' }) }]));
+    await resume(trusting(), own, silent, eventFor('/ai-resume'));
+    assert.ok(own.calls.some((call) => call.path === '/repos/octo/app/actions/workflows/renamed-qa.yml/dispatches'));
+  });
+
   it('marks the open handoff resumed, removes the label, dispatches with the instructions, and replies', async () => {
     const api = fakeApi(routes());
     await resume(ctx(), api, silent, eventFor('/ai-resume\nOnly fix the lint errors.'));

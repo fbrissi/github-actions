@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.24.1
+
+- **Resume never lets another bot pick the workflow:** `/ai-resume` dispatches the `workflow=` named in a handoff marker
+  only when the resume App posted that handoff; a handoff of another `trusted-bots` App (such as the App behind an AI
+  review, whose comments an LLM writes) resumes its stage's configured workflow. Before, trusting the review App for the
+  v1.24.0 `code-review` and `qa` handoffs would have let such a comment choose any workflow file for the resume token.
+
 ## v1.24.0
 
 - **No silent stops in the merge gate:** a blocked pull request that nothing else would move now gets the new
