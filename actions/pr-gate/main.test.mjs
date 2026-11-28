@@ -560,12 +560,16 @@ describe('merge-gate', () => {
   it('routes a pull request with conflicts to a fix pass, or to a person when no pass can run', async () => {
     const conflicted = pull({ mergeable: false, mergeable_state: 'dirty', labels: [{ name: 'ai:auto-fix' }] });
     const fixCtx = ctxFor({ ...base, 'fix-workflow': 'pr-fix.yml', 'opt-in-label': 'ai:auto-fix', 'escalation-label': 'ai:needs-human' });
-    const fix = await mergeGate(fixCtx, mergeRepo({ pr: conflicted, fixRuns: [] }), noSleep);
+    const fix = await mergeGate(fixCtx, mergeRepo({ pr: conflicted, fixRuns: [{ status: 'in_progress' }] }), noSleep);
     assert.equal(fix.outputs.action, 'skip');
     assert.equal(fix.outputs.conflicts, 'fix');
-    const queued = await mergeGate(fixCtx, mergeRepo({ pr: conflicted, fixRuns: [{ status: 'in_progress' }] }), noSleep);
+    assert.equal(fix.outputs.head_sha, HEAD);
+    const dispatched = [{ user: { type: 'Bot', login: 'merger[bot]' }, created_at: '2026-01-01T00:00:00Z', body: `<!-- merge-decision conflicts-dispatched head=${HEAD} -->` }];
+    const queued = await mergeGate(fixCtx, mergeRepo({ pr: conflicted, comments: dispatched }), noSleep);
     assert.equal(queued.outputs.conflicts, undefined);
-    assert.match(queued.summary[0], /pr-fix\.yml run is queued/);
+    assert.match(queued.summary[0], /pr-fix\.yml pass dispatched for/);
+    const forged = [{ ...dispatched[0], user: { type: 'User', login: 'mallory' } }];
+    assert.equal((await mergeGate(fixCtx, mergeRepo({ pr: conflicted, comments: forged }), noSleep)).outputs.conflicts, 'fix');
     const fixedHere = [{ user: { type: 'Bot', login: 'fixer[bot]' }, created_at: '2026-01-01T00:00:00Z', body: `<!-- pr-fix round=1 head=${HEAD} -->` }];
     assert.equal((await mergeGate(fixCtx, mergeRepo({ pr: conflicted, comments: fixedHere, fixRuns: [] }), noSleep)).outputs.conflicts, 'handoff');
     const escalated = pull({ mergeable: false, labels: [{ name: 'ai:auto-fix' }, { name: 'ai:needs-human' }] });

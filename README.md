@@ -541,9 +541,10 @@ The fixer GitHub App needs `Contents: Read and write`, `Pull requests: Read and 
    (`<!-- merge-decision unresolved-threads -->`, kept while it is open) instead of waiting silently; resume after
    resolving them. A queued fix run only skips, since its follow-up dispatches the decision again.
    A pull request with conflicts gets **Resolve Merge Conflicts**: when a `fix-workflow` pass could run on its head
-   (opted in, not escalated, rounds left, no pass on this head yet) and none is queued, it dispatches that pass with the
-   App token (which needs Actions write), and the pass merges the base; otherwise, or when the dispatch fails, it posts
-   one `merge-decision` handoff to the requester.
+   (opted in, not escalated, rounds left, no pass on this head yet), it dispatches that pass with the App token (which
+   needs Actions write) and records a `conflicts-dispatched` marker of the head, so later decisions on that head wait
+   for the pass, which merges the base; otherwise, or when the dispatch fails, it posts one `merge-decision` handoff
+   to the requester.
 2. **Request Human Review** runs only when the approvals are missing (and `request-human-review` is on): it requests
    a review from the person who started the flow (the `requested-by` marker of the PR's milestone, or of the issues
    it closes) and mentions them once per pull request (`<!-- merge-decision review-requested=<login> -->`). Their
