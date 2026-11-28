@@ -1727,7 +1727,7 @@ and make it required: do not merge while it is red, because the release apply wo
 
 ## Social Content
 
-Three reusable workflows run the social content flow of `fbrissi/ai-skills` (`v0.14.0`, `docs/social-content.md`
+Three reusable workflows run the social content flow of `fbrissi/ai-skills` (`v0.16.0`, `docs/social-content.md`
 there): an agent per platform (`facebook-content`, `instagram-content`, `youtube-content`, `linkedin-content`) generates a batch and opens
 a review issue, writers ask for changes with `/adjust` or approve with `/aprove`, and deterministic publishers (no
 LLM) schedule or publish the approved batch. Everything project-specific lives in the caller's profile
@@ -1829,17 +1829,19 @@ jobs:
 | `instructions` | `""` | Extra instructions for this run. |
 | `video` | `true` | Video tools and `video-shorts` for Facebook and Instagram; YouTube always gets them. |
 | `extra-skills` | `""` | Optional skills the agents use when installed, for example `copywriting social remotion-best-practices ffmpeg dev`. |
-| `skills-ref` | `v0.14.0` | fbrissi/ai-skills tag or SHA. |
+| `skills-ref` | `v0.16.0` | fbrissi/ai-skills tag or SHA. |
 | `harness`, `opencode-model`, `opencode-variant`, `claude-model`, `claude-effort` | variables | See [Variables](#variables). |
 | `timeout-minutes` / `job-timeout-minutes` | `90` / `120` | Agent and job timeouts. |
 | `agent-client-id` | `AGENT_APP_CLIENT_ID` | Optional GitHub App; without it (or its key) the job uses `GITHUB_TOKEN`. |
 | `google-drive-client-id` | `GOOGLE_DRIVE_CLIENT_ID` variable, then secret | Google OAuth client ID of the Drive app. |
+| `azure-speech-region` | `AZURE_SPEECH_REGION` variable | Azure AI Speech region (for example `eastus`) for the `azure` TTS engine of `video-shorts`. |
 | `environment` | `""` | Environment of the platform jobs. |
 | `runs-on` | `CI_RUNNER`, then `ubuntu-latest` | Runner label; needs Docker, apt, and Python 3.10+. |
 
 Secrets: `GOOGLE_DRIVE_CLIENT_SECRET` and `GOOGLE_DRIVE_REFRESH_TOKEN` (scope `drive.file`, required); `ANTHROPIC_API_KEY`
 or `CLAUDE_CODE_OAUTH_TOKEN` for `claude`, `OPEN_AI_TOKEN` for an `openai/` OpenCode model; optional
-`GOOGLE_DRIVE_CLIENT_ID`, `GOOGLE_API_KEY` (public music folder), and `AGENT_APP_PRIVATE_KEY`.
+`GOOGLE_DRIVE_CLIENT_ID`, `GOOGLE_API_KEY` (public music folder), `AZURE_SPEECH_KEY` (when the profile narrates with
+the `azure` TTS engine; Piper needs no key), and `AGENT_APP_PRIVATE_KEY`.
 
 ### Adjust
 

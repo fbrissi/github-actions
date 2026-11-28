@@ -42,7 +42,7 @@ on:
         description: Tag or commit SHA of fbrissi/ai-skills with the social content agents and skills.
         required: false
         type: string
-        default: v0.14.0
+        default: v0.16.0
       harness:
         description: AI harness, `opencode` or `claude`. Empty uses the `AI_HARNESS` variable, then `claude`.
         required: false
@@ -88,6 +88,11 @@ on:
         required: false
         type: string
         default: ""
+      azure-speech-region:
+        description: Azure AI Speech region for the `azure` TTS engine of video-shorts, such as `eastus`. Empty uses the `AZURE_SPEECH_REGION` variable.
+        required: false
+        type: string
+        default: ""
       environment:
         description: GitHub environment of the adjust job. Empty runs without one.
         required: false
@@ -122,6 +127,9 @@ on:
         required: true
       GOOGLE_API_KEY:
         description: Optional Google API key that lists a public Drive music folder.
+        required: false
+      AZURE_SPEECH_KEY:
+        description: Azure AI Speech key, needed only when the profile narrates with the `azure` TTS engine.
         required: false
 
 permissions: {}
@@ -284,6 +292,8 @@ jobs:
           GOOGLE_DRIVE_CLIENT_SECRET: ${{ secrets.GOOGLE_DRIVE_CLIENT_SECRET }}
           GOOGLE_DRIVE_REFRESH_TOKEN: ${{ secrets.GOOGLE_DRIVE_REFRESH_TOKEN }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          AZURE_SPEECH_KEY: ${{ secrets.AZURE_SPEECH_KEY }}
+          AZURE_SPEECH_REGION: ${{ inputs.azure-speech-region || vars.AZURE_SPEECH_REGION }}
         with:
           harness: ${{ steps.settings.outputs.harness }}
           agent: ${{ steps.gate.outputs.platform }}-content
