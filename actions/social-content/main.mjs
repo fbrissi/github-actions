@@ -182,6 +182,11 @@ export async function saveState(ctx, api, log, { run = runNode } = {}) {
   if (body.code !== 0) throw new Error(`Could not render the issue body: ${tail(body.stderr || body.stdout)}`);
   await api.request('PATCH', `/repos/${ctx.repo}/issues/${issue}`, { body: body.stdout });
   log.info(`Saved the state of ${result.changed.length ? result.changed.join(', ') : 'the approval'} in #${issue}.`);
+  // The run folder README.md (ai-skills v0.17.0+) shows each item's status; a failed refresh never fails the save.
+  const readmeArgs = [args[0], 'readme', merged];
+  if (existsSync(resolve(ctx.cwd, ctx.profile))) readmeArgs.push('--profile', ctx.profile);
+  const readme = run(readmeArgs, { cwd: ctx.cwd });
+  if (readme.code !== 0) log.warning(`The run folder README of #${issue} was not refreshed: ${tail(readme.stderr || readme.stdout)}`);
   return { saved: 'true', reason: '' };
 }
 

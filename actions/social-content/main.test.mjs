@@ -429,7 +429,18 @@ describe('saveState', () => {
     const merged = JSON.parse(readFileSync(join(paths.folder, 'merged.json'), 'utf8'));
     assert.deepEqual(Object.keys(merged.state).sort(), ['a', 'b']);
     assert.deepEqual(calls[0].slice(1), ['issue-body', join(paths.folder, 'merged.json')]);
+    assert.deepEqual(calls[1].slice(1, 3), ['readme', join(paths.folder, 'merged.json')]);
     assert.match(api.calls.find((call) => call.method === 'PATCH').body.body, /^BODY \d+$/);
+  });
+
+  it('saves the state even when the run folder README cannot be refreshed', async () => {
+    const ours = { ...approved, state: { a: { status: 'published', remote_id: '1' } } };
+    const api = fakeApi([['GET', /\/issues\/7$/, { body: bodyOf(approved) }], ['PATCH', /\/issues\/7$/, {}]]);
+    const warnings = [];
+    const log = { ...silent, warning: (message) => warnings.push(message) };
+    const run = (args) => (args[1] === 'readme' ? { code: 1, stdout: '', stderr: 'drive down' } : { code: 0, stdout: 'BODY', stderr: '' });
+    assert.deepEqual(await saveState(ctx(files('readme-fail', ours)), api, log, { run }), { saved: 'true', reason: '' });
+    assert.match(warnings.join('\n'), /README of #7 was not refreshed: drive down/);
   });
 
   it('writes nothing when an adjust moved the batch to another revision', async () => {

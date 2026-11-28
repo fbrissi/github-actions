@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.22.0
+
+Pairs with `fbrissi/ai-skills` `v0.17.0` (one Drive folder per run with a `README.md` schedule, configurable Shorts
+music volume, and the "Custos de geração" comment on each review issue).
+
+- **Skills:** the default `skills-ref` of the social workflows and the `social-content` action is now `v0.17.0`.
+- **Run folder README after publishing:** `social-content` `save-state` refreshes the run folder `README.md`
+  (`review-batch.mjs readme`) after it saves the state, so the schedule shows each item as published or failed. A failed
+  refresh only warns. The publish workflow's Save state step gets the Drive credentials for it.
+
 ## v1.21.1
 
 - **Quality join trusts the real checks:** GitHub replaces the `details_url` of a check run created with the Actions
