@@ -3,8 +3,8 @@ name: QA
 # Runs QA on a pull request in its own job, apart from the developer and the code review: the qa-e2e skill drives the
 # scenarios of the change against the test environment `setup-command` starts. The verdict is the `check-name` check
 # run on the head commit, with the findings in its output. When it completes, the job joins it with the code review of
-# the same head (pr-gate `quality-join`): the last of the two to finish dispatches `merge-workflow` when both approve,
-# otherwise `fix-workflow`. Call `quality-join.yml` from a `pull_request_review` workflow for the review side.
+# the same head (pr-gate `quality-join`): once both checks of the head have completed, `merge-workflow` is dispatched
+# when both approve, otherwise `fix-workflow`. Call `quality-join.yml` from a `pull_request_review` workflow for the review side.
 on:
   workflow_call:
     inputs:
@@ -406,9 +406,10 @@ jobs:
           set -euo pipefail
           result=none
           if [ "$RUN_OUTCOME" = 'success' ] && [ -f "$OUTPUT_FILE" ]; then
-            # Only the last non-empty line is the verdict, so a quoted line in the report never decides it.
-            # Markdown emphasis or code marks (* and the backquote, octal 140) around it are dropped.
-            line="$(grep -v '^[[:space:]]*$' "$OUTPUT_FILE" | tail -n 1 | tr -d '\r*\140' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' || true)"
+            # The verdict is the last line that is exactly a verdict line (markdown emphasis or code marks, * and the
+            # backquote, octal 140, dropped), so a verdict quoted inside a sentence never decides it, and trailing harness
+            # output after the answer does not hide it.
+            line="$(tr -d '\r*\140' < "$OUTPUT_FILE" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | grep -E '^qa-result: (approved|changes-required)$' | tail -n 1 || true)"
             case "$line" in
               'qa-result: approved') result=approved ;;
               'qa-result: changes-required') result=changes-required ;;
