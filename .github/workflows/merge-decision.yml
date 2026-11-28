@@ -215,6 +215,7 @@ jobs:
       required_approvals: ${{ steps.gate.outputs.required_approvals }}
       request_review: ${{ steps.gate.outputs.request_review }}
       handoff: ${{ steps.gate.outputs.handoff }}
+      conflicts: ${{ steps.gate.outputs.conflicts }}
     steps:
       - name: Check gates
         id: gate
@@ -477,3 +478,56 @@ jobs:
           blocker: >-
             Every other merge gate passed, but review threads are still unresolved and no fix pass is queued; resolve
             the threads that are answered (or answer the rest), then resume to decide again.
+
+  resolve-conflicts:
+    name: Resolve Merge Conflicts
+    needs: gate
+    if: ${{ needs.gate.outputs.conflicts == 'fix' || needs.gate.outputs.conflicts == 'handoff' }}
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions: {}
+    timeout-minutes: 5
+    environment:
+      name: ${{ inputs.environment }}
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+          permission-actions: ${{ needs.gate.outputs.conflicts == 'fix' && 'write' || 'read' }}
+          permission-issues: read
+          permission-pull-requests: write
+
+      # A fix pass merges the base and resolves the conflicts; its push runs the checks, the review, and QA again, and
+      # their join dispatches the decision again. An App without Actions write hands off instead.
+      - name: Dispatch a fix pass
+        id: dispatch
+        if: ${{ needs.gate.outputs.conflicts == 'fix' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          FIX_WORKFLOW: ${{ inputs.fix-workflow }}
+          PR_NUMBER: ${{ needs.gate.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
+        run: |
+          default_branch="$(gh api "repos/${GITHUB_REPOSITORY}" --jq .default_branch)"
+          gh workflow run "$FIX_WORKFLOW" --repo "$GITHUB_REPOSITORY" --ref "$default_branch" -f pr_number="$PR_NUMBER"
+          # A later decision on this head waits for the pass instead of dispatching another.
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="<!-- merge-decision conflicts-dispatched head=${HEAD_SHA} -->
+          Dispatched ${FIX_WORKFLOW} to merge the base and resolve the merge conflicts on ${HEAD_SHA}." >/dev/null
+          echo "Dispatched ${FIX_WORKFLOW} for PR #${PR_NUMBER} to resolve its merge conflicts." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Hand off to the requester
+        if: ${{ needs.gate.outputs.conflicts == 'handoff' || steps.dispatch.outcome == 'failure' }}
+        uses: fbrissi/github-actions/actions/ai-delivery@v1
+        with:
+          command: handoff
+          github-token: ${{ steps.app-token.outputs.token }}
+          task: merge-decision
+          pr: ${{ needs.gate.outputs.pr_number }}
+          marker: "<!-- merge-decision merge-conflicts -->"
+          blocker: >-
+            The pull request has merge conflicts with its base and no automatic fix pass can resolve them (it is not
+            opted in, is escalated, is out of fix rounds, a pass on this commit left them, or the pass could not be dispatched); merge the base and resolve
+            the conflicts, then the checks, review, and QA run again and decide again.

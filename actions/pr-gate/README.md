@@ -63,11 +63,11 @@ jobs:
 | `result`, `check-run-id` | `""` | `fix-finish`: fix job result and the check run to complete. |
 | `merge-workflow` | `""` | `merge-dispatch` and `feedback-dispatch`: workflow file to dispatch, for example `merge-decision.yml`. |
 | `fix-workflow`, `ignore-authors`, `ignore-reply-authors`, `merge-check-name`, `qa-check-name` | `""` | `feedback-dispatch`: as the inputs of the same name of `pr-feedback-dispatch.yml`. `quality-join`: the same `fix-workflow`, `merge-workflow`, `ignore-authors`, and `qa-check-name`, with `review-check-name` (`Code Review`), `qa-workflow` (`qa.yml`), and `review-workflow` (`code-review.yml`). |
-| `fix-workflow` | `""` | `merge-gate`: the PR Fix caller; a queued run of it keeps unresolved threads from setting `handoff` while the pull request could get a pass (`opt-in-label` or `fix-branch-prefixes`, no `escalation-label`, under `max-rounds`) and has review feedback, not by `ignore-authors`, newer than its last fix round. |
+| `fix-workflow` | `""` | `merge-gate`: the PR Fix caller; a queued run of it keeps unresolved threads from setting `handoff` while the pull request could get a pass (`opt-in-label` or `fix-branch-prefixes`, no `escalation-label`, under `max-rounds`) and has review feedback, not by `ignore-authors`, newer than its last fix round. A pull request with conflicts sets `conflicts=fix` when such a pass could run on its head and none was dispatched for that head yet (a bot `conflicts-dispatched` marker), and `conflicts=handoff` otherwise. |
 | `fix-branch-prefixes` | `""` | `merge-gate`: the `branch-prefixes` of the PR Fix caller. |
 
 Outputs: `action`, `pr_number`, `round`, `head_ref`, `head_sha`, `base_ref`, `base_sha`, `check_run_id`,
-`required_approvals`, `request_review`, `handoff`, and `result`.
+`required_approvals`, `request_review`, `handoff`, `conflicts`, and `result`.
 
 The script uses Node.js (installed with actions/setup-node when the runner has none) and no dependencies. Run the
 tests with `node --test actions/pr-gate/*.test.mjs`.

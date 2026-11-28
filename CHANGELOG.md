@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.23.0
+
+- **Merge conflicts no longer stall the loop:** `merge-decision.yml` used to skip a pull request with conflicts and
+  stop. Its new **Resolve Merge Conflicts** job dispatches the `fix-workflow` pass, which merges the base, when that
+  pass could run on the head (opted in, not escalated, rounds left, no pass on the head yet), and records a marker of
+  the head so later decisions on it wait for that pass; otherwise, or when the App cannot dispatch it (it needs
+  Actions write), it posts one `merge-decision` handoff to the requester. Callers whose PR Fix qualifies by branch
+  prefix should pass the same `fix-branch-prefixes`.
+
 ## v1.22.0
 
 Pairs with `fbrissi/ai-skills` `v0.17.0` (one Drive folder per run with a `README.md` schedule, configurable Shorts
