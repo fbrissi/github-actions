@@ -490,6 +490,21 @@ function mergeRepo({ pr = pull(), runs = [], checks = [], status = { total_count
 const approval = (login, type = 'User', commit = HEAD) => ({ user: { login, type }, state: 'APPROVED', commit_id: commit });
 const noSleep = async () => {};
 
+describe('pr-gate outputs', () => {
+  it('declares every gate output the reusable workflows read', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const root = new URL('../../', import.meta.url);
+    const action = await readFile(new URL('actions/pr-gate/action.yml', root), 'utf8');
+    const declared = new Set([...action.matchAll(/^  ([a-z_]+):\n    description:/gm)].map((match) => match[1]));
+    for (const file of ['merge-decision.yml', 'pr-fix.yml']) {
+      const workflow = await readFile(new URL(`.github/workflows/${file}`, root), 'utf8');
+      for (const [, name] of workflow.matchAll(/steps\.gate\.outputs\.([a-z_]+)/g)) {
+        assert.ok(declared.has(name), `${file} reads steps.gate.outputs.${name}, which actions/pr-gate/action.yml does not declare`);
+      }
+    }
+  });
+});
+
 describe('merge-gate', () => {
   const base = { 'pr-number': '7', 'branch-prefixes': 'feat/', 'required-human-approvals': '1', 'hold-labels': 'hold' };
 
