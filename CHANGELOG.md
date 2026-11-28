@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release headings use the `## vMAJOR.MINOR.PATCH` form;
 merging a pull request that adds one tags the release and moves the major tag.
 
+## v1.21.0
+
+Pairs with `fbrissi/ai-skills` `v0.16.0` (Azure AI Speech as a second TTS engine of `video-shorts`).
+
+- **Azure narration in the social workflows:** `social-content-generate.yml` and `social-content-adjust.yml` accept an
+  optional `AZURE_SPEECH_KEY` secret and an `azure-speech-region` input (default: the `AZURE_SPEECH_REGION`
+  variable) and pass both to the content agent, for profiles that narrate with the `azure` engine. Piper stays
+  installed and remains the default.
+- **Skills:** the default `skills-ref` of the social workflows and the `social-content` action is now `v0.16.0`.
+
 ## v1.20.0
 
 Pairs with `fbrissi/ai-skills` `v0.15.0` (the task implementer honors `quality-mode: separate`, and the default
