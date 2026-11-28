@@ -73,6 +73,10 @@ inputs:
     description: Command that started the test environment before this action (for example the `setup-command` of `ai-task.yml`). When set, the `implement`, `issue-resolve`, and `dependency-update` prompts tell QA it is running. Empty when none was started.
     required: false
     default: ""
+  quality-mode:
+    description: "`implement`, `issue-resolve`, and `dependency-update`: `cycle` (default) runs the reviewer and QA of the quality cycle in this run; `separate` only develops, pushes, and opens the pull request, for callers that run the code review (`code-review.yml`) and QA (`qa.yml`) in their own workflows, joined by `quality-join.yml`. `separate` drops the reviewer and QA agents and skills."
+    required: false
+    default: cycle
   context:
     description: Deprecated, use `instructions`. Free-text context appended to the prompt.
     required: false
@@ -243,6 +247,7 @@ runs:
         AI_TASK_CONTEXT: ${{ inputs.context }}
         AI_TASK_INSTRUCTIONS: ${{ inputs.instructions }}
         AI_TASK_TEST_ENVIRONMENT: ${{ inputs.test-environment }}
+        AI_TASK_QUALITY_MODE: ${{ inputs.quality-mode }}
         AI_TASK_PROFILE: ${{ inputs.profile }}
         AI_TASK_IMPLEMENT_WORKFLOW: ${{ inputs.implement-workflow }}
         AI_TASK_MAX_PARALLEL: ${{ inputs.max-parallel }}

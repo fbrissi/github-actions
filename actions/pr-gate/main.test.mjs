@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { envName, feedbackDispatch, fixFinish, fixGate, fixRecord, isCleanGrade, mergeDispatch, mergeGate, mergeOutcome, mergeRecord, parseMergeOutcome, readContext } from './main.mjs';
+import { envName, feedbackDispatch, qualityJoinCommand, reviewOutcome, fixFinish, fixGate, fixRecord, isCleanGrade, mergeDispatch, mergeGate, mergeOutcome, mergeRecord, parseMergeOutcome, readContext } from './main.mjs';
 
 const REPO = 'octo/app';
 const HEAD = 'a'.repeat(40);
@@ -278,6 +278,123 @@ describe('feedback-dispatch', () => {
     assert.equal(isCleanGrade('★★★★★'), true);
     assert.equal(isCleanGrade('★★★★☆'), false);
     assert.equal(isCleanGrade(''), false);
+  });
+});
+
+describe('quality-join', () => {
+  const qaRun = (conclusion, status = 'completed') => ({ id: 9, name: 'AI QA', status, conclusion, started_at: '2026-01-02T00:00:00Z', html_url: 'https://qa' });
+  const joinRepo = ({ pr = pull(), checks = [qaRun('success')], reviews = [], reviewComments = {}, comments = [] } = {}) => fakeApi([
+    ['GET', /^\/repos\/octo\/app\/pulls\/7$/, pr],
+    ['GET', /^\/repos\/octo\/app$/, { default_branch: 'main' }],
+    ['GET', /^\/repos\/octo\/app\/commits\/a{40}\/check-runs/, { check_runs: checks }],
+    ['GET', /^\/repos\/octo\/app\/pulls\/7\/reviews$/, reviews],
+    ['GET', /^\/repos\/octo\/app\/pulls\/7\/reviews\/(\d+)\/comments$/, (match) => reviewComments[match[1]] ?? []],
+    ['GET', /^\/repos\/octo\/app\/issues\/7\/comments$/, comments],
+    ['POST', /^\/repos\/octo\/app\/issues\/7\/comments$/, {}],
+    ['POST', /^\/repos\/octo\/app\/actions\/workflows\/[^/]+\/dispatches$/, {}]
+  ]);
+  const values = { 'qa-check-name': 'AI QA', 'fix-workflow': 'pr-fix.yml', 'merge-workflow': 'merge-decision.yml', 'ignore-authors': 'fixer[bot]', 'pr-number': '7' };
+  const review = (id, state, body = '', overrides = {}) => ({ id, state, body, commit_id: HEAD, submitted_at: `2026-01-0${id}T00:00:00Z`, user: { login: 'agent[bot]' }, ...overrides });
+  const targets = (api) => api.calls.filter((call) => call.path.endsWith('/dispatches')).map((call) => call.path.split('/').at(-2));
+  const markers = (api) => api.calls.filter((call) => call.method === 'POST' && call.path.endsWith('/comments')).map((call) => call.body.body);
+  const join = async (options, extra = {}) => {
+    const api = joinRepo(options);
+    const result = await qualityJoinCommand(ctxFor({ ...values, ...extra }), api);
+    return { api, result, targets: targets(api) };
+  };
+
+  it('waits for the review when QA ends first', async () => {
+    const { result, targets: sent } = await join({ reviews: [] });
+    assert.deepEqual(sent, []);
+    assert.match(result.summary[0], /Waiting for a code review/);
+  });
+
+  it('waits for QA while it runs or has not started', async () => {
+    assert.deepEqual((await join({ checks: [], reviews: [review(1, 'APPROVED')] })).targets, []);
+    const running = await join({ checks: [qaRun(null, 'in_progress')], reviews: [review(1, 'APPROVED')] });
+    assert.deepEqual(running.targets, []);
+    assert.match(running.result.summary[0], /Waiting for AI QA/);
+  });
+
+  it('dispatches the merge only when the review and QA both approve', async () => {
+    const both = await join({ reviews: [review(1, 'APPROVED')] });
+    assert.deepEqual(both.targets, ['merge-decision.yml']);
+    assert.match(markers(both.api)[0], new RegExp(`<!-- quality-join head=${HEAD} review=1 -->`));
+    assert.deepEqual((await join({ reviews: [review(1, 'COMMENTED', '★★★★★')] })).targets, ['merge-decision.yml']);
+  });
+
+  it('dispatches one fix when either side asks for changes', async () => {
+    const qaFailed = await join({ checks: [qaRun('failure')], reviews: [review(1, 'APPROVED')] });
+    assert.deepEqual(qaFailed.targets, ['pr-fix.yml']);
+    assert.match(markers(qaFailed.api)[0], /findings of AI QA/);
+    const reviewFailed = await join({ reviews: [review(1, 'CHANGES_REQUESTED')] });
+    assert.deepEqual(reviewFailed.targets, ['pr-fix.yml']);
+    assert.match(markers(reviewFailed.api)[0], /findings of the review\./);
+    const bothFailed = await join({ checks: [qaRun('failure')], reviews: [review(1, 'COMMENTED', '★★★☆☆\nfix x')] });
+    assert.match(markers(bothFailed.api)[0], /the review and AI QA/);
+  });
+
+  it('uses the newest QA run and the newest decisive review of the head', async () => {
+    const older = { ...qaRun('failure'), id: 8, started_at: '2026-01-01T00:00:00Z' };
+    assert.deepEqual((await join({ checks: [older, qaRun('success')], reviews: [review(1, 'APPROVED')] })).targets, ['merge-decision.yml']);
+    const reviews = [
+      review(1, 'CHANGES_REQUESTED'),
+      review(2, 'APPROVED'),
+      review(3, 'COMMENTED', '', { user: { login: 'fixer[bot]' } }),
+      review(4, 'APPROVED', '', { commit_id: OLD })
+    ];
+    const { api, targets: sent } = await join({ reviews, reviewComments: { 3: [{ in_reply_to_id: 1 }] } });
+    assert.deepEqual(sent, ['merge-decision.yml']);
+    assert.match(markers(api)[0], /review=2 -->/);
+  });
+
+  it('never decides the same head and review twice, and ignores markers people post', async () => {
+    const marker = `<!-- quality-join head=${HEAD} review=1 -->`;
+    const repeated = await join({ reviews: [review(1, 'APPROVED')], comments: [{ body: marker, user: { type: 'Bot' } }] });
+    assert.deepEqual(repeated.targets, []);
+    assert.match(repeated.result.summary[0], /Already joined/);
+    assert.deepEqual((await join({ reviews: [review(1, 'APPROVED')], comments: [{ body: marker, user: { type: 'User' } }] })).targets, ['merge-decision.yml']);
+    assert.deepEqual((await join({ reviews: [review(2, 'CHANGES_REQUESTED')], comments: [{ body: marker, user: { type: 'Bot' } }] })).targets, ['pr-fix.yml']);
+  });
+
+  it('stops on a QA run without a verdict and on a closed pull request', async () => {
+    const neutral = await join({ checks: [qaRun('cancelled')], reviews: [review(1, 'APPROVED')] });
+    assert.deepEqual(neutral.targets, []);
+    assert.match(neutral.result.notice, /without a verdict/);
+    assert.deepEqual((await join({ pr: pull({ state: 'closed' }), reviews: [review(1, 'APPROVED')] })).targets, []);
+  });
+
+  it('joins from the review event instead of dispatching directly', async () => {
+    const ctx = (state) => ({
+      ...ctxFor(values),
+      eventName: 'pull_request_review',
+      event: {
+        repository: { default_branch: 'main' },
+        review: review(5, state),
+        pull_request: { number: 7, head: { repo: { full_name: REPO } } }
+      }
+    });
+    const qaFailed = joinRepo({ checks: [qaRun('failure')], reviews: [review(5, 'APPROVED')] });
+    await feedbackDispatch(ctx('APPROVED'), qaFailed);
+    assert.deepEqual(targets(qaFailed), ['pr-fix.yml']);
+    const stale = joinRepo({ reviews: [review(5, 'APPROVED', '', { commit_id: OLD })] });
+    await feedbackDispatch(ctx('APPROVED'), stale);
+    assert.deepEqual(targets(stale), []);
+    const waiting = joinRepo({ checks: [], reviews: [review(5, 'APPROVED')] });
+    await feedbackDispatch(ctx('APPROVED'), waiting);
+    assert.deepEqual(targets(waiting), []);
+    // A fixer's reply review still joins, so a dropped QA join is made up.
+    const reply = joinRepo({ reviews: [review(1, 'APPROVED'), review(5, 'COMMENTED', '', { user: { login: 'fixer[bot]' } })] });
+    await feedbackDispatch(ctx('COMMENTED'), reply);
+    assert.deepEqual(targets(reply), ['merge-decision.yml']);
+  });
+
+  it('classifies reviews the same way with or without the join', () => {
+    assert.equal(reviewOutcome({ state: 'APPROVED' }).outcome, 'merge');
+    assert.equal(reviewOutcome({ state: 'commented', body: '★★★★★' }).outcome, 'merge');
+    assert.equal(reviewOutcome({ state: 'commented', body: '★★★★☆' }).outcome, 'fix');
+    assert.equal(reviewOutcome({ state: 'commented', body: '' }).outcome, null);
+    assert.equal(reviewOutcome({ state: 'dismissed' }).outcome, null);
   });
 });
 

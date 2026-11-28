@@ -42,6 +42,14 @@ on:
         required: false
         type: string
         default: ""
+      qa-check-name:
+        description: >-
+          Check run of the QA workflow (`qa.yml`). When set, the pass also fixes the findings of the newest failing run of
+          it on the head commit (its output holds the QA report), as the developer of a review and QA cycle that runs in
+          separate jobs. Empty fixes review feedback only.
+        required: false
+        type: string
+        default: ""
       prompt-append:
         description: Deprecated, use `instructions`. Extra instructions appended to the prompt, for example project priorities.
         required: false
@@ -239,6 +247,7 @@ jobs:
           HARNESS: ${{ inputs.harness || vars.AI_HARNESS }}
           PROMPT: ${{ inputs.prompt }}
           PROMPT_APPEND: ${{ inputs.prompt-append }}
+          QA_CHECK_NAME: ${{ inputs.qa-check-name }}
           SKILLS: ${{ inputs.skills }}
           OPENCODE_MODEL: ${{ inputs.opencode-model || vars.OPENCODE_MODEL }}
           APP_CLIENT_ID: ${{ inputs.agent-client-id || vars.AGENT_APP_CLIENT_ID }}
@@ -282,6 +291,9 @@ jobs:
             prompt="$PROMPT"
           else
             prompt="Use the pr-fix skill in auto mode on pull request #${PR_NUMBER} in ${GITHUB_REPOSITORY}: one pass; fix what is valid, push, and reply in each thread. Do not watch CI or wait for new comments. Never edit .github/workflows/**, never force-push, never merge."
+          fi
+          if [ -n "$QA_CHECK_NAME" ]; then
+            prompt="${prompt}"$'\n\n'"QA runs in another job: when the newest '${QA_CHECK_NAME}' check run on the head commit failed, its output text is the QA report (gh api \"repos/${GITHUB_REPOSITORY}/commits/<head sha>/check-runs?check_name=<name, URL-encoded>\" --jq '.check_runs | sort_by(.started_at) | last | .output'). Fix each finding in it as review feedback, with a test where the area has tests, and the same pattern in sibling code paths. An acceptance criterion it reports as unmet is always fixed, never deferred. An environment finding outside the repository is not yours to fix: say so. Since QA findings have no thread, answer them in one pull request comment that lists each finding ID with its fix commit, or the reason it was not fixed. The push starts a new review and QA."
           fi
           if [ -n "$PROMPT_APPEND" ]; then
             prompt="${prompt}"$'\n\n'"${PROMPT_APPEND}"

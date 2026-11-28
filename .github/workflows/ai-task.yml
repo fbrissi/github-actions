@@ -137,6 +137,11 @@ on:
         required: false
         type: string
         default: ""
+      quality-mode:
+        description: "`implement`, `issue-resolve`, and `dependency-update`: `cycle` runs the reviewer and QA in the task; `separate` only develops and opens the pull request, while `code-review.yml` and `qa.yml` review and test it in their own workflows (see Review and QA in separate jobs). Keep `setup-command` empty with `separate`: the QA workflow starts the test environment."
+        required: false
+        type: string
+        default: cycle
       skills:
         description: Extra whitespace-separated skills to install.
         required: false
@@ -406,6 +411,7 @@ jobs:
           context: ${{ inputs.context }}
           instructions: ${{ inputs.instructions }}
           test-environment: ${{ inputs.setup-command }}
+          quality-mode: ${{ inputs.quality-mode }}
           profile: ${{ inputs.profile }}
           implement-workflow: ${{ inputs.implement-workflow }}
           max-parallel: ${{ inputs.max-parallel }}

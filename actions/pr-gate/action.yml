@@ -6,10 +6,10 @@ author: Filipe Bojikian Rissi
 
 inputs:
   command:
-    description: "`feedback-dispatch`, `fix-gate`, `fix-record`, `fix-finish`, `merge-dispatch`, `merge-gate`, `merge-outcome`, or `merge-record`."
+    description: "`feedback-dispatch`, `quality-join`, `fix-gate`, `fix-record`, `fix-finish`, `merge-dispatch`, `merge-gate`, `merge-outcome`, or `merge-record`."
     required: true
   github-token:
-    description: Token for the GitHub API. `feedback-dispatch` needs `actions` write and `pull-requests` read; `fix-gate` needs `checks` write and `issues` and `pull-requests` read; `fix-finish` needs `checks` write; `merge-dispatch` needs `actions` write; `merge-gate` needs `actions`, `checks`, `issues`, `pull-requests`, and `statuses` read; the record commands need a GitHub App token with `pull-requests` write, because only bot comments count as markers.
+    description: Token for the GitHub API. `feedback-dispatch` needs `actions` write and `pull-requests` read; `fix-gate` needs `checks` write and `issues` and `pull-requests` read; `fix-finish` needs `checks` write; `merge-dispatch` needs `actions` write; `quality-join`, and `feedback-dispatch` with `qa-check-name`, also need `checks` read and `pull-requests` write; `merge-gate` needs `actions`, `checks`, `issues`, `pull-requests`, and `statuses` read; the record commands need a GitHub App token with `pull-requests` write, because only bot comments count as markers.
     required: false
     default: ${{ github.token }}
   pr-number:
@@ -108,6 +108,10 @@ inputs:
     description: "`feedback-dispatch`: check run whose successful completion dispatches `merge-workflow`. Empty disables it."
     required: false
     default: ""
+  qa-check-name:
+    description: "`quality-join`, and `feedback-dispatch` for reviews: check run of the QA workflow. When set, a review no longer dispatches on its own: the code review and this check of the head commit are joined, and the last to finish dispatches `merge-workflow` when both approve, otherwise `fix-workflow`. Empty keeps reviews dispatching directly."
+    required: false
+    default: ""
 
 outputs:
   action:
@@ -196,6 +200,7 @@ runs:
         PR_GATE_IGNORE_REPLY_AUTHORS: ${{ inputs.ignore-reply-authors }}
         PR_GATE_MERGE_CHECK_NAME: ${{ inputs.merge-check-name }}
         PR_GATE_OUTPUT_FILE: ${{ inputs.output-file }}
+        PR_GATE_QA_CHECK_NAME: ${{ inputs.qa-check-name }}
       run: node "$GITHUB_ACTION_PATH/main.mjs"
 
 branding:

@@ -10,7 +10,7 @@ const NAMES = [
   'command', 'fix-branch-prefixes', 'pr-number', 'opt-in-label', 'branch-prefixes', 'max-rounds', 'escalation-label', 'check-name',
   'required-human-approvals', 'human-approval-exempt-base-prefixes', 'human-approval-exempt-authors', 'approval-labels', 'hold-labels', 'round', 'start-sha', 'outcome',
   'head-sha', 'result', 'check-run-id', 'merge-workflow', 'fix-workflow', 'ignore-authors', 'ignore-reply-authors',
-  'merge-check-name', 'output-file'
+  'merge-check-name', 'output-file', 'qa-check-name'
 ];
 
 export const envName = (name) => `PR_GATE_${name.toUpperCase().replaceAll('-', '_')}`;
@@ -395,6 +395,105 @@ export function isCleanGrade(body = '') {
   return lines[0] === '★★★★★' && lines.slice(1).every((line) => /^Ticket:/i.test(line));
 }
 
+// What a review asks for: `merge` (an approval or a clean grade), `fix` (changes requested or actionable comments), or
+// nothing, with the reason.
+export function reviewOutcome(review = {}, comments = [], { ignored = new Set(), replyIgnored = new Set() } = {}) {
+  const author = (review.user?.login ?? '').toLowerCase();
+  const state = String(review.state).toLowerCase();
+  if (state === 'approved') return { outcome: 'merge', reason: 'the review approves' };
+  if (state !== 'changes_requested' && state !== 'commented') return { outcome: null, reason: `review state ${state}.` };
+  const hasBody = Boolean(review.body?.trim());
+  const actionable = state === 'changes_requested' || hasBody || comments.length > 0;
+  const replyOnly = state === 'commented' && !hasBody && comments.length > 0 && comments.every((comment) => comment.in_reply_to_id);
+  // A clean grade asks for no change, so it never dispatches a fix, even with threads still open: the merge gate
+  // hands those to a person. Two clean reviews of one head then never start two fix passes.
+  if (state === 'commented' && comments.length === 0 && isCleanGrade(review.body)) return { outcome: 'merge', reason: 'the review is a clean grade' };
+  if (ignored.has(author)) return { outcome: null, reason: `reviews by ${review.user?.login} are ignored.` };
+  if (replyOnly && replyIgnored.has(author)) return { outcome: null, reason: `the review by ${review.user?.login} only replies to existing threads.` };
+  if (!actionable) return { outcome: null, reason: 'the review has no body and no inline comments.' };
+  return { outcome: 'fix', reason: 'the review asks for changes' };
+}
+
+const JOIN_MARKER = /<!-- quality-join head=([0-9a-f]{40}) review=(\d+) -->/;
+
+// Joins the code review and the QA check of one head commit, which run as separate workflows: the last of the two to
+// finish decides. Both passing dispatches the merge workflow; either failing dispatches the fix workflow, which then
+// handles the review threads and the QA findings together. A bot marker per head and review keeps a decision from being
+// dispatched twice; callers serialize joins per pull request with a concurrency group.
+export async function qualityJoin(ctx, api, number) {
+  const { repo } = ctx;
+  const qaName = ctx['qa-check-name'];
+  if (!qaName) throw new Error("'qa-check-name' is required to join the review and QA.");
+  for (const name of ['fix-workflow', 'merge-workflow']) {
+    if (!WORKFLOW_FILE.test(ctx[name])) throw new Error(`'${name}' must be a workflow file name, got '${ctx[name]}'.`);
+  }
+  const lower = (value) => words(value).map((login) => login.toLowerCase());
+  const { data: pr } = await api.request('GET', `/repos/${repo}/pulls/${number}`);
+  const head = pr.head.sha;
+  if (pr.state !== 'open') return { summary: [`Skipped: PR #${number} is not open.`] };
+
+  const runs = (await paginateKey(api, `/repos/${repo}/commits/${head}/check-runs?check_name=${encodeURIComponent(qaName)}`, 'check_runs'))
+    .filter((check) => check.name === qaName)
+    .sort((a, b) => (Date.parse(b.started_at ?? '') || 0) - (Date.parse(a.started_at ?? '') || 0) || b.id - a.id);
+  const qa = runs[0];
+  if (!qa || qa.status !== 'completed') return { summary: [`Waiting for ${qaName} on ${head.slice(0, 7)}; its end joins the review.`] };
+  if (!['success', 'failure'].includes(qa.conclusion)) {
+    const reason = `${qaName} on ${head.slice(0, 7)} ended ${qa.conclusion} without a verdict; rerun it to continue.`;
+    return { summary: [reason], notice: reason };
+  }
+
+  // The newest review of the head that asks for something decides; fixer replies and empty comments do not.
+  const options = { ignored: new Set(lower(ctx['ignore-authors'])), replyIgnored: new Set(lower(ctx['ignore-reply-authors'])) };
+  const reviews = (await api.paginate(`/repos/${repo}/pulls/${number}/reviews`))
+    .filter((item) => item.commit_id === head && item.submitted_at)
+    .sort((a, b) => Date.parse(b.submitted_at) - Date.parse(a.submitted_at));
+  let decided = null;
+  for (const item of reviews) {
+    const state = String(item.state).toLowerCase();
+    const comments = ['changes_requested', 'commented'].includes(state)
+      ? await api.paginate(`/repos/${repo}/pulls/${number}/reviews/${item.id}/comments`)
+      : [];
+    const { outcome } = reviewOutcome(item, comments, options);
+    if (outcome) {
+      decided = { ...item, outcome };
+      break;
+    }
+  }
+  if (!decided) return { summary: [`Waiting for a code review of ${head.slice(0, 7)}; its end joins ${qaName}.`] };
+
+  const comments = await api.paginate(`/repos/${repo}/issues/${number}/comments`);
+  const done = comments.some((comment) => {
+    const marker = JOIN_MARKER.exec(comment.body ?? '');
+    return comment.user?.type === 'Bot' && marker?.[1] === head && Number(marker[2]) === Number(decided.id);
+  });
+  if (done) return { summary: [`Already joined the review ${decided.id} and ${qaName} of ${head.slice(0, 7)}.`] };
+
+  const qaPassed = qa.conclusion === 'success';
+  const merge = decided.outcome === 'merge' && qaPassed;
+  const workflow = merge ? ctx['merge-workflow'] : ctx['fix-workflow'];
+  const verdict = (passed) => (passed ? 'approved' : 'changes required');
+  const body = [
+    `<!-- quality-join head=${head} review=${decided.id} -->`,
+    `Quality join for ${head.slice(0, 7)}: code review ${verdict(decided.outcome === 'merge')}, [${qaName}](${qa.html_url ?? qa.details_url ?? ''}) ${verdict(qaPassed)}.`,
+    merge ? `Both approved: dispatched ${workflow}.` : `Dispatched ${workflow} to fix the findings of ${[decided.outcome === 'fix' && 'the review', !qaPassed && qaName].filter(Boolean).join(' and ')}.`
+  ].join('\n');
+  await api.request('POST', `/repos/${repo}/issues/${number}/comments`, { body });
+  const { data: repository } = await api.request('GET', `/repos/${repo}`);
+  try {
+    await api.request('POST', `/repos/${repo}/actions/workflows/${workflow}/dispatches`, { ref: repository.default_branch, inputs: { pr_number: String(number) } });
+  } catch (error) {
+    if (error.status !== 404) throw error;
+    const reason = `${workflow} is not on ${repository.default_branch}; PR #${number} was not dispatched.`;
+    return { summary: [reason], notice: reason };
+  }
+  return { summary: [`Joined the review and ${qaName} of ${head.slice(0, 7)}: dispatched ${workflow} for PR #${number}.`] };
+}
+
+export async function qualityJoinCommand(ctx, api) {
+  const result = await qualityJoin(ctx, api, prNumber(ctx));
+  return { outputs: {}, ...result };
+}
+
 // Turns a review or a check run into a fix or merge workflow dispatch on the default branch, so a pull request can
 // never change its own fixer or merger.
 export async function feedbackDispatch(ctx, api) {
@@ -426,37 +525,23 @@ export async function feedbackDispatch(ctx, api) {
 
   if (eventName === 'pull_request_review') {
     const { review = {}, pull_request: pullRequest = {} } = event;
-    const author = review.user?.login ?? '';
-    const state = String(review.state).toLowerCase();
     if (pullRequest.head?.repo?.full_name !== repo) {
       summary.push(`Skipped: PR #${pullRequest.number} comes from a fork.`);
-    } else if (state === 'approved') {
-      if (mergeWorkflow) await dispatch(mergeWorkflow, pullRequest.number);
-      else summary.push('Skipped: merge-workflow is empty.');
-    } else if (state === 'changes_requested' || state === 'commented') {
-      const comments = await api.paginate(`/repos/${repo}/pulls/${pullRequest.number}/reviews/${review.id}/comments`);
-      const hasBody = Boolean(review.body?.trim());
-      const actionable = state === 'changes_requested' || hasBody || comments.length > 0;
-      const replyOnly = state === 'commented' && !hasBody && comments.length > 0 && comments.every((comment) => comment.in_reply_to_id);
-      // A clean grade asks for no change, so it never dispatches a fix, even with threads still open: the merge gate
-      // hands those to a person. Two clean reviews of one head then never start two fix passes.
-      const clean = state === 'commented' && comments.length === 0 && isCleanGrade(review.body);
-      if (clean) {
-        if (mergeWorkflow) await dispatch(mergeWorkflow, pullRequest.number);
-        else summary.push('Skipped: the review is a clean grade and merge-workflow is empty.');
-      } else if (!fixWorkflow) {
-        summary.push('Skipped: fix-workflow is empty.');
-      } else if (ignored.has(author.toLowerCase())) {
-        summary.push(`Skipped: reviews by ${author} are ignored.`);
-      } else if (replyOnly && replyIgnored.has(author.toLowerCase())) {
-        summary.push(`Skipped: the review by ${author} only replies to existing threads.`);
-      } else if (!actionable) {
-        summary.push('Skipped: the review has no body and no inline comments.');
-      } else {
-        await dispatch(fixWorkflow, pullRequest.number);
-      }
+    } else if (ctx['qa-check-name']) {
+      // Every review event joins from the pull request's state, so a join that the concurrency group dropped (it keeps
+      // one pending run) is made up by the next one, whatever review triggered it.
+      const joined = await qualityJoin(ctx, api, pullRequest.number);
+      summary.push(...joined.summary);
+      if (joined.notice) notices.push(joined.notice);
     } else {
-      summary.push(`Skipped: review state ${state}.`);
+      const comments = ['changes_requested', 'commented'].includes(String(review.state).toLowerCase())
+        ? await api.paginate(`/repos/${repo}/pulls/${pullRequest.number}/reviews/${review.id}/comments`)
+        : [];
+      const { outcome, reason } = reviewOutcome(review, comments, { ignored, replyIgnored });
+      const workflow = outcome === 'merge' ? mergeWorkflow : outcome === 'fix' ? fixWorkflow : '';
+      if (!outcome) summary.push(`Skipped: ${reason}`);
+      else if (!workflow) summary.push(`Skipped: ${reason}, and ${outcome === 'merge' ? 'merge' : 'fix'}-workflow is empty.`);
+      else await dispatch(workflow, pullRequest.number);
     }
   } else if (eventName === 'check_run') {
     const checkRun = event.check_run ?? {};
@@ -480,6 +565,7 @@ const COMMANDS = {
   'fix-gate': fixGate,
   'fix-record': fixRecord,
   'feedback-dispatch': feedbackDispatch,
+  'quality-join': qualityJoinCommand,
   'fix-finish': fixFinish,
   'merge-dispatch': mergeDispatch,
   'merge-outcome': mergeOutcome,

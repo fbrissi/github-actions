@@ -1,0 +1,64 @@
+name: Quality Join
+
+# Joins the code review and the QA check of a pull request's head commit, which run as separate workflows. Call it from
+# a `pull_request_review` workflow (each review), and the QA workflow runs the same join when its check completes. The
+# last of the two to finish dispatches `merge-workflow` when both approve, otherwise `fix-workflow`.
+on:
+  workflow_call:
+    inputs:
+      qa-check-name:
+        description: Check run of the QA workflow (`qa.yml`) joined with the code review.
+        required: false
+        type: string
+        default: AI QA
+      fix-workflow:
+        description: Workflow dispatched with `pr_number` when the review or QA asks for changes.
+        required: false
+        type: string
+        default: pr-fix.yml
+      merge-workflow:
+        description: Workflow dispatched with `pr_number` when the review and QA both approve.
+        required: false
+        type: string
+        default: merge-decision.yml
+      ignore-authors:
+        description: Whitespace-separated logins whose reviews never ask for a fix, for example the fixer App bot (`my-fixer[bot]`), whose thread replies also emit review events.
+        required: false
+        type: string
+        default: ""
+      ignore-reply-authors:
+        description: Whitespace-separated logins whose reply-only reviews never ask for a fix.
+        required: false
+        type: string
+        default: ""
+      runs-on:
+        description: Runner label. Empty uses the `CI_RUNNER` variable, then `ubuntu-latest`.
+        required: false
+        type: string
+        default: ""
+
+permissions: {}
+
+jobs:
+  join:
+    name: Quality Join
+    runs-on: ${{ inputs.runs-on || vars.CI_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      actions: write
+      checks: read
+      pull-requests: write
+    # Shared with the QA workflow's join: one join per pull request at a time, so the review and QA never both decide.
+    concurrency:
+      group: quality-join-${{ github.repository }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      # Dispatches on the default branch, so a pull request can never change its own fixer or merger.
+      - name: Join the review with QA
+        uses: fbrissi/github-actions/actions/pr-gate@v1
+        with:
+          command: feedback-dispatch
+          fix-workflow: ${{ inputs.fix-workflow }}
+          merge-workflow: ${{ inputs.merge-workflow }}
+          ignore-authors: ${{ inputs.ignore-authors }}
+          ignore-reply-authors: ${{ inputs.ignore-reply-authors }}
+          qa-check-name: ${{ inputs.qa-check-name }}

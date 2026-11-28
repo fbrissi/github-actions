@@ -14,6 +14,8 @@ deploys, credential rotation) stays in each project.
 | [`code-review.yml`](#code-review) | Reusable workflow | AI review of a pull request, reported as a `Code Review` check run. |
 | [`pr-feedback-dispatch.yml`](#pr-feedback-dispatch) | Reusable workflow | Turns review and check events into fix and merge-decision dispatches on the default branch. |
 | [`pr-fix.yml`](#pr-fix) | Reusable workflow | One AI pass that fixes review feedback and failing CI on an opted-in pull request. |
+| [`qa.yml`](#review-and-qa-in-separate-jobs) | Reusable workflow | AI QA of a pull request in its own job, reported as an `AI QA` check run with the report, then joined with the code review. |
+| [`quality-join.yml`](#review-and-qa-in-separate-jobs) | Reusable workflow | Joins each review with the QA check of the same head: dispatches the merge decision when both approve, otherwise one fix pass. |
 | [`merge-decision.yml`](#merge-decision) | Reusable workflow | Deterministic merge gates, then an AI risk rating that holds or (opt-in) merges. |
 | [`ai-task.yml`](#ai-task) | Reusable workflow | Runs one AI task delivery task (refinement, readiness, orchestration, implementation) or issue task (intake, resolve) with its agent, then chains the next stage or hands off to a human. |
 | [`ai-resume.yml`](#resume) | Reusable workflow | Resumes a stopped delivery stage when someone with write permission replies `/ai-resume [stage] [instructions]`. |
@@ -256,6 +258,80 @@ the App key and AI keys at run time (for example from a cloud secret store), whi
 as `secrets`, can build their own wrapper from `pr-gate`, [`ai-harness`](actions/ai-harness/README.md), and
 [`ai-delivery`](actions/ai-delivery/README.md) with the same behavior.
 
+### Review and QA in separate jobs
+
+The `implement` task can run its quality cycle in one job (`quality-mode: cycle`, the default), or leave the review
+and QA to their own workflows (`quality-mode: separate`) so no job holds the developer, the reviewer, and QA within
+one timeout. With `separate`:
+
+1. The implement agent only develops: it runs the narrow checks, pushes, opens the pull request, and stops.
+2. The push starts the code review ([`code-review.yml`](#code-review)) and QA ([`qa.yml`](#review-and-qa-in-separate-jobs)) in
+   parallel; dispatch both from the same CI job that dispatches the code review today. QA starts `setup-command`,
+   runs the `qa-e2e` skill on the scenarios of the change (from the second round: the failed scenarios, those covering
+   the files changed since, and the touched `@smoke` scenarios), and reports an `AI QA` check run on the head commit,
+   `success` or `failure`, with its report as the check output. A run that ends without a `qa-result:` line is
+   `neutral` and stops the join until it is rerun.
+3. Whichever finishes last decides, through the pr-gate [`quality-join`](actions/pr-gate/README.md) command:
+   [`quality-join.yml`](#review-and-qa-in-separate-jobs) runs it for every review, and `qa.yml` when its check completes. It
+   waits while either side of the head commit is missing, dispatches `merge-workflow` when the newest decisive review
+   and QA both approve, and otherwise dispatches `fix-workflow` once. A `<!-- quality-join head=<sha> review=<id> -->`
+   bot comment records each decision, and one concurrency group per pull request serializes the joins, so a decision
+   is never dispatched twice.
+4. [`pr-fix.yml`](#pr-fix) with `qa-check-name` fixes the review threads and the QA report together and pushes; the
+   push starts the next review and QA. `max-rounds` and the escalation of PR Fix bound the loop.
+
+```yaml
+# .github/workflows/pr-feedback.yml (replaces the pr-feedback-dispatch.yml caller)
+name: PR Feedback
+on:
+  pull_request_review:
+    types: [submitted]
+permissions: {}
+jobs:
+  join:
+    uses: fbrissi/github-actions/.github/workflows/quality-join.yml@v1
+    permissions:
+      actions: write
+      checks: read
+      pull-requests: write
+    with:
+      ignore-authors: my-fixer[bot]
+```
+
+```yaml
+# .github/workflows/qa.yml
+name: QA
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        required: true
+        type: string
+permissions: {}
+jobs:
+  qa:
+    uses: fbrissi/github-actions/.github/workflows/qa.yml@v1
+    permissions:
+      actions: write
+      checks: write
+      contents: read
+      pull-requests: write
+    with:
+      pr-number: ${{ inputs.pr_number }}
+      ignore-authors: my-fixer[bot]
+      setup-command: scripts/start-test-stack.sh
+    secrets: inherit
+```
+
+`qa.yml` inputs: `pr-number` (required); `check-name` (`AI QA`); `setup-command` (`""`, targeted validation without
+it); `skills` (`qa-e2e bdd-scenarios`) and `ai-skills-ref`; `fix-workflow` (`pr-fix.yml`), `merge-workflow`
+(`merge-decision.yml`), `ignore-authors`, and `ignore-reply-authors` for the join (an empty workflow skips it);
+`prompt` (it must keep the `qa-result:` line) and `instructions`; `environment`, `timeout-minutes` (`40`), and
+`job-timeout-minutes` (`55`); and `harness`, the model inputs, `agent-client-id`, `runs-on`, and the dependency inputs
+as in [Code Review](#inputs). The agent App needs `Contents`, `Issues`, `Pull requests`, and `Checks: Read`. Output:
+`result` (`approved`, `changes-required`, or `none`). `quality-join.yml` inputs: `qa-check-name` (`AI QA`),
+`fix-workflow`, `merge-workflow`, `ignore-authors`, `ignore-reply-authors`, and `runs-on`.
+
 ### PR Feedback Dispatch
 
 `.github/workflows/pr-feedback-dispatch.yml` needs no secrets and never checks out code. It skips fork pull
@@ -402,6 +478,7 @@ The fixer GitHub App needs `Contents: Read and write`, `Pull requests: Read and 
 | `base-skills-path` | `.rulesync/skills` | Skills directory read from the base commit with `base`. |
 | `check-name` | `PR Fix` | Check run name. |
 | `merge-workflow` | `""` | Workflow dispatched with `pr_number` after a successful pass, for example `merge-decision.yml`. Needs `Actions: Read and write` on the fixer App. Empty disables it. |
+| `qa-check-name` | `""` | QA check run of [`qa.yml`](#review-and-qa-in-separate-jobs): the pass also fixes the findings in the report of its newest failing run on the head commit and answers them in one pull request comment. Empty fixes review feedback only. |
 | `environment` | `pr-fix` | Environment of the fix and follow-up jobs; its secrets are visible to them. |
 | `agent-client-id` | `AGENT_APP_CLIENT_ID` | Client ID of the fixer GitHub App. |
 
@@ -828,7 +905,8 @@ The workflow passes the `setup-command` to the agent as `test-environment`, so t
 `dependency-update` prompts say the environment is already running and QA uses it instead of starting it. Without a `setup-command` and
 without a reachable environment, QA runs in tests-only mode: it relies on the automated tests that already run as PR
 checks, reports `browser QA skipped: no CI environment`, and never escalates for that reason. Either way the agent runs
-the reviewer and QA for every change, documentation included.
+the reviewer and QA for every change, documentation included. With `quality-mode: separate` the task runs neither, and
+[QA runs in its own workflow](#review-and-qa-in-separate-jobs) with the `setup-command` there instead.
 
 ### GitHub App
 
@@ -1382,6 +1460,7 @@ Task parameters are the [`ai-task` action inputs](actions/ai-task/README.md#inpu
 | `max-send-backs` | `3` | Send-backs per milestone to an earlier refinement stage (readiness review or technical refinement back to a refinement) before the follow-up hands off to the requester instead. |
 | `app-token-permission-issue-fields` | `""` | Set to `write` so the agent can set organization issue fields (Priority, Effort, dates). The agent App must have the Issue fields permission. |
 | `setup-command` | `""` | Runs after `install-command` and before the agent, for example to install browsers and start the test environment. |
+| `quality-mode` | `cycle` | `implement`, `issue-resolve`, and `dependency-update`: `cycle` runs the reviewer and QA in the task; `separate` only develops and opens the pull request for [Review and QA in separate jobs](#review-and-qa-in-separate-jobs). Leave `setup-command` empty with `separate`. |
 | `harness`, `opencode-model`, `opencode-variant`, `claude-model`, `claude-effort` | see [Variables](#variables) | Harness and model, like every AI workflow. |
 | `jira-base-url` | `JIRA_BASE_URL` | Jira base URL; Jira is used only with the `JIRA_EMAIL` and `JIRA_API_TOKEN` secrets. |
 | `sentry-org`, `sentry-base-url` | `SENTRY_ORG`, `SENTRY_BASE_URL` | Sentry organization and base URL (self-hosted), exported to the agent. |

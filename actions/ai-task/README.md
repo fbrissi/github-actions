@@ -82,6 +82,7 @@ Task parameters (see the [task table](#ai-task) for which are required):
 | `project-status-options` | profile, then Title Case of the state | Multiline `state=Option name` mapping to `project-status-field` options; several states may share one option, for example `needs-review=Technical Refinement`, `business-blocked=Blocked`. |
 | `research-sources` | profile | Multiline URLs or repository paths to consult when details are missing. |
 | `test-environment` | – | Command that started the test environment before this action (the `setup-command` of `ai-task.yml`). The `implement`, `issue-resolve`, and `dependency-update` prompts then tell QA it is running. |
+| `quality-mode` | `cycle` | `implement`, `issue-resolve`, and `dependency-update`: `cycle` asks for the reviewer and QA of the quality cycle; `separate` asks only for the change, its checks, and the pull request, and drops the reviewer and QA agents and skills, for callers that run [the review and QA in separate jobs](../../README.md#review-and-qa-in-separate-jobs). |
 | `instructions` | – | Per-run instructions appended to the prompt under `Additional instructions for this run:`. |
 | `context` | – | Deprecated, use `instructions`. Free text appended to the prompt. |
 | `profile` | `docs/ai/delivery.md` (`docs/ai/dependency-updates.md` for `dependency-update`) | Repository profile path. |
@@ -136,7 +137,8 @@ before this action, for example with the `setup-command` input of [`ai-task.yml`
 none is reachable, QA runs in tests-only mode: it relies on the automated tests that run as pull request checks,
 reports `browser QA skipped: no CI environment`, and never escalates for that reason. With `test-environment` set, the
 prompt says the environment is already running, so QA uses it instead. The `implement`, `issue-resolve`, and
-`dependency-update` prompts always ask for the reviewer and QA, documentation-only changes included.
+`dependency-update` prompts always ask for the reviewer and QA, documentation-only changes included, unless
+`quality-mode` is `separate`.
 
 ## Notes
 
