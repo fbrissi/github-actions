@@ -238,6 +238,7 @@ jobs:
                 status: 'in_progress',
                 started_at: new Date().toISOString(),
                 details_url: detailsUrl,
+                external_id: String(context.runId),
                 output,
               });
             } else {
@@ -249,6 +250,7 @@ jobs:
                 status: 'in_progress',
                 started_at: new Date().toISOString(),
                 details_url: detailsUrl,
+                external_id: String(context.runId),
                 output,
               });
               checkRunId = created.data.id;

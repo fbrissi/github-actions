@@ -16,6 +16,13 @@ music volume, and the "Custos de geração" comment on each review issue).
   (`review-batch.mjs readme`) after it saves the state, so the schedule shows each item as published or failed. A failed
   refresh only warns. The publish workflow's Save state step gets the Drive credentials for it.
 
+## v1.21.1
+
+- **Quality join trusts the real checks:** GitHub replaces the `details_url` of a check run created with the Actions
+  token by the check's own page, so `quality-join` never found the run behind the `Code Review` and `AI QA` checks and
+  waited forever. `code-review.yml` and `qa.yml` now record their run id in the check's `external_id`, and the join
+  reads it first, keeping a `details_url` that points at a run as the fallback.
+
 ## v1.21.0
 
 Pairs with `fbrissi/ai-skills` `v0.16.0` (Azure AI Speech as a second TTS engine of `video-shorts`).
