@@ -251,6 +251,26 @@ async function fixQueued(ctx, api, pr, reviews, comments) {
   }
 }
 
+// A pull request with conflicts gets a fix pass, which merges its base, when fix-gate would let one run on this head;
+// one that is already queued is waited for. Otherwise (no fix workflow, not opted in, escalated, out of rounds, or a
+// pass already ran on this head and left the conflict) a person is told instead of the pull request waiting silently.
+async function conflictRoute(ctx, api, pr, comments) {
+  const workflow = ctx['fix-workflow'];
+  if (!workflow) return 'handoff';
+  if (!WORKFLOW_FILE.test(workflow)) throw new Error(`'fix-workflow' must be a workflow file name, got '${workflow}'.`);
+  const standing = fixStanding(ctx, pr, comments, words(ctx['fix-branch-prefixes']));
+  if (standing.reason || standing.rounds >= Number(ctx['max-rounds'] || 3)) return 'handoff';
+  if (standing.markers.some((comment) => comment.body.match(FIX_MARKER)[2] === pr.head.sha)) return 'handoff';
+  try {
+    const { data } = await api.request('GET', `/repos/${ctx.repo}/actions/workflows/${workflow}/runs?per_page=50`);
+    if ((data?.workflow_runs ?? []).some((run) => WAITING_RUN.has(run.status) || run.status === 'in_progress')) return 'queued';
+  } catch (error) {
+    if (error.status !== 404) throw error;
+    return 'handoff';
+  }
+  return 'fix';
+}
+
 // Runs started by review or check events (such as the feedback dispatcher) are not CI; their checks are ignored.
 const DISPATCHER_EVENTS = new Set(['pull_request_review', 'pull_request_review_comment', 'check_run', 'workflow_run']);
 
@@ -274,7 +294,15 @@ export async function mergeGate(ctx, api, sleep = (ms) => new Promise((resolve) 
   const heldBy = pr.labels.map((label) => label.name).filter((name) => holdLabels.includes(name));
   if (heldBy.length > 0) return skip(`PR #${number} has the ${heldBy.join(', ')} label.`);
   if (pr.mergeable === null) return skip(`GitHub has not computed whether PR #${number} is mergeable.`);
-  if (pr.mergeable === false || pr.mergeable_state === 'dirty') return skip(`PR #${number} has merge conflicts.`);
+  if (pr.mergeable === false || pr.mergeable_state === 'dirty') {
+    const comments = await api.paginate(`/repos/${repo}/issues/${number}/comments`);
+    const route = await conflictRoute(ctx, api, pr, comments);
+    const reason = `PR #${number} has merge conflicts`;
+    const outputs = { action: 'skip', pr_number: String(pr.number) };
+    if (route === 'queued') return { ...skip(`${reason}; a ${ctx['fix-workflow']} run is queued.`), outputs };
+    if (route === 'fix') return { outputs: { ...outputs, conflicts: 'fix' }, summary: [`skipped: ${reason}; dispatching ${ctx['fix-workflow']} to merge the base.`] };
+    return { outputs: { ...outputs, conflicts: 'handoff' }, summary: [`skipped: ${reason}.`], notice: `${reason}.` };
+  }
 
   const runs = await paginateKey(api, `/repos/${repo}/actions/runs?head_sha=${headSha}`, 'workflow_runs');
   const ignoredSuites = new Set(runs.filter((run) => DISPATCHER_EVENTS.has(run.event)).map((run) => run.check_suite_id));

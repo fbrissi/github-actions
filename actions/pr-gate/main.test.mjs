@@ -557,6 +557,25 @@ describe('merge-gate', () => {
     assert.match(result.summary[0], /changes requested by alice/);
   });
 
+  it('routes a pull request with conflicts to a fix pass, or to a person when no pass can run', async () => {
+    const conflicted = pull({ mergeable: false, mergeable_state: 'dirty', labels: [{ name: 'ai:auto-fix' }] });
+    const fixCtx = ctxFor({ ...base, 'fix-workflow': 'pr-fix.yml', 'opt-in-label': 'ai:auto-fix', 'escalation-label': 'ai:needs-human' });
+    const fix = await mergeGate(fixCtx, mergeRepo({ pr: conflicted, fixRuns: [] }), noSleep);
+    assert.equal(fix.outputs.action, 'skip');
+    assert.equal(fix.outputs.conflicts, 'fix');
+    const queued = await mergeGate(fixCtx, mergeRepo({ pr: conflicted, fixRuns: [{ status: 'in_progress' }] }), noSleep);
+    assert.equal(queued.outputs.conflicts, undefined);
+    assert.match(queued.summary[0], /pr-fix\.yml run is queued/);
+    const fixedHere = [{ user: { type: 'Bot', login: 'fixer[bot]' }, created_at: '2026-01-01T00:00:00Z', body: `<!-- pr-fix round=1 head=${HEAD} -->` }];
+    assert.equal((await mergeGate(fixCtx, mergeRepo({ pr: conflicted, comments: fixedHere, fixRuns: [] }), noSleep)).outputs.conflicts, 'handoff');
+    const escalated = pull({ mergeable: false, labels: [{ name: 'ai:auto-fix' }, { name: 'ai:needs-human' }] });
+    assert.equal((await mergeGate(fixCtx, mergeRepo({ pr: escalated, fixRuns: [] }), noSleep)).outputs.conflicts, 'handoff');
+    const optedOut = await mergeGate(fixCtx, mergeRepo({ pr: pull({ mergeable: false }), fixRuns: [] }), noSleep);
+    assert.equal(optedOut.outputs.conflicts, 'handoff');
+    assert.match(optedOut.notice, /has merge conflicts/);
+    assert.equal((await mergeGate(ctxFor(base), mergeRepo({ pr: conflicted }), noSleep)).outputs.conflicts, 'handoff');
+  });
+
   it('waits for checks but ignores those of dispatcher runs', async () => {
     const ctx = ctxFor({ ...base, 'human-approval-exempt-base-prefixes': 'feat/' });
     const pending = await mergeGate(ctx, mergeRepo({ checks: [{ name: 'CI', status: 'in_progress', check_suite: { id: 1 } }] }), noSleep);

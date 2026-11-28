@@ -16,6 +16,14 @@ music volume, and the "Custos de geração" comment on each review issue).
   (`review-batch.mjs readme`) after it saves the state, so the schedule shows each item as published or failed. A failed
   refresh only warns. The publish workflow's Save state step gets the Drive credentials for it.
 
+## v1.22.0
+
+- **Merge conflicts no longer stall the loop:** `merge-decision.yml` used to skip a pull request with conflicts and
+  stop. Its new **Resolve Merge Conflicts** job dispatches the `fix-workflow` pass, which merges the base, when that
+  pass could run on the head (opted in, not escalated, rounds left, no pass on the head yet) and none is queued;
+  otherwise, or when the App cannot dispatch it (it needs Actions write), it posts one `merge-decision` handoff to the
+  requester. Callers whose PR Fix qualifies by branch prefix should pass the same `fix-branch-prefixes`.
+
 ## v1.21.1
 
 - **Quality join trusts the real checks:** GitHub replaces the `details_url` of a check run created with the Actions

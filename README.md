@@ -540,6 +540,10 @@ The fixer GitHub App needs `Contents: Read and write`, `Pull requests: Read and 
    Unresolved Threads** posts one `merge-decision` [handoff](#how-stages-chain) to the requester
    (`<!-- merge-decision unresolved-threads -->`, kept while it is open) instead of waiting silently; resume after
    resolving them. A queued fix run only skips, since its follow-up dispatches the decision again.
+   A pull request with conflicts gets **Resolve Merge Conflicts**: when a `fix-workflow` pass could run on its head
+   (opted in, not escalated, rounds left, no pass on this head yet) and none is queued, it dispatches that pass with the
+   App token (which needs Actions write), and the pass merges the base; otherwise, or when the dispatch fails, it posts
+   one `merge-decision` handoff to the requester.
 2. **Request Human Review** runs only when the approvals are missing (and `request-human-review` is on): it requests
    a review from the person who started the flow (the `requested-by` marker of the PR's milestone, or of the issues
    it closes) and mentions them once per pull request (`<!-- merge-decision review-requested=<login> -->`). Their
@@ -563,6 +567,7 @@ The fixer GitHub App needs `Contents: Read and write`, `Pull requests: Read and 
 flowchart TD
   start["merge-decision.yml<br/>pr_number"] --> g1{"Open, not a draft,<br/>branch-prefixes match,<br/>no hold label, no conflicts?"}
   g1 -- "no" --> skip["Skip with the reason"]
+  g1 -- "conflicts" --> conf["Resolve Merge Conflicts<br/>fix pass, or handoff"]
   g1 -- "yes" --> g2{"Every check green,<br/>no changes requested,<br/>no unresolved thread?"}
   g2 -- "no" --> skip
   g2 -- "yes" --> ex{"Base matches exempt base prefixes<br/>AND author is an exempt author?"}
