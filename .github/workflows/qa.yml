@@ -237,6 +237,7 @@ jobs:
               status: 'in_progress',
               started_at: new Date().toISOString(),
               details_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              external_id: String(context.runId),
               output: { title: `${process.env.CHECK_NAME} in progress`, summary: `The AI harness is testing PR #${prNumber}.` },
             });
             core.setOutput('check_run_id', created.data.id);
